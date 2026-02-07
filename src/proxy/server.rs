@@ -502,6 +502,9 @@ impl AxumServer {
             .route("/system/updates/check", post(admin_check_for_updates))
             .route("/system/updates/touch", post(admin_update_last_check_time))
             .route("/system/updates/save", post(admin_save_update_settings))
+            .route("/system/gephyr/path", get(admin_get_antigravity_path))
+            .route("/system/gephyr/args", get(admin_get_antigravity_args))
+            // Legacy aliases for backward compatibility
             .route("/system/antigravity/path", get(admin_get_antigravity_path))
             .route("/system/antigravity/args", get(admin_get_antigravity_args))
             .route("/system/cache/clear", post(admin_clear_antigravity_cache))

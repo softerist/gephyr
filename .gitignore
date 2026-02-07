@@ -26,7 +26,7 @@ dist-ssr
 *.sw?
 
 # Build output
-src/target/
+target/
 src/gen/
 src/.env
 

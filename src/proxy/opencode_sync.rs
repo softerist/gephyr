@@ -16,7 +16,7 @@ const OPENCODE_DIR: &str = ".config/opencode";
 const OPENCODE_CONFIG_FILE: &str = "opencode.json";
 const ANTIGRAVITY_CONFIG_FILE: &str = "antigravity.json";
 const ANTIGRAVITY_ACCOUNTS_FILE: &str = "antigravity-accounts.json";
-const BACKUP_SUF&str = ".antigravity.bak";
+const BACKUP_SUFFIX: &str = ".antigravity.bak";
 
 const ANTHROPIC_MODELS: &[&str] = &[
     "claude-sonnet-4-5",

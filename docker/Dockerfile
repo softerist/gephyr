@@ -27,10 +27,9 @@ RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3
 WORKDIR /app
 COPY . .
 
-WORKDIR /app/src
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/src/target \
+    --mount=type=cache,target=/app/target \
     cargo build --release --bin gephyr && \
     cp target/release/gephyr /tmp/gephyr
 

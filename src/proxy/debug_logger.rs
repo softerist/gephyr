@@ -5,7 +5,7 @@ use futures::StreamExt;
 
 use crate::proxy::config::DebugLoggingConfig;
 
-fn build_filename(pre&str, trace_id: Option<&str>) -> String {
+fn build_filename(prefix: &str, trace_id: Option<&str>) -> String {
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S%.3f");
     let tid = trace_id.unwrap_or("unknown");
     format!("{}_{}_{}.json", ts, tid, prefix)
@@ -24,7 +24,7 @@ fn resolve_output_dir(cfg: &DebugLoggingConfig) -> Option<PathBuf> {
 pub async fn write_debug_payload(
     cfg: &DebugLoggingConfig,
     trace_id: Option<&str>,
-    pre&str,
+    prefix: &str,
     payload: &Value,
 ) {
     if !cfg.enabled {
@@ -131,7 +131,7 @@ pub fn wrap_reqwest_stream_with_debug(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
     cfg: DebugLoggingConfig,
     trace_id: String,
-    pre&'static str,
+    prefix: &'static str,
     meta: Value,
 ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>> {
     if !is_enabled(&cfg) {
@@ -165,7 +165,8 @@ pub fn wrap_reqwest_stream_with_debug(
             payload["response_content"] = serde_json::Value::String(response_content);
         }
 
-        write_debug_payload(&cfg, Some(&payload["trace_id"].as_str().unwrap_or("unknown")), prefix, &payload).await;
+        let payload_trace_id = payload["trace_id"].as_str().or(Some("unknown"));
+        write_debug_payload(&cfg, payload_trace_id, prefix, &payload).await;
     };
 
     Box::pin(wrapped)

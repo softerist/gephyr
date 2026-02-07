@@ -3,9 +3,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::modules::logger;
 use chrono::Utc;
 
-const GITHUB_API_URL: &str = "https://api.github.com/repos/lbjlaq/Antigravity-Manager/releases/latest";
-const GITHUB_RAW_URL: &str = "https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/package.json";
-const JSDELIVR_URL: &str = "https://cdn.jsdelivr.net/gh/lbjlaq/Antigravity-Manager@main/package.json";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/softerist/gephyr/releases/latest";
+const GITHUB_RAW_URL: &str = "https://raw.githubusercontent.com/softerist/gephyr/main/src/Cargo.toml";
+const JSDELIVR_URL: &str = "https://cdn.jsdelivr.net/gh/softerist/gephyr@main/src/Cargo.toml";
+const RELEASES_URL: &str = "https://github.com/softerist/gephyr/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 24;
 
@@ -81,7 +82,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
 
 async fn create_client() -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
-        .user_agent("Antigravity-Manager")
+        .user_agent("gephyr")
         .timeout(std::time::Duration::from_secs(10));
 
     // Load config to check for upstream proxy
@@ -144,7 +145,12 @@ async fn check_github_api() -> Result<UpdateInfo, String> {
 }
 
 #[derive(Deserialize)]
-struct PackageJson {
+struct CargoManifest {
+    package: CargoPackage,
+}
+
+#[derive(Deserialize)]
+struct CargoPackage {
     version: String,
 }
 
@@ -163,12 +169,15 @@ async fn check_static_url(url: &str, source_name: &str) -> Result<UpdateInfo, St
         return Err(format!("{} returned status: {}", source_name, response.status()));
     }
 
-    let package_json: PackageJson = response
-        .json()
+    let body = response
+        .text()
         .await
-        .map_err(|e| format!("Failed to parse package.json: {}", e))?;
+        .map_err(|e| format!("Failed to read response body: {}", e))?;
 
-    let latest_version = package_json.version;
+    let cargo_toml: CargoManifest =
+        toml::from_str(&body).map_err(|e| format!("Failed to parse Cargo.toml: {}", e))?;
+
+    let latest_version = cargo_toml.package.version;
     let current_version = CURRENT_VERSION.to_string();
     let has_update = compare_versions(&latest_version, &current_version);
 
@@ -179,8 +188,11 @@ async fn check_static_url(url: &str, source_name: &str) -> Result<UpdateInfo, St
     }
 
     // fallback sources generally don't provide release notes or download specific URL, construct generic
-    let download_url = "https://github.com/lbjlaq/Antigravity-Manager/releases/latest".to_string();
-    let release_notes = format!("New version detected via {}. Please check release page for details.", source_name);
+    let download_url = RELEASES_URL.to_string();
+    let release_notes = format!(
+        "New version detected via {} from Cargo.toml. Please check release page for details.",
+        source_name
+    );
 
     Ok(UpdateInfo {
         current_version,
