@@ -435,13 +435,17 @@ impl TokenManager {
         let token_obj = account["token"].as_object()
             .ok_or("Missing token field")?;
 
-        let access_token = token_obj["access_token"].as_str()
-            .ok_or("Missing access_token")?
-            .to_string();
+        let access_token_raw = token_obj["access_token"]
+            .as_str()
+            .ok_or("Missing access_token")?;
+        let access_token = crate::utils::crypto::decrypt_secret_or_plaintext(access_token_raw)
+            .unwrap_or_else(|_| access_token_raw.to_string());
 
-        let refresh_token = token_obj["refresh_token"].as_str()
-            .ok_or("Missing refresh_token")?
-            .to_string();
+        let refresh_token_raw = token_obj["refresh_token"]
+            .as_str()
+            .ok_or("Missing refresh_token")?;
+        let refresh_token = crate::utils::crypto::decrypt_secret_or_plaintext(refresh_token_raw)
+            .unwrap_or_else(|_| refresh_token_raw.to_string());
 
         let expires_in = token_obj["expires_in"].as_i64()
             .ok_or("Missing expires_in")?;
@@ -1653,7 +1657,9 @@ impl TokenManager {
 
         let now = chrono::Utc::now().timestamp();
 
-        content["token"]["access_token"] = serde_json::Value::String(token_response.access_token.clone());
+        let encrypted_access = crate::utils::crypto::encrypt_string(&token_response.access_token)
+            .unwrap_or_else(|_| token_response.access_token.clone());
+        content["token"]["access_token"] = serde_json::Value::String(encrypted_access);
         content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
         content["token"]["expiry_timestamp"] = serde_json::Value::Number((now + token_response.expires_in).into());
 
@@ -2191,20 +2197,8 @@ impl TokenManager {
         self.preferred_account_id.read().await.clone()
     }
 
-    // Exchange Authorization Code for Refresh Token (Web OAuth)
-    pub async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<String, String> {
-        crate::modules::oauth::exchange_code(code, redirect_uri)
-            .await
-            .and_then(|t| {
-                t.refresh_token
-                    .ok_or_else(|| "No refresh token returned by Google".to_string())
-            })
-    }
-
-    // Get OAuth URL (supports custom Redirect URI)
-    pub fn get_oauth_url_with_redirect(&self, redirect_uri: &str, state: &str) -> String {
-        crate::modules::oauth::get_auth_url(redirect_uri, state)
-    }
+    // Note: OAuth code exchange and auth URL generation are handled by `modules::oauth_server`.
+    // Keeping OAuth flow state in one place avoids CSRF/state mismatches and reduces attack surface.
 
     // Get user info (Email, etc.)
     pub async fn get_user_info(

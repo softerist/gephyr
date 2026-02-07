@@ -1,6 +1,6 @@
 # Gephyr
 
-Gephyr is a headless local AI relay/proxy service for Google AI services.
+Gephyr is a headless local API relay/proxy service for Google AI services.
 
 ## Scope
 
@@ -29,6 +29,63 @@ docker run --rm -p 127.0.0.1:8045:8045 \
 - `AUTH_MODE`: recommended `strict`.
 - `ALLOW_LAN_ACCESS`: keep `false` unless explicitly needed.
 - `ABV_ENABLE_ADMIN_API`: defaults to `false`; set to `true` to expose `/api/*` admin routes.
+- `GEPHYR_GOOGLE_OAUTH_CLIENT_ID`: required for `login` (`/api/auth/url` + `/auth/callback`) flow.
+- `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET`: optional (some OAuth clients require it for token exchange/refresh).
+- `ABV_PUBLIC_URL`: optional public base URL for callback construction (for hosted deployments).
+
+## Admin API Mode
+
+`-EnableAdminApi` in `start-docker.ps1` enables Gephyr admin routes (`/api/*`) by setting:
+
+- `ABV_ENABLE_ADMIN_API=true`
+
+Use it when you need setup/maintenance actions:
+
+- OAuth login bootstrap (`login`)
+- Account management (`accounts`, `logout`, `refresh`)
+- Admin config and management endpoints
+
+Without admin API enabled:
+
+- Proxy traffic endpoints still work (`/v1/*`, `/v1/messages`, `/healthz`)
+- Admin/script commands that rely on `/api/*` fail or are unavailable
+
+Recommended pattern:
+
+- Enable admin API only during setup/maintenance
+- Run normal proxy runtime with admin API disabled
+
+## OAuth Client Type
+
+Gephyr uses OAuth Authorization Code + PKCE with CSRF state checks.
+
+Pick OAuth client type by callback style:
+- `Desktop app` client: use for local loopback callbacks (`http://localhost:8045/auth/callback`).
+- `Web application` client: use only when Gephyr is hosted behind a public HTTPS domain and `ABV_PUBLIC_URL` is set.
+
+Examples:
+- Local Docker on your machine: use `Desktop app` client.
+- VPS/shared deployment with `https://proxy.example.com/auth/callback`: use `Web application` client and register that exact redirect URI in Google Cloud.
+
+See `GOOGLE_OAUTH_SETUP.md` for full step-by-step setup.
+
+## Multiple Accounts (OAuth)
+
+Gephyr supports multiple linked Google accounts in one instance.
+
+- OAuth login is single-flow at a time. Add accounts sequentially.
+- Logging in again with the same email updates that account (no duplicate account entry).
+
+Typical flow:
+
+```powershell
+.\start-docker.ps1 restart -EnableAdminApi
+.\start-docker.ps1 login     # complete OAuth for account A
+.\start-docker.ps1 login     # complete OAuth for account B
+.\start-docker.ps1 login     # complete OAuth for account C
+.\start-docker.ps1 accounts  # verify all linked accounts
+.\start-docker.ps1 restart   # optional: restart with admin API disabled
+```
 
 ## Data Directory
 

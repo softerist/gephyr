@@ -39,7 +39,31 @@ where
     D: Deserializer<'de>,
 {
     let encrypted = String::deserialize(deserializer)?;
-    decrypt_string(&encrypted).map_err(serde::de::Error::custom)
+    decrypt_secret_or_plaintext(&encrypted).map_err(serde::de::Error::custom)
+}
+
+pub fn serialize_secret<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let encrypted = encrypt_string(value).map_err(serde::ser::Error::custom)?;
+    serializer.serialize_str(&encrypted)
+}
+
+pub fn deserialize_secret<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    // Backward compatible: if decrypt fails (plaintext / non-base64), treat as plaintext.
+    Ok(decrypt_secret_or_plaintext(&raw).unwrap_or(raw))
+}
+
+pub fn decrypt_secret_or_plaintext(raw: &str) -> Result<String, String> {
+    match decrypt_string(raw) {
+        Ok(v) => Ok(v),
+        Err(_) => Ok(raw.to_string()),
+    }
 }
 
 pub fn encrypt_string(password: &str) -> Result<String, String> {

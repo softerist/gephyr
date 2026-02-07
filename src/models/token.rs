@@ -2,7 +2,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenData {
+    #[serde(
+        serialize_with = "crate::utils::crypto::serialize_secret",
+        deserialize_with = "crate::utils::crypto::deserialize_secret"
+    )]
     pub access_token: String,
+    #[serde(
+        serialize_with = "crate::utils::crypto::serialize_secret",
+        deserialize_with = "crate::utils::crypto::deserialize_secret"
+    )]
     pub refresh_token: String,
     pub expires_in: i64,
     pub expiry_timestamp: i64,

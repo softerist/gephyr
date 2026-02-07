@@ -12,6 +12,7 @@ struct OAuthFlowState {
     #[allow(dead_code)]
     redirect_uri: String,
     state: String,
+    code_verifier: String,
     cancel_tx: watch::Sender<bool>,
     code_tx: mpsc::Sender<Result<String, String>>,
     code_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -146,15 +147,17 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
     let has_ipv6 = ipv6_listener.is_some();
 
     let redirect_uri = if has_ipv4 && has_ipv6 {
-        format!("http://localhost:{}/oauth-callback", port)
+        format!("http://localhost:{}/auth/callback", port)
     } else if has_ipv4 {
-        format!("http://127.0.0.1:{}/oauth-callback", port)
+        format!("http://127.0.0.1:{}/auth/callback", port)
     } else {
-        format!("http://[::1]:{}/oauth-callback", port)
+        format!("http://[::1]:{}/auth/callback", port)
     };
 
     let state_str = uuid::Uuid::new_v4().to_string();
-    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str);
+    let code_verifier = oauth::generate_pkce_verifier();
+    let code_challenge = oauth::pkce_challenge_s256(&code_verifier);
+    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, &code_challenge)?;
 
     // Cancellation signal (supports multiple consumers)
     let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -327,6 +330,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
             auth_url: auth_url.clone(),
             redirect_uri,
             state: state_str,
+            code_verifier,
             cancel_tx,
             code_tx,
             code_rx: Some(code_rx),
@@ -363,7 +367,7 @@ pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
     })?;
 
     // Take code_rx to wait for it
-    let (mut code_rx, redirect_uri) = {
+    let (mut code_rx, redirect_uri, code_verifier) = {
         let mut lock = get_oauth_flow_state()
             .lock()
             .map_err(|_| "OAuth state lock corrupted".to_string())?;
@@ -374,7 +378,7 @@ pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
             .code_rx
             .take()
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone())
+        (rx, state.redirect_uri.clone(), state.code_verifier.clone())
     };
 
     // Wait for code (if user has already authorized, this returns immediately)
@@ -390,7 +394,7 @@ pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
         *lock = None;
     }
 
-    oauth::exchange_code(&code, &redirect_uri).await
+    oauth::exchange_code(&code, &redirect_uri, &code_verifier).await
 }
 
 // Complete OAuth flow without opening a browser.
@@ -400,7 +404,7 @@ pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
     let _ = ensure_oauth_flow_prepared().await?;
 
     // Take receiver to wait for code
-    let (mut code_rx, redirect_uri) = {
+    let (mut code_rx, redirect_uri, code_verifier) = {
         let mut lock = get_oauth_flow_state()
             .lock()
             .map_err(|_| "OAuth state lock corrupted".to_string())?;
@@ -411,7 +415,7 @@ pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
             .code_rx
             .take()
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone())
+        (rx, state.redirect_uri.clone(), state.code_verifier.clone())
     };
 
     let code = match code_rx.recv().await {
@@ -424,7 +428,7 @@ pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
         *lock = None;
     }
 
-    oauth::exchange_code(&code, &redirect_uri).await
+    oauth::exchange_code(&code, &redirect_uri, &code_verifier).await
 }
 
 // Manually submit an OAuth code to complete the flow.
@@ -439,6 +443,8 @@ pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) 
                 if provided_state != state.state {
                     return Err("OAuth state mismatch (CSRF protection)".to_string());
                 }
+            } else {
+                return Err("Missing OAuth state (CSRF protection)".to_string());
             }
             state.code_tx.clone()
         } else {
@@ -464,13 +470,23 @@ pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) 
     
     // Send to the channel
     tx.send(Ok(code)).await.map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
+
+    // Single-use: clear the global flow state to prevent replay.
+    if let Ok(mut lock) = get_oauth_flow_state().lock() {
+        *lock = None;
+    }
     
     Ok(())
 }
 // Manually prepare an OAuth flow without starting listeners.
 // Useful for Web/Docker environments where we only need manual code submission.
-pub fn prepare_oauth_flow_manually(redirect_uri: String, state_str: String) -> Result<(String, mpsc::Receiver<Result<String, String>>), String> {
-    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str);
+pub fn prepare_oauth_flow_manually(
+    redirect_uri: String,
+    state_str: String,
+) -> Result<(String, String, mpsc::Receiver<Result<String, String>>), String> {
+    let code_verifier = oauth::generate_pkce_verifier();
+    let code_challenge = oauth::pkce_challenge_s256(&code_verifier);
+    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, &code_challenge)?;
     
     // Check if we can reuse existing state
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
@@ -491,11 +507,12 @@ pub fn prepare_oauth_flow_manually(redirect_uri: String, state_str: String) -> R
             auth_url: auth_url.clone(),
             redirect_uri: redirect_uri.clone(),
             state: state_str,
+            code_verifier: code_verifier.clone(),
             cancel_tx,
             code_tx,
             code_rx: None, // We return it directly
         });
     }
 
-    Ok((auth_url, code_rx))
+    Ok((auth_url, code_verifier, code_rx))
 }

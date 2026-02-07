@@ -1,12 +1,70 @@
 use serde::{Deserialize, Serialize};
+use base64::Engine as _;
+use sha2::Digest;
 
 // Google OAuth configuration
-const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-const CLIENT_SECRET: &str = "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";
+//
+// IMPORTANT: Do not hardcode OAuth credentials in the repository.
+// Provide them via environment variables.
+//
+// Supported env vars (first match wins):
+// - Client ID:     GEPHYR_GOOGLE_OAUTH_CLIENT_ID, ABV_GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_ID
+// - Client secret: GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET, ABV_GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_CLIENT_SECRET
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const OAUTH_SCOPES: &str = concat!(
+    "https://www.googleapis.com/auth/cloud-platform ",
+    "https://www.googleapis.com/auth/userinfo.email ",
+    "https://www.googleapis.com/auth/userinfo.profile ",
+    "https://www.googleapis.com/auth/cclog ",
+    "https://www.googleapis.com/auth/experimentsandconfigs"
+);
+
+fn env_first(keys: &[&str]) -> Option<String> {
+    for k in keys {
+        if let Ok(v) = std::env::var(k) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn client_id() -> Result<String, String> {
+    env_first(&[
+        "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+        "ABV_GOOGLE_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_ID",
+    ])
+    .ok_or_else(|| {
+        "Missing Google OAuth client_id. Set GEPHYR_GOOGLE_OAUTH_CLIENT_ID (or ABV_GOOGLE_OAUTH_CLIENT_ID)."
+            .to_string()
+    })
+}
+
+fn client_secret_optional() -> Option<String> {
+    env_first(&[
+        "GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET",
+        "ABV_GOOGLE_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
+    ])
+}
+
+pub fn generate_pkce_verifier() -> String {
+    // RFC 7636: 43..128 chars. 32 random bytes -> base64url(no pad) => 43 chars.
+    let mut bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+pub fn pkce_challenge_s256(verifier: &str) -> String {
+    let digest = sha2::Sha256::digest(verifier.as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenResponse {
@@ -49,46 +107,49 @@ impl UserInfo {
 
 
 // Generate OAuth authorization URL
-pub fn get_auth_url(redirect_uri: &str, state: &str) -> String {
-    let scopes = vec![
-        "https://www.googleapis.com/auth/cloud-platform",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/cclog",
-        "https://www.googleapis.com/auth/experimentsandconfigs"
-    ].join(" ");
+pub fn get_auth_url(redirect_uri: &str, state: &str, code_challenge: &str) -> Result<String, String> {
+    let cid = client_id()?;
 
     let params = vec![
-        ("client_id", CLIENT_ID),
+        ("client_id", cid.as_str()),
         ("redirect_uri", redirect_uri),
         ("response_type", "code"),
-        ("scope", &scopes),
+        ("scope", OAUTH_SCOPES),
         ("access_type", "offline"),
         ("prompt", "consent"),
         ("include_granted_scopes", "true"),
         ("state", state),
+        ("code_challenge", code_challenge),
+        ("code_challenge_method", "S256"),
     ];
-    
-    let url = url::Url::parse_with_params(AUTH_URL, &params).expect("Invalid Auth URL");
-    url.to_string()
+
+    let url = url::Url::parse_with_params(AUTH_URL, &params).map_err(|e| format!("Invalid Auth URL: {}", e))?;
+    Ok(url.to_string())
 }
 
 // Exchange authorization code for token
-pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenResponse, String> {
+pub async fn exchange_code(code: &str, redirect_uri: &str, code_verifier: &str) -> Result<TokenResponse, String> {
     //  For login actions, no account_id is present yet; use the global pool ladder logic
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(None, 60).await
     } else {
         crate::utils::http::get_long_client()
     };
-    
-    let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("code", code),
-        ("redirect_uri", redirect_uri),
-        ("grant_type", "authorization_code"),
+
+    let cid = client_id()?;
+    let secret = client_secret_optional();
+
+    // Use PKCE always. Include client_secret only when provided.
+    let mut params: Vec<(&str, String)> = vec![
+        ("client_id", cid),
+        ("code", code.to_string()),
+        ("redirect_uri", redirect_uri.to_string()),
+        ("grant_type", "authorization_code".to_string()),
+        ("code_verifier", code_verifier.to_string()),
     ];
+    if let Some(s) = secret {
+        params.push(("client_secret", s));
+    }
 
     let response = client
         .post(TOKEN_URL)
@@ -141,12 +202,18 @@ pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>)
         crate::utils::http::get_long_client()
     };
     
-    let params = [
-        ("client_id", CLIENT_ID),
-        ("client_secret", CLIENT_SECRET),
-        ("refresh_token", refresh_token),
-        ("grant_type", "refresh_token"),
+    let cid = client_id()?;
+    let secret = client_secret_optional();
+
+    // Some OAuth clients require client_secret for refresh, some do not. We include it when provided.
+    let mut params: Vec<(&str, String)> = vec![
+        ("client_id", cid),
+        ("refresh_token", refresh_token.to_string()),
+        ("grant_type", "refresh_token".to_string()),
     ];
+    if let Some(s) = secret {
+        params.push(("client_secret", s));
+    }
 
     //  Provide more detailed logs to help diagnose proxy issues in Docker environments
     if let Some(id) = account_id {
@@ -241,9 +308,12 @@ mod tests {
 
     #[test]
     fn test_get_auth_url_contains_state() {
+        std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", "test-client.apps.googleusercontent.com");
         let redirect_uri = "http://localhost:8080/callback";
         let state = "test-state-123456";
-        let url = get_auth_url(redirect_uri, state);
+        let verifier = generate_pkce_verifier();
+        let challenge = pkce_challenge_s256(&verifier);
+        let url = get_auth_url(redirect_uri, state, &challenge).expect("auth url");
         
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));

@@ -2445,56 +2445,22 @@ struct OAuthParams {
     code: String,
     #[allow(dead_code)]
     scope: Option<String>,
+    state: Option<String>,
 }
 
 async fn handle_oauth_callback(
     Query(params): Query<OAuthParams>,
-    headers: HeaderMap,
-    State(state): State<AppState>,
+    _headers: HeaderMap,
+    State(_state): State<AppState>,
 ) -> Result<Html<String>, StatusCode> {
     let code = params.code;
+    let state_param = params.state;
 
-    // Exchange token
-    let port = state.security.read().await.port;
-    let host = headers.get("host").and_then(|h| h.to_str().ok());
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|h| h.to_str().ok());
-    let redirect_uri = get_oauth_redirect_uri(port, host, proto);
-
-    match state
-        .token_manager
-        .exchange_code(&code, &redirect_uri)
-        .await
-    {
-        Ok(refresh_token) => {
-            match state.token_manager.get_user_info(&refresh_token).await {
-                Ok(user_info) => {
-                    let email = user_info.email;
-                    if let Err(e) = state
-                        .token_manager
-                        .add_account(&email, &refresh_token)
-                        .await
-                    {
-                        error!("Failed to add account: {}", e);
-                        return Ok(Html(format!(
-                            r#"<html><body><h1>Authorization Failed</h1><p>Failed to save account: {}</p></body></html>"#,
-                            e
-                        )));
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to get user info: {}", e);
-                    return Ok(Html(format!(
-                        r#"<html><body><h1>Authorization Failed</h1><p>Failed to get user info: {}</p></body></html>"#,
-                        e
-                    )));
-                }
-            }
-
-            // Success HTML
-            Ok(Html(format!(
-                r#"
+    // Validate CSRF state and submit code into the prepared flow.
+    // This avoids completing OAuth without verifying state and keeps the callback route unauthenticated.
+    match crate::modules::oauth_server::submit_oauth_code(code, state_param).await {
+        Ok(()) => Ok(Html(format!(
+            r#"
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -2550,10 +2516,9 @@ async fn handle_oauth_callback(
                 </body>
                 </html>
             "#
-            )))
-        }
+        ))),
         Err(e) => {
-            error!("OAuth exchange failed: {}", e);
+            error!("OAuth callback submission failed: {}", e);
             Ok(Html(format!(
                 r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
                 e
@@ -2576,7 +2541,7 @@ async fn admin_prepare_oauth_url_web(
     let state_str = uuid::Uuid::new_v4().to_string();
 
     // Initialize authorization flow status and background handler
-    let (auth_url, mut code_rx) = crate::modules::oauth_server::prepare_oauth_flow_manually(
+    let (auth_url, code_verifier, mut code_rx) = crate::modules::oauth_server::prepare_oauth_flow_manually(
         redirect_uri.clone(),
         state_str.clone(),
     )
@@ -2590,6 +2555,7 @@ async fn admin_prepare_oauth_url_web(
     // Start background task to handle callback/manual submission code
     let token_manager = state.token_manager.clone();
     let redirect_uri_clone = redirect_uri.clone();
+    let code_verifier_clone = code_verifier.clone();
     tokio::spawn(async move {
         match code_rx.recv().await {
             Some(Ok(code)) => {
@@ -2597,7 +2563,7 @@ async fn admin_prepare_oauth_url_web(
                     "Consuming manually submitted OAuth code in background",
                 );
                 // Provide simplified backend processing for Web callbacks
-                match crate::modules::oauth::exchange_code(&code, &redirect_uri_clone).await {
+                match crate::modules::oauth::exchange_code(&code, &redirect_uri_clone, &code_verifier_clone).await {
                     Ok(token_resp) => {
                         // Success! Now add/upsert account
                         if let Some(refresh_token) = &token_resp.refresh_token {
