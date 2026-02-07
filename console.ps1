@@ -20,8 +20,8 @@ $envFilePath = Join-Path $PSScriptRoot ".env.local"
 function Write-Usage {
     @"
 Usage:
-  .\start-docker.ps1 <command> [options]
-  .\start-docker.ps1 -Command <command> [options]
+  .\console.ps1 <command> [options]
+  .\console.ps1 -Command <command> [options]
 
 Commands:
   help         Show this help
@@ -52,18 +52,18 @@ Options:
   -NoRestartAfterRotate  Rotate key without container restart
 
 Examples:
-  .\start-docker.ps1 start
-  .\start-docker.ps1 login
-  .\start-docker.ps1 logs -LogLines 200
-  .\start-docker.ps1 rotate-key
-  .\start-docker.ps1 logout
-  .\start-docker.ps1 logout-and-stop
-  .\start-docker.ps1 -Command login
+  .\console.ps1 start
+  .\console.ps1 login
+  .\console.ps1 logs -LogLines 200
+  .\console.ps1 rotate-key
+  .\console.ps1 logout
+  .\console.ps1 logout-and-stop
+  .\console.ps1 -Command login
 
 Troubleshooting:
   If health returns 401, your local GEPHYR_API_KEY does not match the running container.
   Use:
-    .\start-docker.ps1 -Command restart
+    .\console.ps1 -Command restart
   Or rotate via rotate-key and let it restart automatically.
 
 OAuth Login:
@@ -299,11 +299,35 @@ function Run-ApiTest {
     } | ConvertTo-Json -Depth 10
 
     $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/v1/chat/completions" -Method Post -Headers $headers -Body $body -TimeoutSec 60
+    $choice = $res.choices[0]
+    $answer = ""
+
+    if ($null -ne $choice.message) {
+        if ($choice.message.content -is [string]) {
+            $answer = $choice.message.content
+        } elseif ($choice.message.content -is [System.Array]) {
+            $parts = @()
+            foreach ($item in $choice.message.content) {
+                if ($item.text) {
+                    $parts += [string]$item.text
+                } elseif ($item.content) {
+                    $parts += [string]$item.content
+                }
+            }
+            $answer = ($parts -join "`n").Trim()
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($answer) -and $choice.text) {
+        $answer = [string]$choice.text
+    }
+
     [PSCustomObject]@{
         id = $res.id
         model = $res.model
-        finish_reason = $res.choices[0].finish_reason
+        finish_reason = $choice.finish_reason
         total_tokens = $res.usage.total_tokens
+        answer = $answer
     } | Format-List
 }
 

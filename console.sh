@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_LOCAL="$SCRIPT_DIR/.env.local"
 
-COMMAND="login"
+COMMAND="start"
 PORT="${PORT:-8045}"
 CONTAINER_NAME="${CONTAINER_NAME:-gephyr}"
 IMAGE="${IMAGE:-gephyr:latest}"
@@ -19,7 +19,7 @@ NO_RESTART_AFTER_ROTATE="false"
 print_help() {
   cat <<'EOF'
 Usage:
-  ./start-auth.sh [command] [options]
+  ./console.sh [command] [options]
 
 Commands:
   help         Show this help
@@ -29,7 +29,7 @@ Commands:
   status       Show container status
   logs         Show container logs
   health       Call /healthz with API key
-  login        Start with admin API, fetch /api/auth/url, open browser (default)
+  login        Start with admin API, fetch /api/auth/url, open browser
   oauth/auth   Alias for login
   accounts     Call /api/accounts
   api-test     Run one API test completion
@@ -51,17 +51,17 @@ Options:
   -h, --help             Show help
 
 Examples:
-  ./start-auth.sh start
-  ./start-auth.sh login
-  ./start-auth.sh logs --tail 200
-  ./start-auth.sh rotate-key
-  ./start-auth.sh logout
-  ./start-auth.sh logout-and-stop
+  ./console.sh start
+  ./console.sh login
+  ./console.sh logs --tail 200
+  ./console.sh rotate-key
+  ./console.sh logout
+  ./console.sh logout-and-stop
 
 Troubleshooting:
   If health returns 401, your local GEPHYR_API_KEY does not match the running container.
   Use:
-    ./start-auth.sh restart
+    ./console.sh restart
   Or rotate via rotate-key and let it restart automatically.
 
 OAuth Login:

@@ -22,6 +22,16 @@ docker run --rm -p 127.0.0.1:8045:8045 \
   gephyr:latest
 ```
 
+Script entrypoint:
+
+- Primary: `.\console.ps1` (PowerShell) / `./console.sh` (bash)
+- Single entrypoint only: use `console.*` commands
+
+Smoke test scripts:
+
+- Windows: `.\test-clean.ps1 -RunApiTest`
+- Linux/macOS: `bash ./test-clean.sh --run-api-test`
+
 ## Configuration
 
 - `API_KEY`: required API auth token.
@@ -35,7 +45,7 @@ docker run --rm -p 127.0.0.1:8045:8045 \
 
 ## Admin API Mode
 
-`-EnableAdminApi` in `start-docker.ps1` enables Gephyr admin routes (`/api/*`) by setting:
+`-EnableAdminApi` in `console.ps1` enables Gephyr admin routes (`/api/*`) by setting:
 
 - `ABV_ENABLE_ADMIN_API=true`
 
@@ -79,12 +89,12 @@ Gephyr supports multiple linked Google accounts in one instance.
 Typical flow:
 
 ```powershell
-.\start-docker.ps1 restart -EnableAdminApi
-.\start-docker.ps1 login     # complete OAuth for account A
-.\start-docker.ps1 login     # complete OAuth for account B
-.\start-docker.ps1 login     # complete OAuth for account C
-.\start-docker.ps1 accounts  # verify all linked accounts
-.\start-docker.ps1 restart   # optional: restart with admin API disabled
+.\console.ps1 restart -EnableAdminApi
+.\console.ps1 login     # complete OAuth for account A
+.\console.ps1 login     # complete OAuth for account B
+.\console.ps1 login     # complete OAuth for account C
+.\console.ps1 accounts  # verify all linked accounts
+.\console.ps1 restart   # optional: restart with admin API disabled
 ```
 
 ## Data Directory
