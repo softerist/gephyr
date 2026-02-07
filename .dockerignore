@@ -1,0 +1,12 @@
+target/
+src/target/
+node_modules/
+dist/
+.git/
+*.deb
+*.app
+*.dmg
+*.zip
+.vscode/
+.idea/
+.DS_Store

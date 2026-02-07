@@ -1,0 +1,15 @@
+services:
+  gephyr:
+    image: gephyr:latest
+    container_name: gephyr
+    ports:
+      - "127.0.0.1:8045:8045"
+    volumes:
+      - ~/.gephyr:/home/gephyr/.gephyr
+    environment:
+      - LOG_LEVEL=info
+      - API_KEY=replace-with-strong-api-key
+      - WEB_PASSWORD=replace-with-strong-admin-password
+      - AUTH_MODE=strict
+      - ALLOW_LAN_ACCESS=false
+    restart: unless-stopped
