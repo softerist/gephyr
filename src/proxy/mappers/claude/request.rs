@@ -404,15 +404,15 @@ pub fn transform_claude_request_in(
         build_system_instruction(&claude_req.system, &claude_req.model, has_mcp_tools);
 
     //  Map model name (Use standard mapping)
-    //  Extract web search model as constant for easier maintenance
-    const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
+    //  Extract web search model from centralized mapping constants.
+    let web_search_fallback_model = crate::proxy::common::model_mapping::web_search_fallback_model();
 
     let mapped_model = if has_web_search_tool {
         tracing::debug!(
             "[Claude-Request] Web search tool detected, using fallback model: {}",
-            WEB_SEARCH_FALLBACK_MODEL
+            web_search_fallback_model
         );
-        WEB_SEARCH_FALLBACK_MODEL.to_string()
+        web_search_fallback_model.to_string()
     } else {
         crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model)
     };
@@ -451,14 +451,9 @@ pub fn transform_claude_request_in(
             should_enable_thinking_by_default(&claude_req.model)
         });
 
-    // Check if target model supports thinking
-    // Only models with "-thinking" suffix or Claude models support thinking
-    // Regular Gemini models (gemini-2.5-flash, gemini-2.5-pro) do NOT support thinking
-    // Allow "pro" models (e.g. gemini-3-pro, gemini-2.0-pro) to be recognized as thinking capable
-    let target_model_supports_thinking = mapped_model.contains("-thinking")
-        || mapped_model.starts_with("claude-")
-        || mapped_model.contains("gemini-2.0-pro")
-        || mapped_model.contains("gemini-3-pro");
+    // Check if target model supports thinking (centralized capability rules).
+    let target_model_supports_thinking =
+        crate::proxy::common::model_mapping::model_supports_thinking(&mapped_model);
 
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(
@@ -675,35 +670,14 @@ fn should_disable_thinking_due_to_history(messages: &[Message]) -> bool {
 // This function determines if the model should have thinking enabled
 // when no explicit thinking configuration is provided.
 fn should_enable_thinking_by_default(model: &str) -> bool {
-    let model_lower = model.to_lowercase();
-
-    // Enable thinking by default for Opus 4.5 and 4.6 variants
-    if model_lower.contains("opus-4-5") || model_lower.contains("opus-4.5")
-        || model_lower.contains("opus-4-6") || model_lower.contains("opus-4.6") {
+    let should_enable = crate::proxy::common::model_mapping::should_auto_enable_thinking(model);
+    if should_enable {
         tracing::debug!(
-            "[Thinking-Mode] Auto-enabling thinking for Opus model: {}",
+            "[Thinking-Mode] Auto-enabling thinking for model: {}",
             model
         );
-        return true;
     }
-
-    // Also enable for explicit thinking model variants
-    if model_lower.contains("-thinking") {
-        return true;
-    }
-
-    // Enable thinking by default for Gemini Pro models (gemini-3-pro, gemini-2.0-pro)
-    // These models prioritize reasoning but clients might not send thinking config for them
-    // unless they have "-thinking" suffix (which they don't in Antigravity mapping)
-    if model_lower.contains("gemini-2.0-pro") || model_lower.contains("gemini-3-pro") {
-        tracing::debug!(
-            "[Thinking-Mode] Auto-enabling thinking for Gemini Pro model: {}",
-            model
-        );
-        return true;
-    }
-
-    false
+    should_enable
 }
 
 // Minimum length for a valid thought_signature
@@ -1838,60 +1812,23 @@ pub fn clean_thinking_fields_recursive(val: &mut Value) {
 
 // Check if two model strings are compatible (same family)
 fn is_model_compatible(cached: &str, target: &str) -> bool {
-    // Simple heuristic: check if they share the same base prefix
-    // e.g. "gemini-1.5-pro" vs "gemini-1.5-pro-002" -> Compatible
-    // "gemini-1.5-pro" vs "gemini-2.0-flash" -> Incompatible
-
-    // Normalize
-    let c = cached.to_lowercase();
-    let t = target.to_lowercase();
-
-    if c == t {
-        return true;
-    }
-
-    // Check specific families
-    // Vertex AI signatures are very strict. 1.5-pro vs 1.5-flash are NOT cross-compatible.
-    // 2.0-flash vs 2.0-pro are also NOT cross-compatible.
-
-    // Exact model string match (already handled by c == t)
-
-    // Grouped family match (Claude models are more permissive)
-    if c.contains("claude-3-5") && t.contains("claude-3-5") {
-        return true;
-    }
-    if c.contains("claude-3-7") && t.contains("claude-3-7") {
-        return true;
-    }
-
-    // Gemini models: strict family match required for signatures
-    if c.contains("gemini-1.5-pro") && t.contains("gemini-1.5-pro") {
-        return true;
-    }
-    if c.contains("gemini-1.5-flash") && t.contains("gemini-1.5-flash") {
-        return true;
-    }
-    if c.contains("gemini-2.0-flash") && t.contains("gemini-2.0-flash") {
-        return true;
-    }
-    if c.contains("gemini-2.0-pro") && t.contains("gemini-2.0-pro") {
-        return true;
-    }
-
-    // Fallback: strict match required
-    false
+    crate::proxy::common::model_mapping::is_signature_family_compatible(cached, target)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proxy::common::json_schema::clean_json_schema;
+    use crate::proxy::common::model_mapping::{
+        MODEL_CLAUDE_SONNET_45,
+        MODEL_GEMINI_3_FLASH_THINKING, MODEL_GEMINI_3_PRO, MODEL_GEMINI_3_PRO_PREVIEW,
+    };
 
     #[test]
     fn test_ephemeral_injection_debug() {
         // This test simulates the issue where cache_control might be injected
         let json_with_null = json!({
-            "model": "claude-3-5-sonnet-20241022",
+            "model": MODEL_CLAUDE_SONNET_45,
             "messages": [
                 {
                     "role": "assistant",
@@ -1928,7 +1865,7 @@ mod tests {
     #[test]
     fn test_simple_request() {
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: MessageContent::String("Hello".to_string()),
@@ -2002,7 +1939,7 @@ mod tests {
     #[test]
     fn test_complex_tool_result() {
         let req = ClaudeRequest {
-            model: "claude-3-5-sonnet-20241022".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2069,7 +2006,7 @@ mod tests {
     fn test_cache_control_cleanup() {
         // Simulate historical messages with cache_control sent by VS Code plugins
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2131,7 +2068,7 @@ mod tests {
         // [Scenario] History has a tool calling chain, and Assistant message has no Thinking block.
         // Expect: system automatically degrades, disables Thinking mode, to avoid 400 error.
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2210,7 +2147,7 @@ mod tests {
     fn test_thinking_block_not_prepend_when_disabled() {
         // Verify when thinking is not enabled, thinking block will not be completed
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2261,7 +2198,7 @@ mod tests {
         // [Scenario] Client sent a thinking block with empty content
         // Expect: auto fill "..."
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![Message {
                 role: "assistant".to_string(),
                 content: MessageContent::Array(vec![
@@ -2314,7 +2251,7 @@ mod tests {
         // [Scenario] Client contains RedactedThinking
         // Expect: downgrade to plain text, without thought: true
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![Message {
                 role: "assistant".to_string(),
                 content: MessageContent::Array(vec![
@@ -2512,7 +2449,7 @@ mod tests {
     #[test]
     fn test_default_max_tokens() {
         let req = ClaudeRequest {
-            model: "claude-3-opus".to_string(),
+            model: MODEL_CLAUDE_SONNET_45.to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: MessageContent::String("Hello".to_string()),
@@ -2548,7 +2485,7 @@ mod tests {
 
         // Setup request with high budget
         let req = ClaudeRequest {
-            model: "gemini-2.0-flash-thinking-exp".to_string(), // Contains "flash"
+            model: MODEL_GEMINI_3_FLASH_THINKING.to_string(), // Contains "flash"
             messages: vec![],
             thinking: Some(ThinkingConfig {
                 type_: "enabled".to_string(),
@@ -2578,7 +2515,7 @@ mod tests {
 
         // Setup request for Pro thinking model (mock name for testing)
         let req_pro = ClaudeRequest {
-            model: "gemini-2.0-pro-thinking-exp".to_string(), // Contains "thinking" but not "flash"
+            model: MODEL_GEMINI_3_PRO.to_string(), // Contains "pro"
             messages: vec![],
             thinking: Some(ThinkingConfig {
                 type_: "enabled".to_string(),
@@ -2611,7 +2548,7 @@ mod tests {
     fn test_gemini_pro_thinking_support() {
         // Setup request for Gemini Pro (no -thinking suffix)
         let req = ClaudeRequest {
-            model: "gemini-3-pro-preview".to_string(), 
+            model: MODEL_GEMINI_3_PRO_PREVIEW.to_string(), 
             messages: vec![Message {
                 role: "user".to_string(),
                 content: MessageContent::String("Hello".to_string()),
@@ -2649,7 +2586,7 @@ mod tests {
     fn test_gemini_pro_default_thinking() {
         // Setup request for Gemini Pro WITHOUT thinking config
         let req = ClaudeRequest {
-            model: "gemini-3-pro-preview".to_string(), 
+            model: MODEL_GEMINI_3_PRO_PREVIEW.to_string(), 
             messages: vec![Message {
                 role: "user".to_string(),
                 content: MessageContent::String("Hello".to_string()),
@@ -2676,3 +2613,4 @@ mod tests {
         assert!(gen_config.get("thinkingConfig").is_some(), "thinkingConfig should be auto-enabled for gemini-3-pro");
     }
 }
+

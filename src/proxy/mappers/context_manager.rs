@@ -441,7 +441,7 @@ mod tests {
     // Helper to create a request since Default is not implemented
     fn create_test_request() -> ClaudeRequest {
         ClaudeRequest {
-            model: "claude-3-5-sonnet".into(),
+            model: "claude-sonnet-4-5".into(),
             messages: vec![],
             system: None,
             tools: None,
@@ -476,7 +476,7 @@ mod tests {
         // Construct history of 6 messages (indices 0-5)
         // 0: Assistant (Ancient) -> Should be purified
         // 1: User
-        // 2: Assistant (Old) -> Should be protected (index 2 >= 6-4=2)
+        // 2: Assistant (Old) -> Should be purified in aggressive-only mode
         // 3: User
         // 4: Assistant (Recent) -> Should be protected
         // 5: User
@@ -541,9 +541,9 @@ mod tests {
             }
         }
 
-        // 2: Old -> Protected
+        // 2: Old -> Filtered in aggressive mode
         if let MessageContent::Array(blocks) = &messages[2].content {
-            assert_eq!(blocks.len(), 2);
+            assert_eq!(blocks.len(), 1);
         }
     }
 

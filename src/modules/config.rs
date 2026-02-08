@@ -4,11 +4,12 @@ use serde_json;
 use crate::models::AppConfig;
 use super::account::get_data_dir;
 
-const CONFIG_FILE: &str = "gui_config.json";
+const CONFIG_FILE: &str = "config.json";
 
 // Load application configuration
 pub fn load_app_config() -> Result<AppConfig, String> {
     let data_dir = get_data_dir()?;
+
     let config_path = data_dir.join(CONFIG_FILE);
     
     if !config_path.exists() {

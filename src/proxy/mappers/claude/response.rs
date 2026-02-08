@@ -577,7 +577,7 @@ mod tests {
                 total_token_count: Some(15),
                 cached_content_token_count: None,
             }),
-            model_version: Some("gemini-2.5-flash".to_string()),
+            model_version: Some("gemini-3-flash".to_string()),
             response_id: Some("resp_123".to_string()),
         };
 
@@ -586,7 +586,7 @@ mod tests {
             false,
             1_000_000,
             None,
-            "gemini-2.5-flash".to_string(),
+            "gemini-3-flash".to_string(),
             1,
         );
         assert!(result.is_ok());
@@ -634,7 +634,7 @@ mod tests {
                 grounding_metadata: None,
             }]),
             usage_metadata: None,
-            model_version: Some("gemini-2.5-flash".to_string()),
+            model_version: Some("gemini-3-flash".to_string()),
             response_id: Some("resp_456".to_string()),
         };
 
@@ -643,7 +643,7 @@ mod tests {
             false,
             1_000_000,
             None,
-            "gemini-2.5-flash".to_string(),
+            "gemini-3-flash".to_string(),
             1,
         );
         assert!(result.is_ok());

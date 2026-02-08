@@ -531,7 +531,7 @@ mod tests {
         // Use a random username to avoid collisions in existing DB runs during dev
         let username = format!("TestUser_{}", Uuid::new_v4());
         let token_res = create_token(username.clone(), "day".to_string(), Some("Test token".to_string()), 0, None, None);
-        assert!(token_res.is_ok());
+        assert!(token_res.is_ok(), "create_token failed: {:?}", token_res.err());
 
         let token = token_res.unwrap();
         assert_eq!(token.username, username);

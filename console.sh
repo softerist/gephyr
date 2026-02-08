@@ -10,7 +10,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-gephyr}"
 IMAGE="${IMAGE:-gephyr:latest}"
 DATA_DIR="${GEPHYR_DATA_DIR:-$HOME/.gephyr}"
 LOG_LINES=120
-MODEL="gpt-4o-mini"
+MODEL="gpt-5.3-codex"
 PROMPT="hello from gephyr"
 ENABLE_ADMIN_API="false"
 NO_BROWSER="false"
@@ -44,7 +44,7 @@ Options:
   --image <image>        Docker image (default gephyr:latest)
   --data-dir <path>      Host data dir (default $HOME/.gephyr)
   --tail <n>             Log lines for logs command (default 120)
-  --model <name>         Model for api-test (default gpt-4o-mini)
+  --model <name>         Model for api-test (default gpt-5.3-codex)
   --prompt <text>        Prompt for api-test
   --no-browser           Do not open browser for login command
   --no-restart           Rotate key without restart
@@ -360,6 +360,44 @@ while [[ $# -gt 0 ]]; do
 done
 
 load_env_local
+
+# Check if Docker daemon is running
+check_docker_available() {
+  if ! docker info >/dev/null 2>&1; then
+    return 1
+  fi
+  return 0
+}
+
+assert_docker_running() {
+  if ! check_docker_available; then
+    echo ""
+    echo -e "\033[31m╔══════════════════════════════════════════════════════════════════╗\033[0m"
+    echo -e "\033[31m║                     DOCKER IS NOT RUNNING                        ║\033[0m"
+    echo -e "\033[31m╠══════════════════════════════════════════════════════════════════╣\033[0m"
+    echo -e "\033[33m║  The Docker daemon is not accessible.                            ║\033[0m"
+    echo -e "\033[33m║                                                                  ║\033[0m"
+    echo -e "\033[33m║  Please ensure:                                                  ║\033[0m"
+    echo -e "\033[33m║    1. Docker is installed                                        ║\033[0m"
+    echo -e "\033[33m║    2. Docker daemon is running (systemctl start docker)          ║\033[0m"
+    echo -e "\033[33m║    3. Your user has permission to access Docker                  ║\033[0m"
+    echo -e "\033[33m║                                                                  ║\033[0m"
+    echo -e "\033[33m║  On Linux:   sudo systemctl start docker                         ║\033[0m"
+    echo -e "\033[33m║  On macOS:   Open Docker Desktop from /Applications              ║\033[0m"
+    echo -e "\033[31m╚══════════════════════════════════════════════════════════════════╝\033[0m"
+    echo ""
+    echo "Docker daemon is not running. Please start Docker and try again." >&2
+    exit 1
+  fi
+}
+
+# Commands that require Docker
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key logout logout-and-stop"
+
+# Check Docker for commands that need it
+if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
+  assert_docker_running
+fi
 
 case "$COMMAND" in
   help) print_help ;;

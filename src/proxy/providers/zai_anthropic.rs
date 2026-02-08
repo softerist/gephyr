@@ -24,7 +24,7 @@ fn map_model_for_zai(original: &str, state: &crate::proxy::ZaiConfig) -> String 
     if m.starts_with("glm-") {
         return original.to_string();
     }
-    if !m.starts_with("claude-") {
+    if !crate::proxy::common::model_mapping::is_claude_model(&m) {
         return original.to_string();
     }
     if m.contains("opus") {

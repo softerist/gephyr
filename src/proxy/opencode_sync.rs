@@ -18,22 +18,8 @@ const ANTIGRAVITY_CONFIG_FILE: &str = "antigravity.json";
 const ANTIGRAVITY_ACCOUNTS_FILE: &str = "antigravity-accounts.json";
 const BACKUP_SUFFIX: &str = ".antigravity.bak";
 
-const ANTHROPIC_MODELS: &[&str] = &[
-    "claude-sonnet-4-5",
-    "claude-sonnet-4-5-thinking",
-    "claude-opus-4-5-thinking",
-];
-
-const GOOGLE_MODELS: &[&str] = &[
-    "gemini-3-pro-high",
-    "gemini-3-pro-low",
-    "gemini-3-flash",
-    "gemini-3-pro-image",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash-thinking",
-    "gemini-2.5-pro",
-];
+const ANTHROPIC_MODELS: &[&str] = crate::proxy::common::model_mapping::OPENCODE_ANTHROPIC_MODELS;
+const GOOGLE_MODELS: &[&str] = crate::proxy::common::model_mapping::OPENCODE_GOOGLE_MODELS;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OpencodeStatus {

@@ -114,6 +114,18 @@ async fn start_headless_runtime() -> Result<(), String> {
     apply_headless_env_overrides(&mut config);
     apply_security_hardening(&mut config);
 
+    // Validate configuration before starting (fail-fast)
+    modules::validation::validate_app_config(&config).map_err(|errors| {
+        format!(
+            "configuration_validation_failed:\n{}",
+            errors
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+
     info!("Starting headless proxy service on port {}", config.proxy.port);
     if config.proxy.allow_lan_access {
         warn!("LAN access is enabled (bind address will be 0.0.0.0)");
@@ -152,7 +164,7 @@ pub fn run() {
 
     let args: Vec<String> = std::env::args().collect();
     if !args.iter().any(|arg| arg == "--headless") {
-        warn!("Desktop UI mode is removed. Starting in headless mode.");
+        warn!("Starting headless runtime (`--headless` is optional).");
     }
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");

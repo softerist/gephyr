@@ -2,7 +2,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, extract::State};
 use serde_json::{json, Value};
-use crate::proxy::server::AppState;
+use crate::proxy::server::ModelCatalogState;
 
 // ===== Unified Retry and Backoff Strategies =====
 
@@ -142,7 +142,7 @@ pub fn should_rotate_account(status_code: u16) -> bool {
 // Detects model capabilities and configuration
 // POST /v1/models/detect
 pub async fn handle_detect_model(
-    State(state): State<AppState>,
+    State(state): State<ModelCatalogState>,
     Json(body): Json<Value>,
 ) -> Response {
     let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
@@ -185,4 +185,27 @@ pub async fn handle_detect_model(
     }
 
     Json(response).into_response()
+}
+
+pub async fn build_models_list_response(state: &ModelCatalogState) -> Json<Value> {
+    use crate::proxy::common::model_mapping::get_all_dynamic_models;
+
+    let model_ids = get_all_dynamic_models(&state.custom_mapping).await;
+
+    let data: Vec<_> = model_ids
+        .into_iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "object": "model",
+                "created": 1706745600,
+                "owned_by": "antigravity"
+            })
+        })
+        .collect();
+
+    Json(json!({
+        "object": "list",
+        "data": data
+    }))
 }

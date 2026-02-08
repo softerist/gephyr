@@ -7,7 +7,7 @@ fn get_current_exe_path() -> Option<std::path::PathBuf> {
         .and_then(|p| p.canonicalize().ok())
 }
 
-// Desktop process start/stop management is removed in headless mode.
+// Legacy process discovery utilities for headless runtime diagnostics.
 // Get Antigravity executable path and startup arguments from running processes
 //
 // This is the most reliable method to find installations and startup args anywhere

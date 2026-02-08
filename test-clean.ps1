@@ -6,12 +6,41 @@ param(
     [switch]$RunApiTest,
     [switch]$DisableAdminAfter,
     [string]$Image = "gephyr:latest",
-    [string]$Model = "gpt-4o-mini",
+    [string]$Model = "gpt-5.3-codex",
     [string]$Prompt = "hello from gephyr"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Check Docker availability early to fail fast with a single message
+function Test-DockerAvailable {
+    try {
+        $null = docker info 2>&1
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+if (-not (Test-DockerAvailable)) {
+    Write-Host ""
+    Write-Host "╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+    Write-Host "║                     DOCKER IS NOT RUNNING                        ║" -ForegroundColor Red
+    Write-Host "╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Red
+    Write-Host "║  The Docker daemon is not accessible.                            ║" -ForegroundColor Yellow
+    Write-Host "║                                                                  ║" -ForegroundColor Yellow
+    Write-Host "║  Please ensure:                                                  ║" -ForegroundColor Yellow
+    Write-Host "║    1. Docker Desktop is installed                                ║" -ForegroundColor Yellow
+    Write-Host "║    2. Docker Desktop is running (check system tray)              ║" -ForegroundColor Yellow
+    Write-Host "║    3. Docker engine has finished starting up                     ║" -ForegroundColor Yellow
+    Write-Host "║                                                                  ║" -ForegroundColor Yellow
+    Write-Host "║  On Windows, look for the Docker whale icon in your system tray. ║" -ForegroundColor Yellow
+    Write-Host "║  If it's animating, Docker is still starting up.                 ║" -ForegroundColor Yellow
+    Write-Host "╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+    Write-Host ""
+    exit 1
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $consoleScript = Join-Path $scriptDir "console.ps1"

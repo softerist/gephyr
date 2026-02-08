@@ -41,12 +41,7 @@ pub struct ScheduledWarmupConfig {
 }
 
 fn default_warmup_models() -> Vec<String> {
-    vec![
-        "gemini-3-flash".to_string(),
-        "claude-sonnet-4-5".to_string(),
-        "gemini-3-pro-high".to_string(),
-        "gemini-3-pro-image".to_string(),
-    ]
+    crate::proxy::common::model_mapping::default_warmup_models()
 }
 
 impl ScheduledWarmupConfig {
@@ -79,12 +74,7 @@ pub struct QuotaProtectionConfig {
 }
 
 fn default_monitored_models() -> Vec<String> {
-    vec![
-        "claude-sonnet-4-5".to_string(),
-        "gemini-3-pro-high".to_string(),
-        "gemini-3-flash".to_string(),
-        "gemini-3-pro-image".to_string(),
-    ]
+    crate::proxy::common::model_mapping::default_quota_monitored_models()
 }
 
 impl QuotaProtectionConfig {
@@ -112,12 +102,7 @@ pub struct PinnedQuotaModelsConfig {
 }
 
 fn default_pinned_models() -> Vec<String> {
-    vec![
-        "gemini-3-pro-high".to_string(),
-        "gemini-3-flash".to_string(),
-        "gemini-3-pro-image".to_string(),
-        "claude-sonnet-4-5-thinking".to_string(),
-    ]
+    crate::proxy::common::model_mapping::default_pinned_quota_models()
 }
 
 impl PinnedQuotaModelsConfig {

@@ -9,6 +9,35 @@ use std::sync::{OnceLock, RwLock};
 // ============================================================================
 static GLOBAL_THINKING_BUDGET_CONFIG: OnceLock<RwLock<ThinkingBudgetConfig>> = OnceLock::new();
 
+#[cfg(test)]
+static THINKING_BUDGET_TEST_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+pub struct ThinkingBudgetTestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    original: ThinkingBudgetConfig,
+}
+
+#[cfg(test)]
+impl Drop for ThinkingBudgetTestGuard {
+    fn drop(&mut self) {
+        update_thinking_budget_config(self.original.clone());
+    }
+}
+
+#[cfg(test)]
+pub fn lock_thinking_budget_for_test() -> ThinkingBudgetTestGuard {
+    let lock = THINKING_BUDGET_TEST_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .expect("thinking budget test lock poisoned");
+    let original = get_thinking_budget_config();
+    ThinkingBudgetTestGuard {
+        _lock: lock,
+        original,
+    }
+}
+
 // Get current Thinking Budget configuration
 pub fn get_thinking_budget_config() -> ThinkingBudgetConfig {
     GLOBAL_THINKING_BUDGET_CONFIG

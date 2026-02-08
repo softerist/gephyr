@@ -114,10 +114,42 @@ pub struct AppState {
     pub proxy_pool_manager: Arc<crate::proxy::proxy_pool::ProxyPoolManager>, //
 }
 
+#[derive(Clone)]
+pub struct OpenAIHandlerState {
+    pub token_manager: Arc<TokenManager>,
+    pub custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
+    pub debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
+}
+
+#[derive(Clone)]
+pub struct ModelCatalogState {
+    pub custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+}
+
 // Implement FromRef for AppState to allow middleware to extract security state
 impl axum::extract::FromRef<AppState> for Arc<RwLock<crate::proxy::ProxySecurityConfig>> {
     fn from_ref(state: &AppState) -> Self {
         state.security.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for OpenAIHandlerState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            token_manager: state.token_manager.clone(),
+            custom_mapping: state.custom_mapping.clone(),
+            upstream: state.upstream.clone(),
+            debug_logging: state.debug_logging.clone(),
+        }
+    }
+}
+
+impl axum::extract::FromRef<AppState> for ModelCatalogState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            custom_mapping: state.custom_mapping.clone(),
+        }
     }
 }
 
@@ -2211,8 +2243,7 @@ async fn admin_delete_device_version(
 }
 
 async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // Note: In Web mode, this may not actually open a local folder unless the backend handles it.
-    // For ABV_Refactor, the backend should use opener to open it on the server (the desktop).
+    // Folder opening is disabled in headless deployments; keep endpoint behavior consistent.
     crate::commands::open_data_folder().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

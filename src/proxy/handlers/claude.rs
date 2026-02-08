@@ -18,7 +18,7 @@ use crate::proxy::mappers::claude::{
     clean_cache_control_from_messages, merge_consecutive_messages,
     models::{Message, MessageContent},
 };
-use crate::proxy::server::AppState;
+use crate::proxy::server::{AppState, ModelCatalogState};
 use crate::proxy::mappers::context_manager::ContextManager;
 use crate::proxy::mappers::estimation_calibrator::get_calibrator;
 use crate::proxy::debug_logger;
@@ -30,7 +30,7 @@ const MAX_RETRY_ATTEMPTS: usize = 3;
 
 // ===== Model Constants for Background Tasks =====
 // These can be adjusted for performance/cost optimization or overridden by custom_mapping
-const INTERNAL_BACKGROUND_TASK: &str = "internal-background-task";  // Unified virtual ID for all background tasks
+const INTERNAL_BACKGROUND_TASK: &str = crate::proxy::common::model_mapping::MODEL_INTERNAL_BACKGROUND_TASK;  // Unified virtual ID for all background tasks
 
 // ===== Layer 3: XML Summary Prompt Template =====
 // Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
@@ -104,7 +104,7 @@ The structure MUST be as follows:
 
 // ===== Unified Backoff Strategy Module =====
 // Removed local duplicate definitions, using unified implementation from common
-use super::common::{determine_retry_strategy, apply_retry_strategy, should_rotate_account, RetryStrategy};
+use super::common::{build_models_list_response, determine_retry_strategy, apply_retry_strategy, should_rotate_account, RetryStrategy};
 
 // ===== Backoff Strategy Module End =====
 
@@ -707,7 +707,7 @@ pub async fn handle_messages(
     let query = if actual_stream { Some("alt=sse") } else { None };
         // Prepare Robust Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
-        if mapped_model.to_lowercase().contains("claude") {
+        if crate::proxy::common::model_mapping::is_claude_model(&mapped_model) {
             extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219".to_string());
             tracing::debug!("[{}] Added Comprehensive Beta Headers for Claude model", trace_id);
         }
@@ -1062,21 +1062,15 @@ pub async fn handle_messages(
             //  Heal session after stripping thinking blocks to prevent "naked ToolResult" rejection
             // This ensures that any ToolResult in history is properly "closed" with synthetic messages
             // if its preceding Thinking block was just converted to Text.
-            crate::proxy::mappers::claude::thinking_utils::close_tool_loop_for_thinking(&mut request_for_body.messages);
-            
-            // Clean -thinking suffix from model name
-            if request_for_body.model.contains("claude-") {
-                let mut m = request_for_body.model.clone();
-                m = m.replace("-thinking", "");
-                if m.contains("claude-sonnet-4-5-") {
-                    m = "claude-sonnet-4-5".to_string();
-                } else if m.contains("claude-opus-4-6-") {
-                    m = "claude-opus-4-6".to_string();
-                } else if m.contains("claude-opus-4-5-") || m.contains("claude-opus-4-") {
-                    m = "claude-opus-4-5".to_string();
-                }
-                request_for_body.model = m;
-            }
+            crate::proxy::mappers::claude::thinking_utils::close_tool_loop_for_thinking(
+                &mut request_for_body.messages,
+            );
+
+            // Clean retry model to canonical Claude ID
+            request_for_body.model =
+                crate::proxy::common::model_mapping::normalize_claude_retry_model(
+                    &request_for_body.model,
+                );
             
             //  Force retry: as we have cleaned thinking blocks, this is a new, retryable request
             // Do not use determine_retry_strategy, as it will return NoRetry because retried_without_thinking=true
@@ -1143,7 +1137,10 @@ pub async fn handle_messages(
                         "error": {
                             "type": "invalid_request_error",
                             "message": "Prompt is too long (server-side context limit reached).",
-                            "suggestion": "Please: 1) Executive '/compact' in Claude Code 2) Reduce conversation history 3) Switch to gemini-1.5-pro (2M context limit)"
+                            "suggestion": format!(
+                                "Please: 1) Executive '/compact' in Claude Code 2) Reduce conversation history 3) Switch to {} (2M context limit)",
+                                crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO
+                            )
                         }
                     }))
                 ).into_response();
@@ -1230,26 +1227,8 @@ pub async fn handle_messages(
 }
 
 // List available models
-pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {
-    use crate::proxy::common::model_mapping::get_all_dynamic_models;
-
-    let model_ids = get_all_dynamic_models(
-        &state.custom_mapping,
-    ).await;
-
-    let data: Vec<_> = model_ids.into_iter().map(|id| {
-        json!({
-            "id": id,
-            "object": "model",
-            "created": 1706745600,
-            "owned_by": "antigravity"
-        })
-    }).collect();
-
-    Json(json!({
-        "object": "list",
-        "data": data
-    }))
+pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
+    build_models_list_response(&state).await
 }
 
 // Count tokens (placeholder)
@@ -1636,7 +1615,7 @@ async fn call_gemini_sync(
 // 
 // This function:
 // 1. Extracts the last valid thinking signature
-// 2. Calls a cheap model (gemini-2.5-flash-lite) to generate XML summary
+            // 2. Calls a cheap model (gemini-3-flash) to generate XML summary
 // 3. Creates a new message sequence with summary as prefix
 // 4. Preserves the signature in the summary
 // 5. Returns the forked request

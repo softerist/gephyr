@@ -10,12 +10,12 @@ use crate::proxy::mappers::openai::{
     transform_openai_request, transform_openai_response, OpenAIRequest,
 };
 // use crate::proxy::upstream::client::UpstreamClient; // Acquired through state
-use crate::proxy::server::AppState;
+use crate::proxy::server::{ModelCatalogState, OpenAIHandlerState};
 use crate::proxy::debug_logger;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 use super::common::{
-    apply_retry_strategy, determine_retry_strategy, should_rotate_account, RetryStrategy,
+    apply_retry_strategy, build_models_list_response, determine_retry_strategy, should_rotate_account, RetryStrategy,
 };
 use crate::proxy::session_manager::SessionManager;
 use tokio::time::Duration;
@@ -23,7 +23,7 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; //  Adapter Registry
 use axum::http::HeaderMap;
 
 pub async fn handle_chat_completions(
-    State(state): State<AppState>,
+    State(state): State<OpenAIHandlerState>,
     headers: HeaderMap, // [CHANGED] Extract headers
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -228,7 +228,7 @@ pub async fn handle_chat_completions(
 
         // Inject Anthropic Beta Headers for Claude models (OpenAI path)
         let mut extra_headers = std::collections::HashMap::new();
-        if mapped_model.to_lowercase().contains("claude") {
+        if crate::proxy::common::model_mapping::is_claude_model(&mapped_model) {
             extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219".to_string());
             tracing::debug!("[{}] Injected Anthropic beta headers for Claude model (via OpenAI)", trace_id);
         }
@@ -651,7 +651,7 @@ pub async fn handle_chat_completions(
 // Handle Legacy Completions API (/v1/completions)
 // Convert Prompt to Chat Message format, reuse handle_chat_completions
 pub async fn handle_completions(
-    State(state): State<AppState>,
+    State(state): State<OpenAIHandlerState>,
     Json(mut body): Json<Value>,
 ) -> Response {
     debug!(
@@ -1447,26 +1447,6 @@ pub async fn handle_completions(
     }
 }
 
-pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {
-    use crate::proxy::common::model_mapping::get_all_dynamic_models;
-
-    let model_ids = get_all_dynamic_models(&state.custom_mapping).await;
-
-    let data: Vec<_> = model_ids
-        .into_iter()
-        .map(|id| {
-            json!({
-                "id": id,
-                "object": "model",
-                "created": 1706745600,
-                "owned_by": "antigravity"
-            })
-        })
-        .collect();
-
-    Json(json!({
-        "object": "list",
-        "data": data
-    }))
+pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
+    build_models_list_response(&state).await
 }
-

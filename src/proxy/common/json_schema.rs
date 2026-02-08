@@ -10,6 +10,27 @@ const STRIP_KEYS: &[&str] = &[
     "deprecated",
     "readOnly",
     "writeOnly",
+    // Validation/constraint keywords often rejected or unnecessary for upstream tool schemas
+    "additionalProperties",
+    "unevaluatedProperties",
+    "propertyNames",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "format",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "minProperties",
+    "maxProperties",
+    "contentEncoding",
+    "contentMediaType",
+    "contentSchema",
 ];
 
 pub fn clean_json_schema(value: &mut Value) {
@@ -17,6 +38,25 @@ pub fn clean_json_schema(value: &mut Value) {
         Value::Object(map) => {
             for key in STRIP_KEYS {
                 map.remove(*key);
+            }
+
+            if let Some(ty) = map.get_mut("type") {
+                match ty {
+                    Value::String(s) => {
+                        *s = s.to_ascii_lowercase();
+                    }
+                    Value::Array(items) => {
+                        // Convert union types like ["string", "null"] to first non-null type.
+                        if let Some(non_null) = items.iter().find_map(|v| {
+                            v.as_str()
+                                .map(|s| s.to_ascii_lowercase())
+                                .filter(|s| s != "null")
+                        }) {
+                            *ty = Value::String(non_null);
+                        }
+                    }
+                    _ => {}
+                }
             }
 
             for (_, child) in map.iter_mut() {

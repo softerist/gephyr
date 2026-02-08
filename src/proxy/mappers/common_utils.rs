@@ -2,6 +2,13 @@
 // Provides unified grounding/networking logic
 
 use serde_json::{json, Value};
+use crate::proxy::common::model_mapping::{
+    is_high_quality_grounding_candidate,
+    is_image_generation_model,
+    normalize_preview_alias,
+    web_search_fallback_model,
+    MODEL_GEMINI_3_PRO_IMAGE,
+};
 
 // Request configuration after grounding resolution
 #[derive(Debug, Clone)]
@@ -25,7 +32,7 @@ pub fn resolve_request_config(
     body: Option<&Value>,  //  Request body for Gemini native imageConfig
 ) -> RequestConfig {
     // 1. Image Generation Check (Priority)
-    if mapped_model.starts_with("gemini-3-pro-image") {
+    if is_image_generation_model(mapped_model) {
         //  Priority 1: Parse imageConfig from Gemini request body (generationConfig.imageConfig)
         if let Some(body_val) = body {
             if let Some(gen_config) = body_val.get("generationConfig") {
@@ -36,7 +43,7 @@ pub fn resolve_request_config(
                     );
                     
                     // Extract base model without suffix (always gemini-3-pro-image for image gen)
-                    let parsed_base_model = "gemini-3-pro-image".to_string();
+                    let parsed_base_model = MODEL_GEMINI_3_PRO_IMAGE.to_string();
                     
                     return RequestConfig {
                         request_type: "image_gen".to_string(),
@@ -68,18 +75,8 @@ pub fn resolve_request_config(
     // Strip -online suffix from original model if present (to detect networking intent)
     let is_online_suffix = original_model.ends_with("-online");
 
-    // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
-    let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
-        || mapped_model == "gemini-1.5-pro"
-        || mapped_model.starts_with("gemini-1.5-pro-")
-        || mapped_model.starts_with("gemini-2.5-flash-")
-        || mapped_model.starts_with("gemini-2.0-flash")
-        || mapped_model.starts_with("gemini-3-")
-        || mapped_model.contains("claude-3-5-sonnet")
-        || mapped_model.contains("claude-3-opus")
-        || mapped_model.contains("claude-sonnet")
-        || mapped_model.contains("claude-opus")
-        || mapped_model.contains("claude-4");
+    // High-quality grounding allowlist (kept for future policy use)
+    let _is_high_quality_model = is_high_quality_grounding_candidate(mapped_model);
 
     // Determine if we should enable networking
     //  Disable model-based auto-networking logic to prevent image requests being overwritten by web search results.
@@ -92,22 +89,18 @@ pub fn resolve_request_config(
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
 
     //  Map logic aliases back to physical model names for upstream compatibility
-    final_model = match final_model.as_str() {
-        "gemini-3-pro-preview" => "gemini-3-pro-high".to_string(), // Preview maps back to High
-        "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
-        "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
-        _ => final_model,
-    };
+    final_model = normalize_preview_alias(&final_model);
 
     if enable_networking {
-        //  Only gemini-2.5-flash supports googleSearch tool
+        //  Only the configured fallback model supports googleSearch tool
         // All other models (including Gemini 3 Pro, thinking models, Claude aliases) must downgrade
-        if final_model != "gemini-2.5-flash" {
+        if final_model != web_search_fallback_model() {
             tracing::info!(
-                "[Common-Utils] Downgrading {} to gemini-2.5-flash for web search (only gemini-2.5-flash supports googleSearch)",
-                final_model
+                "[Common-Utils] Downgrading {} to {} for web search",
+                final_model,
+                web_search_fallback_model()
             );
-            final_model = "gemini-2.5-flash".to_string();
+            final_model = web_search_fallback_model().to_string();
         }
     }
 
@@ -206,10 +199,10 @@ pub fn parse_image_config_with_params(
         }
     }
 
-    // The upstream model must be EXACTLY "gemini-3-pro-image"
+    // The upstream model must be exactly the canonical image model.
     (
         serde_json::Value::Object(config),
-        "gemini-3-pro-image".to_string(),
+        MODEL_GEMINI_3_PRO_IMAGE.to_string(),
     )
 }
 
@@ -468,11 +461,16 @@ pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::common::model_mapping::{
+        MODEL_CLAUDE_SONNET_ALIAS, MODEL_GEMINI_3_FLASH, MODEL_GEMINI_3_PRO_IMAGE,
+        MODEL_GPT_53_CODEX, web_search_fallback_model,
+    };
 
     #[test]
     fn test_high_quality_model_auto_grounding() {
         // Auto-grounding is currently disabled by default due to conflict with image gen
-        let config = resolve_request_config("gpt-4o", "gemini-2.5-flash", &None, None, None, None);
+        let config =
+            resolve_request_config(MODEL_GPT_53_CODEX, MODEL_GEMINI_3_FLASH, &None, None, None, None);
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -489,16 +487,29 @@ mod tests {
 
     #[test]
     fn test_online_suffix_force_grounding() {
-        let config =
-            resolve_request_config("gemini-3-flash-online", "gemini-3-flash", &None, None, None, None);
+        let config = resolve_request_config(
+            &format!("{}-online", MODEL_GEMINI_3_FLASH),
+            MODEL_GEMINI_3_FLASH,
+            &None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(config.request_type, "web_search");
         assert!(config.inject_google_search);
-        assert_eq!(config.final_model, "gemini-2.5-flash");
+        assert_eq!(config.final_model, web_search_fallback_model());
     }
 
     #[test]
     fn test_default_no_grounding() {
-        let config = resolve_request_config("claude-sonnet", "gemini-3-flash", &None, None, None, None);
+        let config = resolve_request_config(
+            MODEL_CLAUDE_SONNET_ALIAS,
+            MODEL_GEMINI_3_FLASH,
+            &None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -506,8 +517,8 @@ mod tests {
     #[test]
     fn test_image_model_excluded() {
         let config = resolve_request_config(
-            "gemini-3-pro-image",
-            "gemini-3-pro-image",
+            MODEL_GEMINI_3_PRO_IMAGE,
+            MODEL_GEMINI_3_PRO_IMAGE,
             &None,
             None,
             None,
@@ -520,20 +531,22 @@ mod tests {
     #[test]
     fn test_image_2k_and_ultrawide_config() {
         // Test 2K
-        let (config_2k, _) = parse_image_config("gemini-3-pro-image-2k");
+        let (config_2k, _) = parse_image_config(&format!("{}-2k", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_2k["imageSize"], "2K");
 
         // Test 21:9
-        let (config_21x9, _) = parse_image_config("gemini-3-pro-image-21x9");
+        let (config_21x9, _) = parse_image_config(&format!("{}-21x9", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_21x9["aspectRatio"], "21:9");
 
         // Test Combined (if logic allows, though suffix parsing is greedy)
-        let (config_combined, _) = parse_image_config("gemini-3-pro-image-2k-21x9");
+        let (config_combined, _) =
+            parse_image_config(&format!("{}-2k-21x9", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_combined["imageSize"], "2K");
         assert_eq!(config_combined["aspectRatio"], "21:9");
 
         // Test 4K + 21:9
-        let (config_4k_wide, _) = parse_image_config("gemini-3-pro-image-4k-21x9");
+        let (config_4k_wide, _) =
+            parse_image_config(&format!("{}-4k-21x9", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_4k_wide["imageSize"], "4K");
         assert_eq!(config_4k_wide["aspectRatio"], "21:9");
     }
@@ -541,46 +554,58 @@ mod tests {
     #[test]
     fn test_parse_image_config_with_openai_params() {
         // Test quality parameter mapping
-        let (config_hd, _) = parse_image_config_with_params("gemini-3-pro-image", None, Some("hd"));
+        let (config_hd, _) = parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, None, Some("hd"));
         assert_eq!(config_hd["imageSize"], "4K");
         assert_eq!(config_hd["aspectRatio"], "1:1");
 
-        let (config_medium, _) =
-            parse_image_config_with_params("gemini-3-pro-image", None, Some("medium"));
+        let (config_medium, _) = parse_image_config_with_params(
+            MODEL_GEMINI_3_PRO_IMAGE,
+            None,
+            Some("medium"),
+        );
         assert_eq!(config_medium["imageSize"], "2K");
 
-        let (config_standard, _) =
-            parse_image_config_with_params("gemini-3-pro-image", None, Some("standard"));
+        let (config_standard, _) = parse_image_config_with_params(
+            MODEL_GEMINI_3_PRO_IMAGE,
+            None,
+            Some("standard"),
+        );
         assert_eq!(config_standard["imageSize"], "1K");
 
         // Test size parameter mapping with dynamic calculation
         let (config_16_9, _) =
-            parse_image_config_with_params("gemini-3-pro-image", Some("1280x720"), None);
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, Some("1280x720"), None);
         assert_eq!(config_16_9["aspectRatio"], "16:9");
 
         let (config_9_16, _) =
-            parse_image_config_with_params("gemini-3-pro-image", Some("720x1280"), None);
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, Some("720x1280"), None);
         assert_eq!(config_9_16["aspectRatio"], "9:16");
 
         let (config_4_3, _) =
-            parse_image_config_with_params("gemini-3-pro-image", Some("800x600"), None);
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, Some("800x600"), None);
         assert_eq!(config_4_3["aspectRatio"], "4:3");
 
         // Test combined size + quality
-        let (config_combined, _) =
-            parse_image_config_with_params("gemini-3-pro-image", Some("1920x1080"), Some("hd"));
+        let (config_combined, _) = parse_image_config_with_params(
+            MODEL_GEMINI_3_PRO_IMAGE,
+            Some("1920x1080"),
+            Some("hd"),
+        );
         assert_eq!(config_combined["aspectRatio"], "16:9");
         assert_eq!(config_combined["imageSize"], "4K");
 
         // Test backward compatibility: model suffix takes precedence when no params
-        let (config_compat, _) =
-            parse_image_config_with_params("gemini-3-pro-image-16x9-4k", None, None);
+        let (config_compat, _) = parse_image_config_with_params(
+            &format!("{}-16x9-4k", MODEL_GEMINI_3_PRO_IMAGE),
+            None,
+            None,
+        );
         assert_eq!(config_compat["aspectRatio"], "16:9");
         assert_eq!(config_compat["imageSize"], "4K");
 
         // Test parameter priority: params override model suffix
         let (config_override, _) = parse_image_config_with_params(
-            "gemini-3-pro-image-1x1-2k",
+            &format!("{}-1x1-2k", MODEL_GEMINI_3_PRO_IMAGE),
             Some("1280x720"),
             Some("hd"),
         );

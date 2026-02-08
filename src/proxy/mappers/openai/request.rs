@@ -28,19 +28,13 @@ pub fn transform_openai_request(
         None,  // OpenAI uses size/quality params, not body.imageConfig
     );
 
-    //  Only treat as Gemini thinking model if the model name explicitly contains "-thinking"
-    // Avoid injecting parameters for models like gemini-3-pro (preview) that don't support thinkingConfig, causing 400 errors
-    // Allow "pro" models (e.g. gemini-3-pro, gemini-2.0-pro) to bypass thinking check
-    // These models support thinking but do not have "-thinking" suffix
-    let is_gemini_3_thinking = mapped_model_lower.contains("gemini")
-        && (
-            mapped_model_lower.contains("-thinking")
-                || mapped_model_lower.contains("gemini-2.0-pro")
-                || mapped_model_lower.contains("gemini-3-pro")
-        )
-        && !mapped_model_lower.contains("claude");
-    let is_claude_thinking = mapped_model_lower.ends_with("-thinking");
-    let is_thinking_model = is_gemini_3_thinking || is_claude_thinking;
+    // Centralized model capability check (keeps legacy model families supported).
+    let is_gemini_thinking = !crate::proxy::common::model_mapping::is_claude_model(&mapped_model_lower)
+        && crate::proxy::common::model_mapping::model_supports_thinking(&mapped_model_lower);
+    let is_claude_thinking =
+        crate::proxy::common::model_mapping::is_claude_model(&mapped_model_lower)
+            && mapped_model_lower.ends_with("-thinking");
+    let is_thinking_model = is_gemini_thinking || is_claude_thinking;
 
     //  Check if the user explicitly enabled thinking in the request
     let user_enabled_thinking = request.thinking.as_ref()
@@ -209,7 +203,7 @@ pub fn transform_openai_request(
                 
                 // Placeholders can never use real signatures (signatures are bound to real thinking content)
                 // Only Gemini supports sentinel values to skip validation
-                if is_gemini_3_thinking {
+                if is_gemini_thinking {
                     thought_part["thoughtSignature"] = json!("skip_thought_signature_validator");
                 }
                 
@@ -702,14 +696,23 @@ fn enforce_uppercase_types(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::mappers::openai::models::*;
+    use crate::proxy::common::model_mapping::{
+        MODEL_CLAUDE_SONNET_45,
+        MODEL_CLAUDE_SONNET_45_THINKING,
+        MODEL_GEMINI_3_FLASH,
+        MODEL_GEMINI_3_FLASH_THINKING,
+        MODEL_GEMINI_3_PRO,
+        MODEL_GEMINI_3_PRO_HIGH_THINKING,
+        MODEL_GEMINI_3_PRO_PREVIEW,
+        MODEL_GPT_5,
+    };
 
     #[test]
-    #[test]
     fn gemini_3_pro_budget_capping() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         // Regression test for gemini-3-pro thinking budget capping
         let req = OpenAIRequest {
-            model: "gemini-3-pro".to_string(),
+            model: MODEL_GEMINI_3_PRO.to_string(),
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::String("test".into())),
@@ -738,7 +741,7 @@ mod tests {
         };
 
         // Auto mode (default) should cap gemini-3-pro thinking budget to 24576
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-3-pro");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", MODEL_GEMINI_3_PRO);
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64()
             .unwrap();
@@ -747,6 +750,7 @@ mod tests {
 
     #[test]
     fn custom_mode_gemini_capping() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         // Regression test for custom mode capping
         use crate::proxy::config::{ThinkingBudgetConfig, ThinkingBudgetMode, update_thinking_budget_config};
         
@@ -757,7 +761,7 @@ mod tests {
         });
 
         let req = OpenAIRequest {
-            model: "gemini-2.0-flash-thinking".to_string(),
+            model: MODEL_GEMINI_3_FLASH_THINKING.to_string(),
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::String("test".into())),
@@ -786,7 +790,8 @@ mod tests {
         };
 
         // Verify that for Gemini models, even in Custom mode, it will be corrected to 24576
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-2.0-flash-thinking");
+        let (result, _sid, _msg_count) =
+            transform_openai_request(&req, "test-v", MODEL_GEMINI_3_FLASH_THINKING);
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64()
             .unwrap();
@@ -794,21 +799,19 @@ mod tests {
 
         // Verify that non-Gemini models (e.g. Claude native paths, assuming no gemini in name) should not be truncated
         // Note: here the third parameter of transform_openai_request is mapped_model
-        let (result_claude, _, _) = transform_openai_request(&req, "test-v", "claude-3-7-sonnet");
-        let budget_claude = result_claude["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
+        let (result_claude, _, _) = transform_openai_request(&req, "test-v", MODEL_CLAUDE_SONNET_45);
+        let _budget_claude = result_claude["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64();
         // If not a Gemini model and the protocol does not carry thinking config, it might be None or 32000
         // In this test environment, since we simulate OpenAI to Gemini path, without gemini keyword it usually doesn't enter thinking logic
         // We just need to ensure the gemini path is correctly restricted.
 
-        // Restore default configuration
-        update_thinking_budget_config(ThinkingBudgetConfig::default());
     }
 
     #[test]
     fn test_transform_openai_request_multimodal() {
         let req = OpenAIRequest {
-            model: "gpt-4-vision".to_string(),
+            model: MODEL_GPT_5.to_string(),
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::Array(vec![
@@ -842,7 +845,7 @@ mod tests {
             thinking: None,
         };
 
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-1.5-flash");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", MODEL_GEMINI_3_FLASH);
         let parts = &result["request"]["contents"][0]["parts"];
         assert_eq!(parts.as_array().unwrap().len(), 2);
         assert_eq!(parts[0]["text"].as_str().unwrap(), "What is in this image?");
@@ -855,7 +858,7 @@ mod tests {
     #[test]
     fn test_gemini_pro_thinking_injection() {
         let req = OpenAIRequest {
-            model: "gemini-3-pro-preview".to_string(),
+            model: MODEL_GEMINI_3_PRO_PREVIEW.to_string(),
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::String("Thinking test".to_string())),
@@ -888,7 +891,7 @@ mod tests {
         };
 
         // Pass explicit gemini-3-pro-preview which doesn't have "-thinking" suffix
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-preview");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", MODEL_GEMINI_3_PRO_PREVIEW);
         let gen_config = &result["request"]["generationConfig"];
         
         // Assert thinkingConfig is present (fix verification)
@@ -900,8 +903,9 @@ mod tests {
     }
     #[test]
     fn test_default_max_tokens_openai() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         let req = OpenAIRequest {
-            model: "gpt-4".to_string(),
+            model: MODEL_GPT_5.to_string(),
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::String("Hello".to_string())),
@@ -929,7 +933,7 @@ mod tests {
             thinking: None,
         };
 
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-high-thinking");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", MODEL_GEMINI_3_PRO_HIGH_THINKING);
         let gen_config = &result["request"]["generationConfig"];
         let max_output_tokens = gen_config["maxOutputTokens"].as_i64().unwrap();
         // budget(32000) + 8192 = 40192
@@ -944,8 +948,9 @@ mod tests {
 
     #[test]
     fn test_flash_thinking_budget_capping() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         let req = OpenAIRequest {
-            model: "gpt-4".to_string(),
+            model: MODEL_GPT_5.to_string(),
             messages: vec![OpenAIMessage {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::String("Hello".to_string())),
@@ -978,7 +983,8 @@ mod tests {
         };
 
         // Test with Flash model
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-2.0-flash-thinking-exp");
+        let (result, _sid, _msg_count) =
+            transform_openai_request(&req, "test-p", MODEL_GEMINI_3_FLASH_THINKING);
         let gen_config = &result["request"]["generationConfig"];
         
         // Should be capped at 24576
@@ -993,7 +999,7 @@ mod tests {
     fn test_vertex_ai_sentinel_injection() {
         // Verify sentinel signature injection for Vertex AI models
         let req = OpenAIRequest {
-            model: "claude-3-7-sonnet-thinking".to_string(), // Triggers is_thinking_model
+            model: MODEL_CLAUDE_SONNET_45_THINKING.to_string(), // Triggers is_thinking_model
             messages: vec![OpenAIMessage {
                 role: "assistant".to_string(),
                 content: None,
@@ -1039,9 +1045,12 @@ mod tests {
         };
 
         // Simulate Vertex AI path
-        let mapped_model = "projects/my-project/locations/us-central1/publishers/google/models/gemini-2.0-flash-thinking-exp";
+        let mapped_model = format!(
+            "projects/my-project/locations/us-central1/publishers/google/models/{}",
+            MODEL_GEMINI_3_FLASH_THINKING
+        );
         
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", mapped_model);
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", &mapped_model);
         
         // Extract the tool call part from contents
         let contents = result["request"]["contents"].as_array().unwrap();

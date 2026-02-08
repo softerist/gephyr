@@ -464,7 +464,7 @@ mod tests {
                         "parts": [{ "text": "Thinking...", "thought": true }]
                     }
                 }],
-                "modelVersion": "gemini-2.0-flash-thinking",
+                "modelVersion": "gemini-3-flash-thinking",
                 "responseId": "msg_interrupted"
             });
             yield Ok(bytes::Bytes::from(format!("data: {}\n\n", thinking_json)));

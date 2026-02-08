@@ -1,7 +1,7 @@
 use crate::models::{Account, TokenData};
 use crate::modules;
 
-// Account service layer fully decoupled from desktop runtime dependencies.
+// Account service layer decoupled from UI/runtime-specific dependencies.
 pub struct AccountService {
     pub integration: crate::modules::integration::SystemManager,
 }

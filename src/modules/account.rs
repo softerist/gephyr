@@ -23,26 +23,40 @@ const ACCOUNTS_DIR: &str = "accounts";
 // ... existing functions get_data_dir, get_accounts_dir, load_account_index, save_account_index ...
 // Get data directory path
 pub fn get_data_dir() -> Result<PathBuf, String> {
+    fn ensure_dir(path: &PathBuf) -> Result<(), String> {
+        if !path.exists() {
+            fs::create_dir_all(path).map_err(|e| format!("failed_to_create_data_dir: {}", e))?;
+        }
+        Ok(())
+    }
+
     // Support custom data directory via environment variables
     if let Ok(env_path) = std::env::var("ABV_DATA_DIR") {
         if !env_path.trim().is_empty() {
             let data_dir = PathBuf::from(env_path);
-            if !data_dir.exists() {
-                fs::create_dir_all(&data_dir).map_err(|e| format!("failed_to_create_custom_data_dir: {}", e))?;
-            }
+            ensure_dir(&data_dir)?;
             return Ok(data_dir);
         }
     }
 
-    let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-    let data_dir = home.join(DATA_DIR);
-
-    // Ensure directory exists
-    if !data_dir.exists() {
-        fs::create_dir_all(&data_dir).map_err(|e| format!("failed_to_create_data_dir: {}", e))?;
+    // Test mode: always use a writable, isolated temp directory per process.
+    if cfg!(test) {
+        let data_dir = std::env::temp_dir().join(format!(".gephyr-test-{}", std::process::id()));
+        ensure_dir(&data_dir)?;
+        return Ok(data_dir);
     }
 
-    Ok(data_dir)
+    if let Some(home) = dirs::home_dir() {
+        let data_dir = home.join(DATA_DIR);
+        if ensure_dir(&data_dir).is_ok() {
+            return Ok(data_dir);
+        }
+    }
+
+    // Fallback for restricted environments (sandbox/CI): use system temp directory.
+    let fallback_dir = std::env::temp_dir().join(DATA_DIR);
+    ensure_dir(&fallback_dir)?;
+    Ok(fallback_dir)
 }
 
 // Get accounts directory path
@@ -474,7 +488,7 @@ pub struct DeviceProfiles {
 }
 
 pub fn get_device_profiles(account_id: &str) -> Result<DeviceProfiles, String> {
-    // In headless/Docker mode, storage.json may not exist - handle gracefully
+    // storage.json may not exist in containerized/server deployments; handle gracefully.
     let current = crate::modules::device::get_storage_path()
         .ok()
         .and_then(|path| crate::modules::device::read_profile(&path).ok());
@@ -965,7 +979,7 @@ pub struct RefreshStats {
     pub details: Vec<String>,
 }
 
-// Core logic to batch refresh all account quotas (fully decoupled from desktop runtime state)
+// Core logic to batch refresh all account quotas (runtime-agnostic).
 pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use futures::future::join_all;
     use std::sync::Arc;

@@ -2213,7 +2213,7 @@ impl TokenManager {
         crate::modules::oauth::get_user_info(&token.access_token, None).await
     }
 
-    // Add new account (backend-only, no desktop app handle required).
+    // Add new account via server-side flow only.
     pub async fn add_account(&self, email: &str, refresh_token: &str) -> Result<(), String> {
         // 1. Get Access Token (validate refresh_token validity)
         let token_info = crate::modules::oauth::refresh_access_token(refresh_token, None)
@@ -2545,7 +2545,7 @@ mod tests {
         write_account("acc1", "a@test.com", true);
 
         let (_token, _project_id, email, account_id, _wait_ms) = manager
-            .get_token("gemini", false, Some("sid1"), "gemini-1.5-flash")
+            .get_token("gemini", false, Some("sid1"), "gemini-3-flash")
             .await
             .unwrap();
 
@@ -2583,7 +2583,7 @@ mod tests {
                 },
                 "quota": {
                     "models": [
-                        { "name": "gemini-1.5-flash", "percentage": percentage }
+                        { "name": "gemini-3-flash", "percentage": percentage }
                     ]
                 },
                 "disabled": false,
@@ -2604,7 +2604,7 @@ mod tests {
 
         // Prime: first request should bind the session to acc1.
         let (_token, _project_id, _email, account_id, _wait_ms) = manager
-            .get_token("gemini", false, Some("sid1"), "gemini-1.5-flash")
+            .get_token("gemini", false, Some("sid1"), "gemini-3-flash")
             .await
             .unwrap();
         assert_eq!(account_id, "acc1");
@@ -2617,7 +2617,7 @@ mod tests {
         write_account("acc1", "a@test.com", 90, true);
 
         let (_token, _project_id, email, account_id, _wait_ms) = manager
-            .get_token("gemini", false, Some("sid1"), "gemini-1.5-flash")
+            .get_token("gemini", false, Some("sid1"), "gemini-3-flash")
             .await
             .unwrap();
 
@@ -3017,3 +3017,4 @@ mod tests {
         assert!(result.is_none());
     }
 }
+

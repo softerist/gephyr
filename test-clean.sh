@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Check Docker availability early to fail fast with a single message
+if ! docker info >/dev/null 2>&1; then
+  echo ""
+  echo -e "\033[31m╔══════════════════════════════════════════════════════════════════╗\033[0m"
+  echo -e "\033[31m║                     DOCKER IS NOT RUNNING                        ║\033[0m"
+  echo -e "\033[31m╠══════════════════════════════════════════════════════════════════╣\033[0m"
+  echo -e "\033[33m║  The Docker daemon is not accessible.                            ║\033[0m"
+  echo -e "\033[33m║                                                                  ║\033[0m"
+  echo -e "\033[33m║  Please ensure:                                                  ║\033[0m"
+  echo -e "\033[33m║    1. Docker is installed                                        ║\033[0m"
+  echo -e "\033[33m║    2. Docker daemon is running (systemctl start docker)          ║\033[0m"
+  echo -e "\033[33m║    3. Your user has permission to access Docker                  ║\033[0m"
+  echo -e "\033[33m║                                                                  ║\033[0m"
+  echo -e "\033[33m║  On Linux:   sudo systemctl start docker                         ║\033[0m"
+  echo -e "\033[33m║  On macOS:   Open Docker Desktop from /Applications              ║\033[0m"
+  echo -e "\033[31m╚══════════════════════════════════════════════════════════════════╝\033[0m"
+  echo ""
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONSOLE_SCRIPT="$SCRIPT_DIR/console.sh"
 
@@ -11,7 +31,7 @@ NO_BROWSER=false
 RUN_API_TEST=false
 DISABLE_ADMIN_AFTER=false
 IMAGE="gephyr:latest"
-MODEL="gpt-4o-mini"
+MODEL="gpt-5.3-codex"
 PROMPT="hello from gephyr"
 
 print_help() {

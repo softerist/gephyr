@@ -30,7 +30,7 @@ pub fn wrap_request(
     // Inject dummy IDs for Claude models in Gemini protocol
     // Google v1internal requires 'id' for tool calls when the model is Claude, 
     // even though the standard Gemini protocol doesn't have it.
-    let is_target_claude = final_model_name.to_lowercase().contains("claude");
+    let is_target_claude = crate::proxy::common::model_mapping::is_claude_model(final_model_name);
     
     if let Some(contents) = inner_request.get_mut("contents").and_then(|c| c.as_array_mut()) {
         for content in contents {
@@ -103,18 +103,11 @@ pub fn wrap_request(
 
         // Check if thinkingConfig exists, if not, inject default if it's a known thinking model without config
         // Only inject if it's NOT a model that explicitly forbids thinking (no such cases yet for this filter)
-        // Note: regular pro models (gemini-1.5-pro) might not support thinking, but gemini-2.0-pro/gemini-3-pro do.
-        // We might need to be careful with 1.5 pro.
-        // However, 1.5 pro doesn't error with thinkingConfig, it just ignores it or uses it if supported later.
-        // Safest is to target specific high-reasoning lines or just rely on upstream to ignore.
-        // But for "gemini-3-pro" specifically, we NEED it.
+    // Note: "gemini-3-pro" requires thinkingConfig. Keep auto-injecting for 3-pro/3-flash thinking.
         if gen_config.get("thinkingConfig").is_none() {
-             // For safety, only auto-inject for models we usually want thinking on:
-             // - any with "thinking" in name
-             // - gemini-3-pro / gemini-2.0-pro
-             let should_inject = lower_model.contains("thinking") || 
-                                 lower_model.contains("gemini-2.0-pro") || 
-                                 lower_model.contains("gemini-3-pro");
+             // For safety, only auto-inject for models we usually want thinking on.
+             let should_inject =
+                 crate::proxy::common::model_mapping::model_supports_thinking(&lower_model);
                                  
              if should_inject {
                  tracing::debug!("[Gemini-Wrap] Auto-injecting default thinkingConfig for {}", final_model_name);
@@ -186,7 +179,7 @@ pub fn wrap_request(
         }
     }
 
-    //  Removed forced maxOutputTokens (64000) as it exceeds limits for Gemini 1.5 Flash/Pro standard models (8192).
+    //  Removed forced maxOutputTokens (64000) as it exceeds limits for older Gemini standard models (8192).
     // This caused upstream to return empty/invalid responses, leading to 'NoneType' object has no attribute 'strip' in Python clients.
     // relying on upstream defaults or user provided values is safer.
 
@@ -353,6 +346,7 @@ pub fn wrap_request(
 mod test_fixes {
     use super::*;
     use serde_json::json;
+    use crate::proxy::common::model_mapping::MODEL_GEMINI_PRO_ALIAS;
 
     #[test]
     fn test_wrap_request_with_signature() {
@@ -365,7 +359,7 @@ mod test_fixes {
         );
 
         let body = json!({
-            "model": "gemini-pro",
+            "model": MODEL_GEMINI_PRO_ALIAS,
             "contents": [{
                 "role": "user",
                 "parts": [{
@@ -377,7 +371,7 @@ mod test_fixes {
             }]
         });
 
-        let result = wrap_request(&body, "proj", "gemini-pro", Some(session_id));
+        let result = wrap_request(&body, "proj", MODEL_GEMINI_PRO_ALIAS, Some(session_id));
         let injected_sig = result["request"]["contents"][0]["parts"][0]["thoughtSignature"]
             .as_str()
             .unwrap();
@@ -395,7 +389,7 @@ pub fn unwrap_response(response: &Value) -> Value {
 // The purpose is to allow clients (like OpenCode/Vercel AI SDK) to perceive the ID
 // and return it as is in the next turn of conversation, satisfying Google v1internal's validation for Claude models.
 pub fn inject_ids_to_response(response: &mut Value, model_name: &str) {
-    if !model_name.to_lowercase().contains("claude") {
+    if !crate::proxy::common::model_mapping::is_claude_model(model_name) {
         return;
     }
 
@@ -425,17 +419,25 @@ pub fn inject_ids_to_response(response: &mut Value, model_name: &str) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use crate::proxy::common::model_mapping::{
+        MODEL_GEMINI_3_FLASH,
+        MODEL_GEMINI_3_FLASH_THINKING,
+        MODEL_GEMINI_3_PRO,
+        MODEL_GEMINI_3_PRO_IMAGE,
+        MODEL_GEMINI_3_PRO_PREVIEW,
+        MODEL_GEMINI_PRO_ALIAS,
+    };
 
     #[test]
     fn test_wrap_request() {
         let body = json!({
-            "model": "gemini-2.5-flash",
+            "model": MODEL_GEMINI_3_FLASH,
             "contents": [{"role": "user", "parts": [{"text": "Hi"}]}]
         });
 
-        let result = wrap_request(&body, "test-project", "gemini-2.5-flash", None);
+        let result = wrap_request(&body, "test-project", MODEL_GEMINI_3_FLASH, None);
         assert_eq!(result["project"], "test-project");
-        assert_eq!(result["model"], "gemini-2.5-flash");
+        assert_eq!(result["model"], MODEL_GEMINI_3_FLASH);
         assert!(result["requestId"].as_str().unwrap().starts_with("agent-"));
     }
 
@@ -455,14 +457,14 @@ mod tests {
     #[test]
     fn test_antigravity_identity_injection_with_role() {
         let body = json!({
-            "model": "gemini-pro",
+            "model": MODEL_GEMINI_PRO_ALIAS,
             "messages": []
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_PRO_ALIAS, None);
 
         // Verify systemInstruction
-        let sys = result
+        let _sys = result
             .get("request")
             .unwrap()
             .get("systemInstruction")
@@ -471,8 +473,9 @@ mod tests {
 
     #[test]
     fn test_gemini_flash_thinking_budget_capping() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         let body = json!({
-            "model": "gemini-2.0-flash-thinking-exp",
+            "model": MODEL_GEMINI_3_FLASH_THINKING,
             "generationConfig": {
                 "thinkingConfig": {
                     "includeThoughts": true,
@@ -482,7 +485,7 @@ mod tests {
         });
 
         // Test with Flash model
-        let result = wrap_request(&body, "test-proj", "gemini-2.0-flash-thinking-exp", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_3_FLASH_THINKING, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
         let budget = gen_config["thinkingConfig"]["thinkingBudget"]
@@ -494,7 +497,7 @@ mod tests {
 
         // Test with Pro model (should NOT cap)
         let body_pro = json!({
-            "model": "gemini-2.0-pro-exp",
+            "model": MODEL_GEMINI_3_PRO,
             "generationConfig": {
                 "thinkingConfig": {
                     "includeThoughts": true,
@@ -502,7 +505,7 @@ mod tests {
                 }
             }
         });
-        let result_pro = wrap_request(&body_pro, "test-proj", "gemini-2.0-pro-exp", None);
+        let result_pro = wrap_request(&body_pro, "test-proj", MODEL_GEMINI_3_PRO, None);
         let budget_pro = result_pro["request"]["generationConfig"]["thinkingConfig"]
             ["thinkingBudget"]
             .as_u64()
@@ -514,14 +517,14 @@ mod tests {
     #[test]
     fn test_user_instruction_preservation() {
         let body = json!({
-            "model": "gemini-pro",
+            "model": MODEL_GEMINI_PRO_ALIAS,
             "systemInstruction": {
                 "role": "user",
                 "parts": [{"text": "User custom prompt"}]
             }
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_PRO_ALIAS, None);
         let sys = result
             .get("request")
             .unwrap()
@@ -546,13 +549,13 @@ mod tests {
     #[test]
     fn test_duplicate_prevention() {
         let body = json!({
-            "model": "gemini-pro",
+            "model": MODEL_GEMINI_PRO_ALIAS,
             "systemInstruction": {
                 "parts": [{"text": "You are Antigravity..."}]
             }
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_PRO_ALIAS, None);
         let sys = result
             .get("request")
             .unwrap()
@@ -580,11 +583,11 @@ mod tests {
         }
 
         let body = json!({
-            "model": "gemini-3-pro-image",
+            "model": MODEL_GEMINI_3_PRO_IMAGE,
             "contents": [{"parts": parts}]
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_3_PRO_IMAGE, None);
 
         let request = result.get("request").unwrap();
         let contents = request.get("contents").unwrap().as_array().unwrap();
@@ -596,6 +599,7 @@ mod tests {
 
     #[test]
     fn test_gemini_pro_thinking_budget_processing() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         // Update global config to Custom mode to verify logic execution
         use crate::proxy::config::{ThinkingBudgetConfig, ThinkingBudgetMode, update_thinking_budget_config};
         
@@ -606,7 +610,7 @@ mod tests {
         });
 
         let body = json!({
-            "model": "gemini-3-pro-preview",
+            "model": MODEL_GEMINI_3_PRO_PREVIEW,
             "generationConfig": {
                 "thinkingConfig": {
                     "includeThoughts": true,
@@ -616,7 +620,7 @@ mod tests {
         });
 
         // Test with Pro model
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_3_PRO_PREVIEW, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
         
@@ -628,12 +632,11 @@ mod tests {
         // If logic skipped, it keeps 32000
         assert_eq!(budget, 1024, "Budget should be overridden to 1024 by custom config, proving logic execution");
 
-        // Restore default (Auto 24576)
-        update_thinking_budget_config(ThinkingBudgetConfig::default());
     }
 
     #[test]
     fn test_gemini_pro_auto_inject_thinking() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         // Reset thinking budget to auto mode at the start to avoid interference from parallel tests
         crate::proxy::config::update_thinking_budget_config(
             crate::proxy::config::ThinkingBudgetConfig {
@@ -644,13 +647,13 @@ mod tests {
 
         // Request WITHOUT thinkingConfig
         let body = json!({
-            "model": "gemini-3-pro-preview",
+            "model": MODEL_GEMINI_3_PRO_PREVIEW,
             // No generationConfig or empty one
             "generationConfig": {}
         });
 
         // Test with Pro model
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None);
+        let result = wrap_request(&body, "test-proj", MODEL_GEMINI_3_PRO_PREVIEW, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
         
@@ -670,13 +673,13 @@ mod tests {
     fn test_openai_image_params_support() {
         // Test Case 1: Standard Size + Quality (HD/4K)
         let body_1 = json!({
-            "model": "gemini-3-pro-image",
+            "model": MODEL_GEMINI_3_PRO_IMAGE,
             "size": "1920x1080",
             "quality": "hd",
             "prompt": "Test"
         });
         
-        let result_1 = wrap_request(&body_1, "test-proj", "gemini-3-pro-image", None);
+        let result_1 = wrap_request(&body_1, "test-proj", MODEL_GEMINI_3_PRO_IMAGE, None);
         let req_1 = result_1.get("request").unwrap();
         let gen_config_1 = req_1.get("generationConfig").unwrap();
         let image_config_1 = gen_config_1.get("imageConfig").unwrap();
@@ -686,13 +689,13 @@ mod tests {
 
         // Test Case 2: Aspect Ratio String + Standard Quality
         let body_2 = json!({
-            "model": "gemini-3-pro-image",
+            "model": MODEL_GEMINI_3_PRO_IMAGE,
             "size": "1:1",
             "quality": "standard",
              "prompt": "Test"
         });
         
-        let result_2 = wrap_request(&body_2, "test-proj", "gemini-3-pro-image", None);
+        let result_2 = wrap_request(&body_2, "test-proj", MODEL_GEMINI_3_PRO_IMAGE, None);
         let req_2 = result_2.get("request").unwrap();
         let image_config_2 = req_2["generationConfig"]["imageConfig"].as_object().unwrap();
         

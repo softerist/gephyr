@@ -8,7 +8,7 @@ param(
     [string]$Image = "gephyr:latest",
     [string]$DataDir = "$env:USERPROFILE\.gephyr",
     [int]$LogLines = 120,
-    [string]$Model = "gpt-4o-mini",
+    [string]$Model = "gpt-5.3-codex",
     [string]$Prompt = "hello from gephyr",
     [switch]$NoBrowser,
     [switch]$NoRestartAfterRotate
@@ -46,7 +46,7 @@ Options:
   -Image <name>          Docker image (default gephyr:latest)
   -DataDir <path>        Host data dir (default %USERPROFILE%\.gephyr)
   -LogLines <int>        Number of log lines for logs command (default 120)
-  -Model <name>          Model for api-test (default gpt-4o-mini)
+  -Model <name>          Model for api-test (default gpt-5.3-codex)
   -Prompt <text>         Prompt for api-test
   -NoBrowser             Do not open browser for login command
   -NoRestartAfterRotate  Rotate key without container restart
@@ -383,8 +383,49 @@ function Rotate-ApiKey {
 
 Load-EnvLocal
 
+function Test-DockerAvailable {
+    try {
+        $null = docker info 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Assert-DockerRunning {
+    if (-not (Test-DockerAvailable)) {
+        Write-Host ""
+        Write-Host "╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Red
+        Write-Host "║                     DOCKER IS NOT RUNNING                        ║" -ForegroundColor Red
+        Write-Host "╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Red
+        Write-Host "║  The Docker daemon is not accessible.                            ║" -ForegroundColor Yellow
+        Write-Host "║                                                                  ║" -ForegroundColor Yellow
+        Write-Host "║  Please ensure:                                                  ║" -ForegroundColor Yellow
+        Write-Host "║    1. Docker Desktop is installed                                ║" -ForegroundColor Yellow
+        Write-Host "║    2. Docker Desktop is running (check system tray)              ║" -ForegroundColor Yellow
+        Write-Host "║    3. Docker engine has finished starting up                     ║" -ForegroundColor Yellow
+        Write-Host "║                                                                  ║" -ForegroundColor Yellow
+        Write-Host "║  On Windows, look for the Docker whale icon in your system tray. ║" -ForegroundColor Yellow
+        Write-Host "║  If it's animating, Docker is still starting up.                 ║" -ForegroundColor Yellow
+        Write-Host "╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+        Write-Host ""
+        exit 1
+    }
+}
+
+# Commands that require Docker
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "logout", "logout-and-stop")
+
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
+}
+
+# Check Docker availability for commands that need it
+if ($Command -in $dockerCommands) {
+    Assert-DockerRunning
 }
 
 switch ($Command) {

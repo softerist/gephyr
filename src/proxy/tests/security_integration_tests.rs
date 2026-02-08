@@ -37,6 +37,7 @@ mod integration_tests {
     // 3. Response body contains the ban reason
     #[test]
     fn test_scenario_blacklist_blocks_request() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -74,6 +75,7 @@ mod integration_tests {
     // 3. Request should be allowed (whitelist priority)
     #[test]
     fn test_scenario_whitelist_priority() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -114,6 +116,7 @@ mod integration_tests {
     // 3. Request should be allowed
     #[test]
     fn test_scenario_temporary_ban_expiration() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -150,6 +153,7 @@ mod integration_tests {
     // 3. Requests from 192.168.2.x pass normally
     #[test]
     fn test_scenario_cidr_subnet_blocking() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -192,6 +196,7 @@ mod integration_tests {
     //    - Remaining ban time (if temporary)
     #[test]
     fn test_scenario_ban_message_details() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -234,6 +239,7 @@ mod integration_tests {
     // 3. Access log records: IP, time, status (403), ban reason
     #[test]
     fn test_scenario_blocked_request_logging() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -278,6 +284,7 @@ mod integration_tests {
     // 2. Latency increase compared to baseline without security checks < 10ms
     #[test]
     fn test_scenario_performance_impact() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -326,6 +333,7 @@ mod integration_tests {
     // 2. Data still exists
     #[test]
     fn test_scenario_data_persistence() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -371,6 +379,7 @@ mod stress_tests {
     // Stress Test: Large blacklist
     #[test]
     fn stress_test_large_blacklist() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 
@@ -404,6 +413,7 @@ mod stress_tests {
     // Stress Test: Large access log volume
     #[test]
     fn stress_test_access_logging() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         let _ = clear_ip_access_logs();
 
@@ -447,6 +457,7 @@ mod stress_tests {
     // Stress Test: Concurrent operations
     #[test]
     fn stress_test_concurrent_operations() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         cleanup_test_data();
 

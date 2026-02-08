@@ -50,7 +50,7 @@ pub struct SignatureCache {
 
     // Layer 2: Signature -> Model Family
     // Key: thought signature string
-    // Value: Model family identifier (e.g., "claude-3-5-sonnet", "gemini-2.0-flash")
+    // Value: Model family identifier (e.g., "claude-sonnet-4-5", "gemini-3-flash")
     thinking_families: Mutex<HashMap<String, CacheEntry<String>>>,
 
     // Layer 3: Session ID -> Latest Thinking Signature (NEW)

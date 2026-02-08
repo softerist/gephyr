@@ -80,7 +80,7 @@ mod tests {
         );
 
         // Unsupported models should return None
-        assert_eq!(normalize_to_standard_id("gpt-4"), None);
+        assert_eq!(normalize_to_standard_id("gpt-5"), None);
         assert_eq!(normalize_to_standard_id("unknown-model"), None);
     }
 
@@ -275,8 +275,8 @@ mod tests {
             ("gemini-3-pro-high", true),          // Direct match
             ("gemini-3-pro-low", true),           // Normalize to gemini-3-pro-high
             ("gemini-3-flash", true),             // Direct match
-            ("gpt-4", false),                     // Unsupported models
-            ("gemini-2.5-flash", false),          // Not in the monitoring list
+            ("gpt-5", false),                     // Unsupported models
+            ("gemini-3-pro-preview", true),       // Normalizes to gemini-3-pro-high
         ];
 
         for (model_name, expected_monitored) in test_cases {
@@ -532,9 +532,9 @@ mod tests {
         assert!(gemini_account_ids.contains(&"account-a"));
         assert!(gemini_account_ids.contains(&"account-b"));
 
-        // Request 3: unmonitored model (gemini-2.5-flash)
-        let target_unmonitored = normalize_to_standard_id("gemini-2.5-flash")
-            .unwrap_or_else(|| "gemini-2.5-flash".to_string());
+        // Request 3: unmonitored model (gemini-3-pro-preview)
+        let target_unmonitored = normalize_to_standard_id("gemini-3-pro-preview")
+            .unwrap_or_else(|| "gemini-3-pro-preview".to_string());
 
         let available_for_unmonitored: Vec<_> = accounts
             .iter()
