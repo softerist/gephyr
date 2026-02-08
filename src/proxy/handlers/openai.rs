@@ -2,7 +2,7 @@ use axum::{
     extract::Json, extract::State, http::StatusCode, response::IntoResponse, response::Response,
 };
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
@@ -21,53 +21,6 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use tokio::time::Duration;
-
-type OpenAiSseStream = std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>;
-
-async fn peek_first_data_chunk(
-    openai_stream: &mut OpenAiSseStream,
-    timeout: Duration,
-    error_event_message: &str,
-    stream_error_prefix: &str,
-    empty_stream_message: &str,
-    timeout_message: &str,
-    context: &str,
-) -> Result<Bytes, String> {
-    loop {
-        match tokio::time::timeout(timeout, openai_stream.next()).await {
-            Ok(Some(Ok(bytes))) => {
-                if bytes.is_empty() {
-                    continue;
-                }
-
-                let text = String::from_utf8_lossy(&bytes);
-                if text.trim().starts_with(":") || text.trim().starts_with("data: :") {
-                    tracing::debug!("[OpenAI:{}] Skipping peek heartbeat", context);
-                    continue;
-                }
-
-                if text.contains("\"error\"") {
-                    tracing::warn!("[OpenAI:{}] Error detected during peek", context);
-                    return Err(error_event_message.to_string());
-                }
-
-                return Ok(bytes);
-            }
-            Ok(Some(Err(e))) => {
-                tracing::warn!("[OpenAI:{}] Stream error during peek: {}", context, e);
-                return Err(format!("{}: {}", stream_error_prefix, e));
-            }
-            Ok(None) => {
-                tracing::warn!("[OpenAI:{}] Stream ended during peek", context);
-                return Err(empty_stream_message.to_string());
-            }
-            Err(_) => {
-                tracing::warn!("[OpenAI:{}] Timeout waiting for first data", context);
-                return Err(timeout_message.to_string());
-            }
-        }
-    }
-}
 
 pub async fn handle_chat_completions(
     State(state): State<OpenAIHandlerState>,
@@ -314,17 +267,20 @@ pub async fn handle_chat_completions(
                     session_id,
                     message_count,
                 );
-                let first_data_chunk = match peek_first_data_chunk(
+                let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
                     &mut openai_stream,
-                    Duration::from_secs(60),
-                    "Error event during peek",
-                    "Stream error during peek",
-                    "Empty response stream during peek",
-                    "Timeout waiting for first data",
-                    "chat",
+                    &crate::proxy::handlers::streaming::StreamPeekOptions {
+                        timeout: Duration::from_secs(60),
+                        context: "OpenAI:chat",
+                        skip_data_colon_heartbeat: true,
+                        detect_error_events: true,
+                        error_event_message: "Error event during peek",
+                        stream_error_prefix: "Stream error during peek",
+                        empty_stream_message: "Empty response stream during peek",
+                        timeout_message: "Timeout waiting for first data",
+                    },
                 )
-                .await
-                {
+                .await {
                     Ok(chunk) => chunk,
                     Err(err) => {
                         last_error = err;
@@ -1016,17 +972,20 @@ pub async fn handle_completions(
                             message_count,
                         )
                     };
-                    let first_data_chunk = match peek_first_data_chunk(
+                    let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
                         &mut openai_stream,
-                        Duration::from_secs(60),
-                        "Error event during peek",
-                        "Stream error during peek",
-                        "Empty response stream",
-                        "Timeout waiting for first data",
-                        "legacy",
+                        &crate::proxy::handlers::streaming::StreamPeekOptions {
+                            timeout: Duration::from_secs(60),
+                            context: "OpenAI:legacy",
+                            skip_data_colon_heartbeat: true,
+                            detect_error_events: true,
+                            error_event_message: "Error event during peek",
+                            stream_error_prefix: "Stream error during peek",
+                            empty_stream_message: "Empty response stream",
+                            timeout_message: "Timeout waiting for first data",
+                        },
                     )
-                    .await
-                    {
+                    .await {
                         Ok(chunk) => chunk,
                         Err(err) => {
                             last_error = err;
@@ -1054,17 +1013,20 @@ pub async fn handle_completions(
                         session_id,
                         message_count,
                     );
-                    let first_data_chunk = match peek_first_data_chunk(
+                    let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
                         &mut openai_stream,
-                        Duration::from_secs(60),
-                        "Error event in internal stream",
-                        "Internal stream error",
-                        "Empty internal stream",
-                        "Timeout peek internal",
-                        "internal",
+                        &crate::proxy::handlers::streaming::StreamPeekOptions {
+                            timeout: Duration::from_secs(60),
+                            context: "OpenAI:internal",
+                            skip_data_colon_heartbeat: true,
+                            detect_error_events: true,
+                            error_event_message: "Error event in internal stream",
+                            stream_error_prefix: "Internal stream error",
+                            empty_stream_message: "Empty internal stream",
+                            timeout_message: "Timeout peek internal",
+                        },
                     )
-                    .await
-                    {
+                    .await {
                         Ok(chunk) => chunk,
                         Err(err) => {
                             last_error = err;

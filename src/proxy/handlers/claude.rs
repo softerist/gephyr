@@ -722,122 +722,73 @@ pub async fn handle_messages(
                     client_adapter.clone(),
                 );
 
-                let mut first_data_chunk = None;
-                let mut retry_this_account = false;
-                loop {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(60),
-                        claude_stream.next(),
-                    )
-                    .await
-                    {
-                        Ok(Some(Ok(bytes))) => {
-                            if bytes.is_empty() {
-                                continue;
-                            }
-
-                            let text = String::from_utf8_lossy(&bytes);
-                            if text.trim().starts_with(":") {
-                                debug!("[{}] Skipping peek heartbeat: {}", trace_id, text.trim());
-                                continue;
-                            }
-                            first_data_chunk = Some(bytes);
-                            break;
-                        }
-                        Ok(Some(Err(e))) => {
-                            tracing::warn!(
-                                "[{}] Stream error during peek: {}, retrying...",
-                                trace_id,
-                                e
-                            );
-                            last_error = format!("Stream error during peek: {}", e);
-                            retry_this_account = true;
-                            break;
-                        }
-                        Ok(None) => {
-                            tracing::warn!(
-                                "[{}] Stream ended during peek (Empty Response), retrying...",
-                                trace_id
-                            );
-                            last_error = "Empty response stream during peek".to_string();
-                            retry_this_account = true;
-                            break;
-                        }
-                        Err(_) => {
-                            tracing::warn!(
-                                "[{}] Timeout waiting for first data (60s), retrying...",
-                                trace_id
-                            );
-                            last_error = "Timeout waiting for first data".to_string();
-                            retry_this_account = true;
-                            break;
-                        }
+                let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                    &mut claude_stream,
+                    &crate::proxy::handlers::streaming::StreamPeekOptions {
+                        timeout: Duration::from_secs(60),
+                        context: "Claude:stream",
+                        skip_data_colon_heartbeat: false,
+                        detect_error_events: false,
+                        error_event_message: "Error event during peek",
+                        stream_error_prefix: "Stream error during peek",
+                        empty_stream_message: "Empty response stream during peek",
+                        timeout_message: "Timeout waiting for first data",
+                    },
+                )
+                .await {
+                    Ok(chunk) => chunk,
+                    Err(err) => {
+                        last_error = err;
+                        continue;
                     }
-                }
+                };
 
-                if retry_this_account {
-                    continue;
-                }
+                let stream_rest = claude_stream;
+                let combined_stream =
+                    Box::pin(futures::stream::once(async move { Ok(first_data_chunk) }).chain(
+                        stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
+                            match result {
+                                Ok(b) => Ok(b),
+                                Err(e) => Ok(Bytes::from(format!(
+                                    "data: {{\"error\":\"{}\"}}\n\n",
+                                    e
+                                ))),
+                            }
+                        }),
+                    ));
+                if client_wants_stream {
+                    return crate::proxy::handlers::streaming::build_sse_response_with_headers(
+                        Body::from_stream(combined_stream),
+                        Some(&email),
+                        Some(&request_with_mapped.model),
+                        true,
+                        &[("X-Context-Purified", if is_purified { "true" } else { "false" })],
+                    );
+                } else {
+                    use crate::proxy::mappers::claude::collect_stream_to_json;
 
-                match first_data_chunk {
-                    Some(bytes) => {
-                        let stream_rest = claude_stream;
-                        let combined_stream =
-                            Box::pin(futures::stream::once(async move { Ok(bytes) }).chain(
-                                stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
-                                    match result {
-                                        Ok(b) => Ok(b),
-                                        Err(e) => Ok(Bytes::from(format!(
-                                            "data: {{\"error\":\"{}\"}}\n\n",
-                                            e
-                                        ))),
-                                    }
-                                }),
-                            ));
-                        if client_wants_stream {
-                            return crate::proxy::handlers::streaming::build_sse_response_with_headers(
-                                Body::from_stream(combined_stream),
+                    match collect_stream_to_json(combined_stream).await {
+                        Ok(full_response) => {
+                            info!(
+                                "[{}] ✓ Stream collected and converted to JSON",
+                                trace_id
+                            );
+                            return crate::proxy::handlers::streaming::build_json_response_with_headers(
+                                StatusCode::OK,
+                                &full_response,
                                 Some(&email),
                                 Some(&request_with_mapped.model),
-                                true,
-                                &[("X-Context-Purified", if is_purified { "true" } else { "false" })],
+                                &[(
+                                    "X-Context-Purified",
+                                    if is_purified { "true" } else { "false" },
+                                )],
                             );
-                        } else {
-                            use crate::proxy::mappers::claude::collect_stream_to_json;
-
-                            match collect_stream_to_json(combined_stream).await {
-                                Ok(full_response) => {
-                                    info!(
-                                        "[{}] ✓ Stream collected and converted to JSON",
-                                        trace_id
-                                    );
-                                    return crate::proxy::handlers::streaming::build_json_response_with_headers(
-                                        StatusCode::OK,
-                                        &full_response,
-                                        Some(&email),
-                                        Some(&request_with_mapped.model),
-                                        &[(
-                                            "X-Context-Purified",
-                                            if is_purified { "true" } else { "false" },
-                                        )],
-                                    );
-                                }
-                                Err(e) => {
-                                    return crate::proxy::handlers::errors::stream_collection_error_response(
-                                        &e.to_string(),
-                                    );
-                                }
-                            }
                         }
-                    }
-
-                    None => {
-                        tracing::warn!(
-                            "[{}] Stream ended immediately (Empty Response), retrying...",
-                            trace_id
-                        );
-                        last_error = "Empty response stream (None)".to_string();
-                        continue;
+                        Err(e) => {
+                            return crate::proxy::handlers::errors::stream_collection_error_response(
+                                &e.to_string(),
+                            );
+                        }
                     }
                 }
             } else {
