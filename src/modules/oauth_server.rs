@@ -1,11 +1,11 @@
+use crate::modules::oauth;
+use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use std::sync::{Mutex, OnceLock};
 use url::Url;
-use crate::modules::oauth;
-use std::process::Command;
 
 struct OAuthFlowState {
     auth_url: String,
@@ -78,30 +78,18 @@ fn open_browser_url(url: &str) -> Result<(), String> {
 }
 
 async fn ensure_oauth_flow_prepared() -> Result<String, String> {
-
-    // Return URL if flow already exists and is still "fresh" (receiver hasn't been taken)
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.as_mut() {
             if s.code_rx.is_some() {
                 return Ok(s.auth_url.clone());
             } else {
-                // Flow is already "in progress" (rx taken), but user requested a NEW one.
-                // Force cancel the old one to allow a new attempt.
                 let _ = s.cancel_tx.send(true);
                 *state = None;
             }
         }
     }
-
-    // Create loopback listeners.
-    // Some browsers resolve `localhost` to IPv6 (::1). To avoid "localhost refused connection",
-    // we try to listen on BOTH IPv6 and IPv4 with the same port when possible.
     let mut ipv4_listener: Option<TcpListener> = None;
     let mut ipv6_listener: Option<TcpListener> = None;
-
-    // Prefer creating one listener on an ephemeral port first, then bind the other stack to same port.
-    // If both are available -> use `http://localhost:<port>` as redirect URI.
-    // If only one is available -> use an explicit IP to force correct stack.
     let port: u16;
     match TcpListener::bind("[::1]:0").await {
         Ok(l6) => {
@@ -158,14 +146,8 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
     let code_verifier = oauth::generate_pkce_verifier();
     let code_challenge = oauth::pkce_challenge_s256(&code_verifier);
     let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, &code_challenge)?;
-
-    // Cancellation signal (supports multiple consumers)
     let (cancel_tx, cancel_rx) = watch::channel(false);
-    // Use mpsc instead of oneshot to allow multiple senders (listener OR manual input)
     let (code_tx, code_rx) = mpsc::channel::<Result<String, String>>(1);
-
-    // Start listeners immediately: even if the user authorizes before clicking "Start OAuth",
-    // the browser can still hit our callback and finish the flow.
     if let Some(l4) = ipv4_listener {
         let tx = code_tx.clone();
         let mut rx = cancel_rx.clone();
@@ -174,30 +156,30 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                 res = l4.accept() => res.map_err(|e| format!("failed_to_accept_connection: {}", e)),
                 _ = rx.changed() => Err("OAuth cancelled".to_string()),
             } {
-                // Reuse the existing parsing/response code by constructing a temporary listener task
-                // that sends into the shared mpsc channel.
                 let mut buffer = [0u8; 4096];
                 let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
-                // More robust parsing and detailed logging
                 let query_params = request
                     .lines()
                     .next()
                     .and_then(|line| {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 { Some(parts[1]) } else { None }
+                        if parts.len() >= 2 {
+                            Some(parts[1])
+                        } else {
+                            None
+                        }
                     })
-                    .and_then(|path| {
-                        // Use a dummy base for parsing; redirect_uri is already set to localhost
-                        Url::parse(&format!("http://localhost{}", path)).ok()
-                    })
+                    .and_then(|path| Url::parse(&format!("http://localhost{}", path)).ok())
                     .map(|url| {
                         let mut code = None;
                         let mut state = None;
                         for (k, v) in url.query_pairs() {
-                            if k == "code" { code = Some(v.to_string()); }
-                            else if k == "state" { state = Some(v.to_string()); }
+                            if k == "code" {
+                                code = Some(v.to_string());
+                            } else if k == "state" {
+                                state = Some(v.to_string());
+                            }
                         }
                         (code, state)
                     });
@@ -213,8 +195,6 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         &request.chars().take(512).collect::<String>()
                     ));
                 }
-
-                // Verify state
                 let state_valid = {
                     if let Ok(lock) = get_oauth_flow_state().lock() {
                         if let Some(s) = lock.as_ref() {
@@ -229,16 +209,23 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
-                        crate::modules::logger::log_info("Successfully captured OAuth code from IPv4 listener");
+                        crate::modules::logger::log_info(
+                            "Successfully captured OAuth code from IPv4 listener",
+                        );
                         (Ok(code), oauth_success_html())
-                    },
+                    }
                     (Some(_), false) => {
-                        crate::modules::logger::log_error("OAuth callback state mismatch (CSRF protection)");
+                        crate::modules::logger::log_error(
+                            "OAuth callback state mismatch (CSRF protection)",
+                        );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
-                    },
-                    (None, _) => (Err("Failed to get Authorization Code in callback".to_string()), oauth_fail_html()),
+                    }
+                    (None, _) => (
+                        Err("Failed to get Authorization Code in callback".to_string()),
+                        oauth_fail_html(),
+                    ),
                 };
-                
+
                 let _ = stream.write_all(response_html.as_bytes()).await;
                 let _ = stream.flush().await;
 
@@ -258,23 +245,28 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                 let mut buffer = [0u8; 4096];
                 let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
+
                 let query_params = request
                     .lines()
                     .next()
                     .and_then(|line| {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 { Some(parts[1]) } else { None }
+                        if parts.len() >= 2 {
+                            Some(parts[1])
+                        } else {
+                            None
+                        }
                     })
-                    .and_then(|path| {
-                        Url::parse(&format!("http://localhost{}", path)).ok()
-                    })
+                    .and_then(|path| Url::parse(&format!("http://localhost{}", path)).ok())
                     .map(|url| {
                         let mut code = None;
                         let mut state = None;
                         for (k, v) in url.query_pairs() {
-                            if k == "code" { code = Some(v.to_string()); }
-                            else if k == "state" { state = Some(v.to_string()); }
+                            if k == "code" {
+                                code = Some(v.to_string());
+                            } else if k == "state" {
+                                state = Some(v.to_string());
+                            }
                         }
                         (code, state)
                     });
@@ -290,8 +282,6 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         &request.chars().take(512).collect::<String>()
                     ));
                 }
-
-                // Verify state
                 let state_valid = {
                     if let Ok(lock) = get_oauth_flow_state().lock() {
                         if let Some(s) = lock.as_ref() {
@@ -306,16 +296,23 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
-                        crate::modules::logger::log_info("Successfully captured OAuth code from IPv6 listener");
+                        crate::modules::logger::log_info(
+                            "Successfully captured OAuth code from IPv6 listener",
+                        );
                         (Ok(code), oauth_success_html())
-                    },
+                    }
                     (Some(_), false) => {
-                        crate::modules::logger::log_error("OAuth callback state mismatch (IPv6 CSRF protection)");
+                        crate::modules::logger::log_error(
+                            "OAuth callback state mismatch (IPv6 CSRF protection)",
+                        );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
-                    },
-                    (None, _) => (Err("Failed to get Authorization Code in callback".to_string()), oauth_fail_html()),
+                    }
+                    (None, _) => (
+                        Err("Failed to get Authorization Code in callback".to_string()),
+                        oauth_fail_html(),
+                    ),
                 };
-                
+
                 let _ = stream.write_all(response_html.as_bytes()).await;
                 let _ = stream.flush().await;
 
@@ -323,8 +320,6 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
             }
         });
     }
-
-    // Save state
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         *state = Some(OAuthFlowState {
             auth_url: auth_url.clone(),
@@ -339,13 +334,9 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
     Ok(auth_url)
 }
-
-// Pre-generate OAuth URL (does not open browser, does not block waiting for callback)
 pub async fn prepare_oauth_url() -> Result<String, String> {
     ensure_oauth_flow_prepared().await
 }
-
-// Cancel current OAuth flow
 pub fn cancel_oauth_flow() {
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.take() {
@@ -354,10 +345,7 @@ pub fn cancel_oauth_flow() {
         }
     }
 }
-
-// Start OAuth flow and wait for callback, then exchange token
 pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
-    // Ensure URL + listener are ready (this way if the user authorizes first, it won't get stuck)
     let auth_url = ensure_oauth_flow_prepared().await?;
     open_browser_url(&auth_url).map_err(|e| {
         format!(
@@ -365,8 +353,6 @@ pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
             e, auth_url
         )
     })?;
-
-    // Take code_rx to wait for it
     let (mut code_rx, redirect_uri, code_verifier) = {
         let mut lock = get_oauth_flow_state()
             .lock()
@@ -380,30 +366,19 @@ pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
         (rx, state.redirect_uri.clone(), state.code_verifier.clone())
     };
-
-    // Wait for code (if user has already authorized, this returns immediately)
-    // For mpsc, we use recv()
     let code = match code_rx.recv().await {
         Some(Ok(code)) => code,
         Some(Err(e)) => return Err(e),
         None => return Err("OAuth flow channel closed unexpectedly".to_string()),
     };
-
-    // Clean up flow state (release cancel_tx, etc.)
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         *lock = None;
     }
 
     oauth::exchange_code(&code, &redirect_uri, &code_verifier).await
 }
-
-// Complete OAuth flow without opening a browser.
-// Assumes user opened the URL manually (or it was already opened) and we only wait for callback.
 pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
-    // Ensure URL + listeners exist
     let _ = ensure_oauth_flow_prepared().await?;
-
-    // Take receiver to wait for code
     let (mut code_rx, redirect_uri, code_verifier) = {
         let mut lock = get_oauth_flow_state()
             .lock()
@@ -430,15 +405,13 @@ pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
 
     oauth::exchange_code(&code, &redirect_uri, &code_verifier).await
 }
-
-// Manually submit an OAuth code to complete the flow.
-// This is used when the user manually copies the code/URL from the browser
-// because the localhost callback couldn't be reached (e.g. in Docker/remote).
-pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) -> Result<(), String> {
+pub async fn submit_oauth_code(
+    code_input: String,
+    state_input: Option<String>,
+) -> Result<(), String> {
     let tx = {
         let lock = get_oauth_flow_state().lock().map_err(|e| e.to_string())?;
         if let Some(state) = lock.as_ref() {
-            // Verify state if provided
             if let Some(provided_state) = state_input {
                 if provided_state != state.state {
                     return Err("OAuth state mismatch (CSRF protection)".to_string());
@@ -451,8 +424,6 @@ pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) 
             return Err("No active OAuth flow found".to_string());
         }
     };
-
-    // Extract code if it's a URL
     let code = if code_input.starts_with("http") {
         if let Ok(url) = Url::parse(&code_input) {
             url.query_pairs()
@@ -467,19 +438,15 @@ pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) 
     };
 
     crate::modules::logger::log_info("Received manual OAuth code submission");
-    
-    // Send to the channel
-    tx.send(Ok(code)).await.map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
-
-    // Single-use: clear the global flow state to prevent replay.
+    tx.send(Ok(code))
+        .await
+        .map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         *lock = None;
     }
-    
+
     Ok(())
 }
-// Manually prepare an OAuth flow without starting listeners.
-// Useful for Web/Docker environments where we only need manual code submission.
 pub fn prepare_oauth_flow_manually(
     redirect_uri: String,
     state_str: String,
@@ -487,15 +454,10 @@ pub fn prepare_oauth_flow_manually(
     let code_verifier = oauth::generate_pkce_verifier();
     let code_challenge = oauth::pkce_challenge_s256(&code_verifier);
     let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, &code_challenge)?;
-    
-    // Check if we can reuse existing state
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         if let Some(s) = lock.as_mut() {
-             // If we already have a code_rx, we can't easily "steal" it again because it's already returned.
-             // But if this is a NEW request (different state), we should overwrite.
-             // For now, let's just clear and restart to be safe.
-             let _ = s.cancel_tx.send(true);
-             *lock = None;
+            let _ = s.cancel_tx.send(true);
+            *lock = None;
         }
     }
 
@@ -510,7 +472,7 @@ pub fn prepare_oauth_flow_manually(
             code_verifier: code_verifier.clone(),
             cancel_tx,
             code_tx,
-            code_rx: None, // We return it directly
+            code_rx: None,
         });
     }
 

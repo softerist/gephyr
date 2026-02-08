@@ -34,8 +34,6 @@ pub struct RuntimeState {
     pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>,
     pub proxy_pool_manager: Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
 }
-
-// Axum application state
 #[derive(Clone)]
 pub struct AppState {
     pub core: Arc<CoreServices>,
@@ -55,8 +53,6 @@ pub struct OpenAIHandlerState {
 pub struct ModelCatalogState {
     pub custom_mapping: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
 }
-
-// Implement FromRef for AppState to allow middleware to extract security state
 impl axum::extract::FromRef<AppState> for Arc<RwLock<crate::proxy::ProxySecurityConfig>> {
     fn from_ref(state: &AppState) -> Self {
         state.config.security.clone()

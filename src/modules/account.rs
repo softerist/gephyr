@@ -11,17 +11,10 @@ use crate::models::{
 use crate::modules;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
-
-// Global account write lock to prevent corruption during concurrent operations
 static ACCOUNT_INDEX_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-// ... existing constants ...
 const DATA_DIR: &str = ".gephyr";
 const ACCOUNTS_INDEX: &str = "accounts.json";
 const ACCOUNTS_DIR: &str = "accounts";
-
-// ... existing functions get_data_dir, get_accounts_dir, load_account_index, save_account_index ...
-// Get data directory path
 pub fn get_data_dir() -> Result<PathBuf, String> {
     fn ensure_dir(path: &PathBuf) -> Result<(), String> {
         if !path.exists() {
@@ -29,8 +22,6 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
         }
         Ok(())
     }
-
-    // Support custom data directory via environment variables
     if let Ok(env_path) = std::env::var("ABV_DATA_DIR") {
         if !env_path.trim().is_empty() {
             let data_dir = PathBuf::from(env_path);
@@ -38,8 +29,6 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
             return Ok(data_dir);
         }
     }
-
-    // Test mode: always use a writable, isolated temp directory per process.
     if cfg!(test) {
         let data_dir = std::env::temp_dir().join(format!(".gephyr-test-{}", std::process::id()));
         ensure_dir(&data_dir)?;
@@ -52,14 +41,10 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
             return Ok(data_dir);
         }
     }
-
-    // Fallback for restricted environments (sandbox/CI): use system temp directory.
     let fallback_dir = std::env::temp_dir().join(DATA_DIR);
     ensure_dir(&fallback_dir)?;
     Ok(fallback_dir)
 }
-
-// Get accounts directory path
 pub fn get_accounts_dir() -> Result<PathBuf, String> {
     let data_dir = get_data_dir()?;
     let accounts_dir = data_dir.join(ACCOUNTS_DIR);
@@ -71,8 +56,6 @@ pub fn get_accounts_dir() -> Result<PathBuf, String> {
 
     Ok(accounts_dir)
 }
-
-// Load account index
 pub fn load_account_index() -> Result<AccountIndex, String> {
     let data_dir = get_data_dir()?;
     let index_path = data_dir.join(ACCOUNTS_INDEX);
@@ -84,8 +67,6 @@ pub fn load_account_index() -> Result<AccountIndex, String> {
 
     let content = fs::read_to_string(&index_path)
         .map_err(|e| format!("failed_to_read_account_index: {}", e))?;
-
-    // If file content is empty, treat as new index
     if content.trim().is_empty() {
         crate::modules::logger::log_warn("Account index is empty, initializing new index");
         return Ok(AccountIndex::new());
@@ -100,8 +81,6 @@ pub fn load_account_index() -> Result<AccountIndex, String> {
     ));
     Ok(index)
 }
-
-// Save account index (atomic write)
 pub fn save_account_index(index: &AccountIndex) -> Result<(), String> {
     let data_dir = get_data_dir()?;
     let index_path = data_dir.join(ACCOUNTS_INDEX);
@@ -109,16 +88,10 @@ pub fn save_account_index(index: &AccountIndex) -> Result<(), String> {
 
     let content = serde_json::to_string_pretty(index)
         .map_err(|e| format!("failed_to_serialize_account_index: {}", e))?;
-
-    // Write to temporary file
     fs::write(&temp_path, content)
         .map_err(|e| format!("failed_to_write_temp_index_file: {}", e))?;
-
-    // Atomic rename
     fs::rename(temp_path, index_path).map_err(|e| format!("failed_to_replace_index_file: {}", e))
 }
-
-// Load account data
 pub fn load_account(account_id: &str) -> Result<Account, String> {
     let accounts_dir = get_accounts_dir()?;
     let account_path = accounts_dir.join(format!("{}.json", account_id));
@@ -132,8 +105,6 @@ pub fn load_account(account_id: &str) -> Result<Account, String> {
 
     serde_json::from_str(&content).map_err(|e| format!("failed_to_parse_account_data: {}", e))
 }
-
-// Save account data
 pub fn save_account(account: &Account) -> Result<(), String> {
     let accounts_dir = get_accounts_dir()?;
     let account_path = accounts_dir.join(format!("{}.json", account.id));
@@ -143,8 +114,6 @@ pub fn save_account(account: &Account) -> Result<(), String> {
 
     fs::write(&account_path, content).map_err(|e| format!("failed_to_save_account_data: {}", e))
 }
-
-// List all accounts
 pub fn list_accounts() -> Result<Vec<Account>, String> {
     crate::modules::logger::log_info("Listing accounts...");
     let index = load_account_index()?;
@@ -158,17 +127,12 @@ pub fn list_accounts() -> Result<Vec<Account>, String> {
                     "Failed to load account {}: {}",
                     summary.id, e
                 ));
-                //  Removed auto-repair logic.
-                // We no longer silently delete account IDs from the index if the file is missing.
-                // This prevents account loss during version upgrades or temporary FS issues.
             }
         }
     }
 
     Ok(accounts)
 }
-
-// Add account
 pub fn add_account(
     email: String,
     name: Option<String>,
@@ -178,21 +142,13 @@ pub fn add_account(
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
-
-    // Check if account already exists
     if index.accounts.iter().any(|s| s.email == email) {
         return Err(format!("Account already exists: {}", email));
     }
-
-    // Create new account
     let account_id = Uuid::new_v4().to_string();
     let mut account = Account::new(account_id.clone(), email.clone(), token);
     account.name = name.clone();
-
-    // Save account data
     save_account(&account)?;
-
-    // Update index
     index.accounts.push(AccountSummary {
         id: account_id.clone(),
         email: email.clone(),
@@ -202,8 +158,6 @@ pub fn add_account(
         created_at: account.created_at,
         last_used: account.last_used,
     });
-
-    // If first account, set as current
     if index.current_account_id.is_none() {
         index.current_account_id = Some(account_id);
     }
@@ -212,8 +166,6 @@ pub fn add_account(
 
     Ok(account)
 }
-
-// Add or update account
 pub fn upsert_account(
     email: String,
     name: Option<String>,
@@ -223,8 +175,6 @@ pub fn upsert_account(
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
-
-    // Find account ID if exists
     let existing_account_id = index
         .accounts
         .iter()
@@ -232,15 +182,12 @@ pub fn upsert_account(
         .map(|s| s.id.clone());
 
     if let Some(account_id) = existing_account_id {
-        // Update existing account
         match load_account(&account_id) {
             Ok(mut account) => {
                 let old_access_token = account.token.access_token.clone();
                 let old_refresh_token = account.token.refresh_token.clone();
                 account.token = token;
                 account.name = name.clone();
-                // If an account was previously disabled (e.g. invalid_grant), any explicit token upsert
-                // should re-enable it (user manually updated credentials in the UI).
                 if account.disabled
                     && (account.token.refresh_token != old_refresh_token
                         || account.token.access_token != old_access_token)
@@ -251,8 +198,6 @@ pub fn upsert_account(
                 }
                 account.update_last_used();
                 save_account(&account)?;
-
-                // Sync name in index
                 if let Some(idx_summary) = index.accounts.iter_mut().find(|s| s.id == account_id) {
                     idx_summary.name = name;
                     save_account_index(&index)?;
@@ -265,12 +210,9 @@ pub fn upsert_account(
                     "Account {} file missing ({}), recreating...",
                     account_id, e
                 ));
-                // Index exists but file is missing, recreating
                 let mut account = Account::new(account_id.clone(), email.clone(), token);
                 account.name = name.clone();
                 save_account(&account)?;
-
-                // Sync name in index
                 if let Some(idx_summary) = index.accounts.iter_mut().find(|s| s.id == account_id) {
                     idx_summary.name = name;
                     save_account_index(&index)?;
@@ -280,39 +222,25 @@ pub fn upsert_account(
             }
         }
     }
-
-    // Add if not exists
-    // Note: add_account will attempt to acquire lock, which would deadlock here.
-    // Use an internal version or release lock.
-
-    // Release lock, let add_account handle it
     drop(_lock);
     add_account(email, name, token)
 }
-
-// Delete account
 pub fn delete_account(account_id: &str) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
-
-    // Remove from index
     let original_len = index.accounts.len();
     index.accounts.retain(|s| s.id != account_id);
 
     if index.accounts.len() == original_len {
         return Err(format!("Account ID not found: {}", account_id));
     }
-
-    // Clear current account if it's being deleted
     if index.current_account_id.as_deref() == Some(account_id) {
         index.current_account_id = index.accounts.first().map(|s| s.id.clone());
     }
 
     save_account_index(&index)?;
-
-    // Delete account file
     let accounts_dir = get_accounts_dir()?;
     let account_path = accounts_dir.join(format!("{}.json", account_id));
 
@@ -320,14 +248,10 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
         fs::remove_file(&account_path)
             .map_err(|e| format!("failed_to_delete_account_file: {}", e))?;
     }
-
-    // Trigger TokenManager cache cleanup signal
     crate::proxy::server::trigger_account_delete(account_id);
 
     Ok(())
 }
-
-// Batch delete accounts (atomic index operation)
 pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
@@ -337,56 +261,38 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
     let accounts_dir = get_accounts_dir()?;
 
     for account_id in account_ids {
-        // Remove from index
         index.accounts.retain(|s| &s.id != account_id);
-
-        // Clear current account if it's being deleted
         if index.current_account_id.as_deref() == Some(account_id) {
             index.current_account_id = None;
         }
-
-        // Delete account file
         let account_path = accounts_dir.join(format!("{}.json", account_id));
         if account_path.exists() {
             let _ = fs::remove_file(&account_path);
         }
-
-        // Trigger TokenManager cache cleanup signal
         crate::proxy::server::trigger_account_delete(account_id);
     }
-
-    // If current account is empty, use first one as default
     if index.current_account_id.is_none() {
         index.current_account_id = index.accounts.first().map(|s| s.id.clone());
     }
 
     save_account_index(&index)
 }
-
-// Reorder account list
-// Update account order in index file based on provided IDs
 pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
-
-    // Create a map of account ID to summary
     let id_to_summary: std::collections::HashMap<_, _> = index
         .accounts
         .iter()
         .map(|s| (s.id.clone(), s.clone()))
         .collect();
-
-    // Rebuild account list with new order
     let mut new_accounts = Vec::new();
     for id in account_ids {
         if let Some(summary) = id_to_summary.get(id) {
             new_accounts.push(summary.clone());
         }
     }
-
-    // Add accounts missing from new order to the end
     for summary in &index.accounts {
         if !account_ids.contains(&summary.id) {
             new_accounts.push(summary.clone());
@@ -402,8 +308,6 @@ pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
 
     save_account_index(&index)
 }
-
-// Switch current account (Core Logic)
 pub async fn switch_account(
     account_id: &str,
     integration: &(impl modules::integration::SystemIntegration + ?Sized),
@@ -416,8 +320,6 @@ pub async fn switch_account(
             .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
         load_account_index()?
     };
-
-    // 1. Verify account exists
     if !index.accounts.iter().any(|s| s.id == account_id) {
         return Err(format!("Account not found: {}", account_id));
     }
@@ -427,19 +329,13 @@ pub async fn switch_account(
         "Switching to account: {} (ID: {})",
         account.email, account.id
     ));
-
-    // 2. Ensure Token is valid (auto-refresh)
     let fresh_token = oauth::ensure_fresh_token(&account.token, Some(&account.id))
         .await
         .map_err(|e| format!("Token refresh failed: {}", e))?;
-
-    // If Token updated, save back to account file
     if fresh_token.access_token != account.token.access_token {
         account.token = fresh_token.clone();
         save_account(&account)?;
     }
-
-    //  Ensure account has a device profile for isolation
     if account.device_profile.is_none() {
         crate::modules::logger::log_info(&format!(
             "Account {} has no bound fingerprint, generating new one for isolation...",
@@ -453,11 +349,7 @@ pub async fn switch_account(
             true,
         )?;
     }
-
-    // 3. Execute platform-specific system integration (Close proc, Inject DB, Start proc, etc.)
     integration.on_account_switch(&account).await?;
-
-    // 4. Update tool internal state
     {
         let _lock = ACCOUNT_INDEX_LOCK
             .lock()
@@ -477,8 +369,6 @@ pub async fn switch_account(
 
     Ok(())
 }
-
-// Get device profile info: current storage.json + account bound profile
 #[derive(Debug, Serialize)]
 pub struct DeviceProfiles {
     pub current_storage: Option<DeviceProfile>,
@@ -488,7 +378,6 @@ pub struct DeviceProfiles {
 }
 
 pub fn get_device_profiles(account_id: &str) -> Result<DeviceProfiles, String> {
-    // storage.json may not exist in containerized/server deployments; handle gracefully.
     let current = crate::modules::device::get_storage_path()
         .ok()
         .and_then(|path| crate::modules::device::read_profile(&path).ok());
@@ -500,8 +389,6 @@ pub fn get_device_profiles(account_id: &str) -> Result<DeviceProfiles, String> {
         baseline: crate::modules::device::load_global_original(),
     })
 }
-
-// Bind device profile and write to storage.json immediately
 pub fn bind_device_profile(account_id: &str, mode: &str) -> Result<DeviceProfile, String> {
     use crate::modules::device;
 
@@ -517,8 +404,6 @@ pub fn bind_device_profile(account_id: &str, mode: &str) -> Result<DeviceProfile
 
     Ok(profile)
 }
-
-// Bind directly with provided profile
 pub fn bind_device_profile_with_profile(
     account_id: &str,
     profile: DeviceProfile,
@@ -539,7 +424,6 @@ fn apply_profile_to_account(
 ) -> Result<(), String> {
     account.device_profile = Some(profile.clone());
     if add_history {
-        // Clear 'current' flag
         for h in account.device_history.iter_mut() {
             h.is_current = false;
         }
@@ -554,8 +438,6 @@ fn apply_profile_to_account(
     save_account(account)?;
     Ok(())
 }
-
-// Restore device profile by version ID ("baseline" for global original, "current" for current bound)
 pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<DeviceProfile, String> {
     let mut account = load_account(account_id)?;
 
@@ -579,8 +461,6 @@ pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<Devi
     save_account(&account)?;
     Ok(target_profile)
 }
-
-// Delete specific historical device profile (baseline cannot be deleted)
 pub fn delete_device_version(account_id: &str, version_id: &str) -> Result<(), String> {
     if version_id == "baseline" {
         return Err("Original profile cannot be deleted".to_string());
@@ -601,7 +481,6 @@ pub fn delete_device_version(account_id: &str, version_id: &str) -> Result<(), S
     save_account(&account)?;
     Ok(())
 }
-// Restore earliest storage.json backup (approximate "original" state)
 pub fn restore_original_device() -> Result<String, String> {
     if let Some(current_id) = get_current_account_id()? {
         if let Ok(mut account) = load_account(&current_id) {
@@ -620,14 +499,10 @@ pub fn restore_original_device() -> Result<String, String> {
     }
     Err("Original profile not found, cannot restore".to_string())
 }
-
-// Get current account ID
 pub fn get_current_account_id() -> Result<Option<String>, String> {
     let index = load_account_index()?;
     Ok(index.current_account_id)
 }
-
-// Get currently active account details
 pub fn get_current_account() -> Result<Option<Account>, String> {
     if let Some(id) = get_current_account_id()? {
         Ok(Some(load_account(&id)?))
@@ -635,29 +510,22 @@ pub fn get_current_account() -> Result<Option<Account>, String> {
         Ok(None)
     }
 }
-
-// Update account quota
 pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), String> {
     let mut account = load_account(account_id)?;
     account.update_quota(quota);
-
-    // --- Quota protection logic start ---
     if let Ok(config) = crate::modules::config::load_app_config() {
         if config.quota_protection.enabled {
             if let Some(ref q) = account.quota {
                 let threshold = config.quota_protection.threshold_percentage as i32;
 
                 for model in &q.models {
-                    // Normalize model name to standard ID
                     let standard_id =
                         match crate::proxy::common::model_mapping::normalize_to_standard_id(
                             &model.name,
                         ) {
                             Some(id) => id,
-                            None => continue, // Skip if not one of the 3 protected models
+                            None => continue,
                         };
-
-                    // Only monitor models selected by user
                     if !config
                         .quota_protection
                         .monitored_models
@@ -667,7 +535,6 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                     }
 
                     if model.percentage <= threshold {
-                        // Trigger model-level protection
                         if !account.protected_models.contains(&standard_id) {
                             crate::modules::logger::log_info(&format!(
                                 "[Quota] Triggering model protection: {} ({} [{}] remaining {}% <= threshold {}%)",
@@ -676,7 +543,6 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                             account.protected_models.insert(standard_id.clone());
                         }
                     } else {
-                        // Auto-recover single model
                         if account.protected_models.contains(&standard_id) {
                             crate::modules::logger::log_info(&format!(
                                 "[Quota] Model protection recovered: {} ({} [{}] quota restored to {}%)",
@@ -686,8 +552,6 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                         }
                     }
                 }
-
-                // [Compatibility] Migrate from account-level to model-level protection if previously disabled for quota
                 if account.proxy_disabled
                     && account
                         .proxy_disabled_reason
@@ -705,19 +569,11 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
             }
         }
     }
-    // --- Quota protection logic end ---
-
-    // Save account first
     save_account(&account)?;
-
-    //  Trigger account reload signal for TokenManager
-    // This ensures protected_models in memory are synchronized
     crate::proxy::server::trigger_account_reload(account_id);
 
     Ok(())
 }
-
-// Toggle proxy disabled status for an account
 pub fn toggle_proxy_status(
     account_id: &str,
     enable: bool,
@@ -738,8 +594,6 @@ pub fn toggle_proxy_status(
     };
 
     save_account(&account)?;
-
-    // Also update index summary
     let mut index = load_account_index()?;
     if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
         summary.proxy_disabled = !enable;
@@ -748,13 +602,13 @@ pub fn toggle_proxy_status(
 
     Ok(())
 }
-
-// Export accounts by IDs (for backup/migration)
-pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::AccountExportResponse, String> {
+pub fn export_accounts_by_ids(
+    account_ids: &[String],
+) -> Result<crate::models::AccountExportResponse, String> {
     use crate::models::{AccountExportItem, AccountExportResponse};
-    
+
     let accounts = list_accounts()?;
-    
+
     let export_items: Vec<AccountExportItem> = accounts
         .into_iter()
         .filter(|acc| account_ids.contains(&acc.id))
@@ -768,8 +622,6 @@ pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::A
         accounts: export_items,
     })
 }
-
-// Export all accounts' refresh_tokens (legacy, kept for compatibility)
 #[allow(dead_code)]
 pub fn export_accounts() -> Result<Vec<(String, String)>, String> {
     let accounts = list_accounts()?;
@@ -781,14 +633,10 @@ pub fn export_accounts() -> Result<Vec<(String, String)>, String> {
 
     Ok(exports)
 }
-
-// Quota query with retry (moved from commands to modules for reuse)
 pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppResult<QuotaData> {
     use crate::error::AppError;
     use crate::modules::oauth;
     use reqwest::StatusCode;
-
-    // 1. Time-based check - ensure Token is valid first
     let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
         Ok(t) => t,
         Err(e) => {
@@ -810,8 +658,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     if token.access_token != account.token.access_token {
         modules::logger::log_info(&format!("Time-based Token refresh: {}", account.email));
         account.token = token.clone();
-
-        // Get display name (incidental to Token refresh)
         let name = if account.name.is_none()
             || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
         {
@@ -826,14 +672,11 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         account.name = name.clone();
         upsert_account(account.email.clone(), name, token.clone()).map_err(AppError::Account)?;
     }
-
-    // 0. Supplement display name (if missing or upper step failed)
     if account.name.is_none() || account.name.as_ref().map_or(false, |n| n.trim().is_empty()) {
         modules::logger::log_info(&format!(
             "Account {} missing display name, attempting to fetch...",
             account.email
         ));
-        // Use updated token
         match oauth::get_user_info(&account.token.access_token, Some(&account.id)).await {
             Ok(user_info) => {
                 let display_name = user_info.get_display_name();
@@ -842,7 +685,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     display_name
                 ));
                 account.name = display_name.clone();
-                // Save immediately
                 if let Err(e) =
                     upsert_account(account.email.clone(), display_name, account.token.clone())
                 {
@@ -854,12 +696,12 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             }
         }
     }
-
-    // 2. Attempt query
-    let result: crate::error::AppResult<(QuotaData, Option<String>)> =
-        modules::fetch_quota(&account.token.access_token, &account.email, Some(&account.id)).await;
-
-    // Capture potentially updated project_id and save
+    let result: crate::error::AppResult<(QuotaData, Option<String>)> = modules::fetch_quota(
+        &account.token.access_token,
+        &account.email,
+        Some(&account.id),
+    )
+    .await;
     if let Ok((ref _q, ref project_id)) = result {
         if project_id.is_some() && *project_id != account.token.project_id {
             modules::logger::log_info(&format!(
@@ -876,8 +718,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             }
         }
     }
-
-    // 3. Handle 401 error
     if let Err(AppError::Network(ref e)) = result {
         if let Some(status) = e.status() {
             if status == StatusCode::UNAUTHORIZED {
@@ -885,10 +725,11 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     "401 Unauthorized for {}, forcing refresh...",
                     account.email
                 ));
-
-                // Force refresh
-                let token_res = match oauth::refresh_access_token(&account.token.refresh_token, Some(&account.id))
-                    .await
+                let token_res = match oauth::refresh_access_token(
+                    &account.token.refresh_token,
+                    Some(&account.id),
+                )
+                .await
                 {
                     Ok(t) => t,
                     Err(e) => {
@@ -912,11 +753,9 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     account.token.refresh_token.clone(),
                     token_res.expires_in,
                     account.token.email.clone(),
-                    account.token.project_id.clone(), // Keep original project_id
-                    None,                             // Add None as session_id
+                    account.token.project_id.clone(),
+                    None,
                 );
-
-                // Re-fetch display name
                 let name = if account.name.is_none()
                     || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
                 {
@@ -932,12 +771,13 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 account.name = name.clone();
                 upsert_account(account.email.clone(), name, new_token.clone())
                     .map_err(AppError::Account)?;
-
-                // Retry query
                 let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
-                    modules::fetch_quota(&new_token.access_token, &account.email, Some(&account.id)).await;
-
-                // Also handle project_id saving during retry
+                    modules::fetch_quota(
+                        &new_token.access_token,
+                        &account.email,
+                        Some(&account.id),
+                    )
+                    .await;
                 if let Ok((ref _q, ref project_id)) = retry_result {
                     if project_id.is_some() && *project_id != account.token.project_id {
                         modules::logger::log_info(&format!(
@@ -966,8 +806,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             }
         }
     }
-
-    // fetch_quota already handles 403, just return mapping result
     result.map(|(q, _)| q)
 }
 
@@ -978,8 +816,6 @@ pub struct RefreshStats {
     pub failed: usize,
     pub details: Vec<String>,
 }
-
-// Core logic to batch refresh all account quotas (runtime-agnostic).
 pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use futures::future::join_all;
     use std::sync::Arc;
@@ -1003,11 +839,14 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                 crate::modules::logger::log_info(&format!(
                     "  - Skipping {} ({})",
                     account.email,
-                    if account.disabled { "Disabled" } else { "Proxy Disabled" }
+                    if account.disabled {
+                        "Disabled"
+                    } else {
+                        "Proxy Disabled"
+                    }
                 ));
                 return false;
             }
-            //  Check proxy_disabled status
             if account.proxy_disabled {
                 crate::modules::logger::log_info(&format!(
                     "  - Skipping {} (Proxy Disabled)",

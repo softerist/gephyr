@@ -1,15 +1,8 @@
 use crate::modules::config::load_app_config;
 use once_cell::sync::Lazy;
 use reqwest::{Client, Proxy};
-
-// Global shared HTTP client (15s timeout)
-// Client has a built-in connection pool; cloning it is light and shares the pool
 pub static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| create_base_client(15));
-
-// Global shared HTTP client (Long timeout: 60s, for warmup etc.)
 pub static SHARED_CLIENT_LONG: Lazy<Client> = Lazy::new(|| create_base_client(60));
-
-// Base client creation logic
 fn create_base_client(timeout_secs: u64) -> Client {
     let mut builder = Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
 
@@ -33,13 +26,9 @@ fn create_base_client(timeout_secs: u64) -> Client {
 
     builder.build().unwrap_or_else(|_| Client::new())
 }
-
-// Get uniformly configured HTTP client (15s timeout)
 pub fn get_client() -> Client {
     SHARED_CLIENT.clone()
 }
-
-// Get long timeout HTTP client (60s timeout)
 pub fn get_long_client() -> Client {
     SHARED_CLIENT_LONG.clone()
 }

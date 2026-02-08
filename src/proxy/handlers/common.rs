@@ -1,32 +1,26 @@
+use crate::proxy::state::ModelCatalogState;
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
-use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, extract::State};
-use serde_json::{json, Value};
-use crate::proxy::state::ModelCatalogState;
-
-// ===== Unified Retry and Backoff Strategies =====
-
-// Retry strategy enum
 #[derive(Debug, Clone)]
 pub enum RetryStrategy {
-    // No retry, return error directly
     NoRetry,
-    // Fixed delay
     FixedDelay(Duration),
-    // Linear backoff: base_ms * (attempt + 1)
     LinearBackoff { base_ms: u64 },
-    // Exponential backoff: base_ms * 2^attempt, capped at max_ms
     ExponentialBackoff { base_ms: u64, max_ms: u64 },
 }
-
-// Determine retry strategy based on error status code and error message
 pub fn determine_retry_strategy(
     status_code: u16,
     error_text: &str,
     retried_without_thinking: bool,
 ) -> RetryStrategy {
     match status_code {
-        // 400 Error: Retry once only for specific Thinking signature failures
         400 if !retried_without_thinking
             && (error_text.contains("Invalid `signature`")
                 || error_text.contains("thinking.signature")
@@ -35,42 +29,23 @@ pub fn determine_retry_strategy(
         {
             RetryStrategy::FixedDelay(Duration::from_millis(200))
         }
-
-        // 429 Rate limiting error
         429 => {
-            // Prioritize using Retry-After returned by the server
             if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(error_text) {
-                let actual_delay = delay_ms.saturating_add(200).min(30_000); // cap increased to 30s
+                let actual_delay = delay_ms.saturating_add(200).min(30_000);
                 RetryStrategy::FixedDelay(Duration::from_millis(actual_delay))
             } else {
-                // Otherwise use linear backoff: starting at 5s, increasing gradually
                 RetryStrategy::LinearBackoff { base_ms: 5000 }
             }
         }
-
-        // Exponential backoff: starting at 10s, capped at 60s (targeting Google edge node overload)
-        503 | 529 => {
-            RetryStrategy::ExponentialBackoff {
-                base_ms: 10000,
-                max_ms: 60000,
-            }
-        }
-
-        // 500 Internal Server Error
-        500 => {
-            // Linear backoff: starting at 3s
-            RetryStrategy::LinearBackoff { base_ms: 3000 }
-        }
-
-        // 401/403 Auth/Permission error: provide a short buffer before switching accounts
+        503 | 529 => RetryStrategy::ExponentialBackoff {
+            base_ms: 10000,
+            max_ms: 60000,
+        },
+        500 => RetryStrategy::LinearBackoff { base_ms: 3000 },
         401 | 403 => RetryStrategy::FixedDelay(Duration::from_millis(200)),
-
-        // Other errors: no retry
         _ => RetryStrategy::NoRetry,
     }
 }
-
-// Execute backoff strategy and return whether retry should continue
 pub async fn apply_retry_strategy(
     strategy: RetryStrategy,
     attempt: usize,
@@ -80,7 +55,10 @@ pub async fn apply_retry_strategy(
 ) -> bool {
     match strategy {
         RetryStrategy::NoRetry => {
-            debug!("[{}] Non-retryable error {}, stopping", trace_id, status_code);
+            debug!(
+                "[{}] Non-retryable error {}, stopping",
+                trace_id, status_code
+            );
             false
         }
 
@@ -127,47 +105,34 @@ pub async fn apply_retry_strategy(
         }
     }
 }
-
-// Determine if account rotation is needed
 pub fn should_rotate_account(status_code: u16) -> bool {
     match status_code {
-        // These errors are account-level or node-specific quota issues, rotation is needed
         429 | 401 | 403 | 500 => true,
-        // These errors are usually protocol or server-level global issues, or even parameter errors, rotation is usually meaningless
         400 | 503 | 529 => false,
         _ => false,
     }
 }
-
-// Detects model capabilities and configuration
-// POST /v1/models/detect
 pub async fn handle_detect_model(
     State(state): State<ModelCatalogState>,
     Json(body): Json<Value>,
 ) -> Response {
     let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
-    
+
     if model_name.is_empty() {
         return (StatusCode::BAD_REQUEST, "Missing 'model' field").into_response();
     }
-
-    // 1. Resolve mapping
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
         model_name,
         &*state.custom_mapping.read().await,
     );
-
-    // 2. Resolve capabilities
     let config = crate::proxy::mappers::common_utils::resolve_request_config(
         model_name,
         &mapped_model,
-        &None, // We don't check tools for static capability detection
-        None,  // size
-        None,  // quality
-        None,  // body (not needed for static detection)
+        &None,
+        None,
+        None,
+        None,
     );
-
-    // 3. Construct response
     let mut response = json!({
         "model": model_name,
         "mapped_model": mapped_model,

@@ -10,7 +10,6 @@ const STRIP_KEYS: &[&str] = &[
     "deprecated",
     "readOnly",
     "writeOnly",
-    // Validation/constraint keywords often rejected or unnecessary for upstream tool schemas
     "additionalProperties",
     "unevaluatedProperties",
     "propertyNames",
@@ -46,7 +45,6 @@ pub fn clean_json_schema(value: &mut Value) {
                         *s = s.to_ascii_lowercase();
                     }
                     Value::Array(items) => {
-                        // Convert union types like ["string", "null"] to first non-null type.
                         if let Some(non_null) = items.iter().find_map(|v| {
                             v.as_str()
                                 .map(|s| s.to_ascii_lowercase())

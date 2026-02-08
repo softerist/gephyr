@@ -1,21 +1,16 @@
 use serde::{Deserialize, Serialize};
-
-// Model quota information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelQuota {
     pub name: String,
-    pub percentage: i32,  // Remaining percentage 0-100
+    pub percentage: i32,
     pub reset_time: String,
 }
-
-// Quota data structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuotaData {
     pub models: Vec<ModelQuota>,
     pub last_updated: i64,
     #[serde(default)]
     pub is_forbidden: bool,
-    // Subscription tier (FREE/PRO/ULTRA)
     #[serde(default)]
     pub subscription_tier: Option<String>,
 }

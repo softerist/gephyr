@@ -1,5 +1,3 @@
-// Claude protocol handler
-
 use axum::{
     body::Body,
     extract::{Json, State},
@@ -12,29 +10,23 @@ use serde_json::{json, Value};
 use tokio::time::Duration;
 use tracing::{debug, error, info};
 
+use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
+use crate::proxy::debug_logger;
 use crate::proxy::mappers::claude::{
-    transform_claude_request_in, transform_response, create_claude_sse_stream, ClaudeRequest,
-    filter_invalid_thinking_blocks_with_family, close_tool_loop_for_thinking,
-    clean_cache_control_from_messages, merge_consecutive_messages,
+    clean_cache_control_from_messages, close_tool_loop_for_thinking, create_claude_sse_stream,
+    filter_invalid_thinking_blocks_with_family, merge_consecutive_messages,
     models::{Message, MessageContent},
+    transform_claude_request_in, transform_response, ClaudeRequest,
 };
-use crate::proxy::state::{AppState, ModelCatalogState};
 use crate::proxy::mappers::context_manager::ContextManager;
 use crate::proxy::mappers::estimation_calibrator::get_calibrator;
-use crate::proxy::debug_logger;
-use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; //  Import Adapter Registry
+use crate::proxy::state::{AppState, ModelCatalogState};
 use axum::http::HeaderMap;
 use std::sync::{atomic::Ordering, Arc};
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
-
-// ===== Model Constants for Background Tasks =====
-// These can be adjusted for performance/cost optimization or overridden by custom_mapping
-const INTERNAL_BACKGROUND_TASK: &str = crate::proxy::common::model_mapping::MODEL_INTERNAL_BACKGROUND_TASK;  // Unified virtual ID for all background tasks
-
-// ===== Layer 3: XML Summary Prompt Template =====
-// Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
-// This prompt generates a structured 8-section XML summary for context compression
+const INTERNAL_BACKGROUND_TASK: &str =
+    crate::proxy::common::model_mapping::MODEL_INTERNAL_BACKGROUND_TASK;
 const CONTEXT_SUMMARY_PROMPT: &str = r#"You are a context compression specialist. Your task is to create a structured XML snapshot of the conversation history.
 
 This snapshot will become the Agent's ONLY memory of the past. All key details, plans, errors, and user instructions MUST be preserved.
@@ -91,88 +83,79 @@ The structure MUST be as follows:
 3. File paths must use absolute paths
 4. The thinking signature must be copied exactly, no modifications
 "#;
-
-// ===== Jitter Configuration (REMOVED) =====
-// Jitter was causing connection instability, reverted to fixed delays
-// const JITTER_FACTOR: f64 = 0.2;
-
-
-// ===== Unified Backoff Strategy Module =====
-
-// [REMOVED] apply_jitter function
-// Jitter logic removed to restore stability
-
-// ===== Unified Backoff Strategy Module =====
-// Removed local duplicate definitions, using unified implementation from common
-use super::common::{build_models_list_response, determine_retry_strategy, apply_retry_strategy, should_rotate_account, RetryStrategy};
-
-// ===== Backoff Strategy Module End =====
-
-// Handle Claude messages requests
-// 
-// Handle chat message request process
+use super::common::{
+    apply_retry_strategy, build_models_list_response, determine_retry_strategy,
+    should_rotate_account, RetryStrategy,
+};
 pub async fn handle_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    //  Save a full copy of the original request body for logging
-    // This ensures that even if struct definitions miss fields, logs can fully record all parameters
     let original_body = body.clone();
-    
-    tracing::debug!("handle_messages called. Body JSON len: {}", body.to_string().len());
-    
-    // Generate random Trace ID for user tracking
-    let trace_id: String = rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
-        .take(6)
-        .map(char::from)
-        .collect::<String>().to_lowercase();
-    let debug_cfg = state.config.debug_logging.read().await.clone();
-    
-    //  Detect Client Adapter
-    // Check if there are matching client adapters (e.g., opencode)
-    let client_adapter = CLIENT_ADAPTERS.iter().find(|a| a.matches(&headers)).cloned();
-    if let Some(_adapter) = &client_adapter {
-        tracing::debug!("[{}] Client Adapter detected: Applying custom strategies", trace_id);
-    }
-        
-    // Decide whether this request should be handled by z.ai (Anthropic passthrough) or the existing Google flow.
-    let zai = state.config.zai.read().await.clone();
-    let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
-    let google_accounts = state.core.token_manager.len();
 
-    // [CRITICAL REFACTOR] Parse request in advance to get model info (for smart fallback judgment)
-    let mut request: crate::proxy::mappers::claude::models::ClaudeRequest = match serde_json::from_value(body) {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "type": "error",
-                    "error": {
-                        "type": "invalid_request_error",
-                        "message": format!("Invalid request body: {}", e)
-                    }
-                }))
-            ).into_response();
-        }
-    };
+    tracing::debug!(
+        "handle_messages called. Body JSON len: {}",
+        body.to_string().len()
+    );
+    let trace_id: String =
+        rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
+            .take(6)
+            .map(char::from)
+            .collect::<String>()
+            .to_lowercase();
+    let debug_cfg = state.config.debug_logging.read().await.clone();
+    let client_adapter = CLIENT_ADAPTERS
+        .iter()
+        .find(|a| a.matches(&headers))
+        .cloned();
+    if let Some(_adapter) = &client_adapter {
+        tracing::debug!(
+            "[{}] Client Adapter detected: Applying custom strategies",
+            trace_id
+        );
+    }
+    let zai = state.config.zai.read().await.clone();
+    let zai_enabled =
+        zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+    let google_accounts = state.core.token_manager.len();
+    let mut request: crate::proxy::mappers::claude::models::ClaudeRequest =
+        match serde_json::from_value(body) {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": format!("Invalid request body: {}", e)
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+        };
 
     if debug_logger::is_enabled(&debug_cfg) {
-        //  Use original body copy for logging to ensure no fields are lost
         let original_payload = json!({
             "kind": "original_request",
             "protocol": "anthropic",
             "trace_id": trace_id,
             "original_model": request.model,
-            "request": original_body,  // Use original request body instead of struct serialization
+            "request": original_body,
         });
-        debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "original_request", &original_payload).await;
+        debug_logger::write_debug_payload(
+            &debug_cfg,
+            Some(&trace_id),
+            "original_request",
+            &original_payload,
+        )
+        .await;
     }
-
-    // Smart fallback judgment: Normalize model name for quota protection check
-    let normalized_model = crate::proxy::common::model_mapping::normalize_to_standard_id(&request.model)
-        .unwrap_or_else(|| request.model.clone());
+    let normalized_model =
+        crate::proxy::common::model_mapping::normalize_to_standard_id(&request.model)
+            .unwrap_or_else(|| request.model.clone());
 
     let use_zai = if !zai_enabled {
         false
@@ -182,12 +165,17 @@ pub async fn handle_messages(
             crate::proxy::ZaiDispatchMode::Exclusive => true,
             crate::proxy::ZaiDispatchMode::Fallback => {
                 if google_accounts == 0 {
-                    // No Google accounts available, using fallback provider
-                    tracing::info!("[{}] No Google accounts available, using fallback provider", trace_id);
+                    tracing::info!(
+                        "[{}] No Google accounts available, using fallback provider",
+                        trace_id
+                    );
                     true
                 } else {
-                    //  Smart judgment: Check if there are available Google accounts
-                    let has_available = state.core.token_manager.has_available_account("claude", &normalized_model).await;
+                    let has_available = state
+                        .core
+                        .token_manager
+                        .has_available_account("claude", &normalized_model)
+                        .await;
                     if !has_available {
                         tracing::info!(
                             "[{}] All Google accounts unavailable (rate-limited or quota-protected for {}), using fallback provider",
@@ -199,46 +187,35 @@ pub async fn handle_messages(
                 }
             }
             crate::proxy::ZaiDispatchMode::Pooled => {
-                // Treat z.ai as exactly one extra slot in the pool.
-                // No strict guarantees: it may get 0 requests if selection never hits.
                 let total = google_accounts.saturating_add(1).max(1);
                 let slot = state.runtime.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
                 slot == 0
             }
         }
     };
-
-    // Must be handled before serialization to ensure neither z.ai nor Google Flow is interfered by historical message cache tags
     clean_cache_control_from_messages(&mut request.messages);
-
-    // Merge consecutive messages of the same role (Consecutive User Messages)
-    // This is crucial for the z.ai (Anthropic direct forward) path, as the original structure must comply with the protocol
     merge_consecutive_messages(&mut request.messages);
-
-    // Get model family for signature validation
     let target_family = if use_zai {
         Some("claude")
     } else {
-        let mapped_model = crate::proxy::common::model_mapping::map_claude_model_to_gemini(&request.model);
+        let mapped_model =
+            crate::proxy::common::model_mapping::map_claude_model_to_gemini(&request.model);
         if mapped_model.contains("gemini") {
             Some("gemini")
         } else {
             Some("claude")
         }
     };
-
-    // Filter and fix Thinking block signatures (Enhanced with family check)
     filter_invalid_thinking_blocks_with_family(&mut request.messages, target_family);
-
-    //  Recover from broken tool loops (where signatures were stripped)
-    // This prevents "Assistant message must start with thinking" errors by closing the loop with synthetic messages
-    if state.config.experimental.read().await.enable_tool_loop_recovery {
+    if state
+        .config
+        .experimental
+        .read()
+        .await
+        .enable_tool_loop_recovery
+    {
         close_tool_loop_for_thinking(&mut request.messages);
     }
-
-    // ===== Intercept Claude Code Warmup requests =====
-    // Claude Code sends warmup requests every 10 seconds to keep the connection warm,
-    // these requests consume a lot of quota. Return simulated response immediately when warmup is detected.
     if is_warmup_request(&request) {
         tracing::info!(
             "[{}] 🔥 Intercepted Warmup request, returning simulated response (saving quota)",
@@ -248,7 +225,6 @@ pub async fn handle_messages(
     }
 
     if use_zai {
-        // Reserialized fixed request body
         let new_body = match serde_json::to_value(&request) {
             Ok(v) => v,
             Err(e) => {
@@ -263,69 +239,55 @@ pub async fn handle_messages(
             "/v1/messages",
             &headers,
             new_body,
-            request.messages.len(), //  Pass message count
+            request.messages.len(),
         )
         .await;
     }
-    
-    // Google Flow continues to use the request object
-    // (subsequent code doesn't need to filter_invalid_thinking_blocks again)
-    
-    //  Get context control config
     let experimental = state.config.experimental.read().await;
     let scaling_enabled = experimental.enable_usage_scaling;
     let threshold_l1 = experimental.context_compression_threshold_l1;
     let threshold_l2 = experimental.context_compression_threshold_l2;
     let threshold_l3 = experimental.context_compression_threshold_l3;
-
-    // Get the latest "meaningful" message content (for logging and background task detection)
-    // Strategy: Reverse traverse, filter "user" role messages first, then find the first non-"Warmup" and non-empty text message
-    // Get the latest "meaningful" message content (for logging and background task detection)
-    // Strategy: Reverse traverse, filter all user-related messages (role="user")
-    // Then extract text content, skip "Warmup" or system preset reminders
-    let meaningful_msg = request.messages.iter().rev()
+    let meaningful_msg = request
+        .messages
+        .iter()
+        .rev()
         .filter(|m| m.role == "user")
         .find_map(|m| {
             let content = match &m.content {
                 crate::proxy::mappers::claude::models::MessageContent::String(s) => s.to_string(),
-                crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
-                    // For arrays, extract all Text blocks and concatenate, ignoring ToolResult
-                    arr.iter()
-                        .filter_map(|block| match block {
-                            crate::proxy::mappers::claude::models::ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                }
+                crate::proxy::mappers::claude::models::MessageContent::Array(arr) => arr
+                    .iter()
+                    .filter_map(|block| match block {
+                        crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
             };
-            
-            // Filter rules:
-            // 1. Ignore empty messages
-            // 2. Ignore "Warmup" messages
-            // 3. Ignore messages with <system-reminder> tags
-            if content.trim().is_empty() 
-                || content.starts_with("Warmup") 
-                || content.contains("<system-reminder>") 
+            if content.trim().is_empty()
+                || content.starts_with("Warmup")
+                || content.contains("<system-reminder>")
             {
-                None 
+                None
             } else {
                 Some(content)
             }
         });
-
-    // If still not found after filtering (e.g., pure tool calls), fallback to the original display of the last message
     let latest_msg = meaningful_msg.unwrap_or_else(|| {
-        request.messages.last().map(|m| {
-            match &m.content {
+        request
+            .messages
+            .last()
+            .map(|m| match &m.content {
                 crate::proxy::mappers::claude::models::MessageContent::String(s) => s.clone(),
-                crate::proxy::mappers::claude::models::MessageContent::Array(_) => "[Complex/Tool Message]".to_string()
-            }
-        }).unwrap_or_else(|| "[No Messages]".to_string())
+                crate::proxy::mappers::claude::models::MessageContent::Array(_) => {
+                    "[Complex/Tool Message]".to_string()
+                }
+            })
+            .unwrap_or_else(|| "[No Messages]".to_string())
     });
-    
-    
-    // INFO level: Concise one-line summary
     info!(
         "[{}] Claude Request | Model: {} | Stream: {} | Messages: {} | Tools: {}",
         trace_id,
@@ -334,92 +296,100 @@ pub async fn handle_messages(
         request.messages.len(),
         request.tools.is_some()
     );
-    
-    // DEBUG level: Detailed debugging information
-    debug!("========== [{}] CLAUDE REQUEST DEBUG START ==========", trace_id);
+    debug!(
+        "========== [{}] CLAUDE REQUEST DEBUG START ==========",
+        trace_id
+    );
     debug!("[{}] Model: {}", trace_id, request.model);
     debug!("[{}] Stream: {}", trace_id, request.stream);
     debug!("[{}] Max Tokens: {:?}", trace_id, request.max_tokens);
     debug!("[{}] Temperature: {:?}", trace_id, request.temperature);
     debug!("[{}] Message Count: {}", trace_id, request.messages.len());
     debug!("[{}] Has Tools: {}", trace_id, request.tools.is_some());
-    debug!("[{}] Has Thinking Config: {}", trace_id, request.thinking.is_some());
+    debug!(
+        "[{}] Has Thinking Config: {}",
+        trace_id,
+        request.thinking.is_some()
+    );
     debug!("[{}] Content Preview: {:.100}...", trace_id, latest_msg);
-    
-    // Output detailed information of each message
     for (idx, msg) in request.messages.iter().enumerate() {
         let content_preview = match &msg.content {
             crate::proxy::mappers::claude::models::MessageContent::String(s) => {
                 let char_count = s.chars().count();
                 if char_count > 200 {
-                    //  Use chars().take() for safe truncation, avoiding UTF-8 character boundary panics
                     let preview: String = s.chars().take(200).collect();
                     format!("{}... (total {} chars)", preview, char_count)
                 } else {
                     s.clone()
                 }
-            },
+            }
             crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
                 format!("[Array with {} blocks]", arr.len())
             }
         };
-        debug!("[{}] Message[{}] - Role: {}, Content: {}", 
-            trace_id, idx, msg.role, content_preview);
+        debug!(
+            "[{}] Message[{}] - Role: {}, Content: {}",
+            trace_id, idx, msg.role, content_preview
+        );
     }
-    
-    debug!("[{}] Full Claude Request JSON: {}", trace_id, serde_json::to_string_pretty(&request).unwrap_or_default());
-    debug!("========== [{}] CLAUDE REQUEST DEBUG END ==========", trace_id);
 
-    // 1. Get Session ID (deprecated content-based hash, switched to TokenManager's internal time-window lock)
+    debug!(
+        "[{}] Full Claude Request JSON: {}",
+        trace_id,
+        serde_json::to_string_pretty(&request).unwrap_or_default()
+    );
+    debug!(
+        "========== [{}] CLAUDE REQUEST DEBUG END ==========",
+        trace_id
+    );
     let _session_id: Option<&str> = None;
-
-    // 2. Get UpstreamClient
     let upstream = state.core.upstream.clone();
-    
-    // 3. Prepare config and tokens
     let mut request_for_body = request.clone();
     let token_manager = state.core.token_manager.clone();
-    
+
     let pool_size = token_manager.len();
-    //  Ensure max_attempts is at least 2 to allow for internal retries (e.g. stripping signatures)
-    // even if the user has only 1 account.
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
 
     let mut last_error = String::new();
     let retried_without_thinking = false;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
-    let mut last_status = StatusCode::SERVICE_UNAVAILABLE; // Default to 503 if no response reached
-    
+    let mut last_status = StatusCode::SERVICE_UNAVAILABLE;
+
     for attempt in 0..max_attempts {
-        // 2. Model route resolution
         let mut mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &request_for_body.model,
             &*state.config.custom_mapping.read().await,
         );
         last_mapped_model = Some(mapped_model.clone());
-        
-        // Convert Claude tools to Value array for networking detection
         let tools_val: Option<Vec<Value>> = request_for_body.tools.as_ref().map(|list| {
-            list.iter().map(|t| serde_json::to_value(t).unwrap_or(json!({}))).collect()
+            list.iter()
+                .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+                .collect()
         });
 
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &request_for_body.model,
             &mapped_model,
             &tools_val,
-            request.size.as_deref(),      //  Pass size parameter
-            request.quality.as_deref(),   //  Pass quality parameter
-            None,  // Claude handler uses transform_claude_request_in for image gen
+            request.size.as_deref(),
+            request.quality.as_deref(),
+            None,
         );
-
-        // 0. Try to extract session_id for sticky scheduling (Phase 2/3)
-        // Use SessionManager to generate stable session fingerprints
-        let session_id_str = crate::proxy::session_manager::SessionManager::extract_session_id(&request_for_body);
+        let session_id_str =
+            crate::proxy::session_manager::SessionManager::extract_session_id(&request_for_body);
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
+        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
+            .get_token(
+                &config.request_type,
+                force_rotate_token,
+                session_id,
+                &config.final_model,
+            )
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {
@@ -427,10 +397,8 @@ pub async fn handle_messages(
                 } else {
                     e
                 };
-                let headers = [
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ];
-                 return (
+                let headers = [("X-Mapped-Model", mapped_model.as_str())];
+                return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     headers,
                     Json(json!({
@@ -439,31 +407,22 @@ pub async fn handle_messages(
                             "type": "overloaded_error",
                             "message": format!("No available accounts: {}", safe_message)
                         }
-                    }))
-                ).into_response();
+                    })),
+                )
+                    .into_response();
             }
         };
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
-        
-        
-        // ===== [Optimization] Smart background task detection and degradation =====
-        // Use new detection system, supporting 5 major keyword categories and multi-Flash model strategies
         let background_task_type = detect_background_task_type(&request_for_body);
-        
-        // Pass mapped model name
         let mut request_with_mapped = request_for_body.clone();
 
         if let Some(task_type) = background_task_type {
-            // Background task detected, force degradation to Flash model
             let virtual_model_id = select_background_model(task_type);
-            
-            //  Must re-resolve route based on Virtual ID to support user custom mapping (e.g., internal-task -> gemini-3)
-            // Otherwise it will directly use generic ID causing downstream to fail to recognize or only be able to use static defaults
             let resolved_model = crate::proxy::common::model_mapping::resolve_model_route(
-                virtual_model_id, 
-                &*state.config.custom_mapping.read().await
+                virtual_model_id,
+                &*state.config.custom_mapping.read().await,
             );
 
             info!(
@@ -474,131 +433,104 @@ pub async fn handle_messages(
                 virtual_model_id,
                 resolved_model
             );
-            
-            // Override user custom mapping (simultaneously update variables and Request object)
             mapped_model = resolved_model.clone();
             request_with_mapped.model = resolved_model;
-            
-            // Background task purification:
-            // 1. Remove tool definitions (background tasks don't need tools)
             request_with_mapped.tools = None;
-            
-            // 2. Remove Thinking config (Flash models don't support it)
             request_with_mapped.thinking = None;
-            
-            // 3. Clean Thinking blocks in history to prevent Invalid Argument
-            // Use ContextManager's unified strategy (Aggressive)
             crate::proxy::mappers::context_manager::ContextManager::purify_history(
-                &mut request_with_mapped.messages, 
-                crate::proxy::mappers::context_manager::PurificationStrategy::Aggressive
+                &mut request_with_mapped.messages,
+                crate::proxy::mappers::context_manager::PurificationStrategy::Aggressive,
             );
         }
-
-        // ===== [3-Layer Progressive Compression + Calibrated Estimation] Context Management =====
-        // [ENHANCED] Integrated the 3-layer compression framework from 3.3.47 + dynamic calibration mechanism from PR #925
-        //  Execute compression logic only when scaling_enabled is true (linkage mechanism)
-        // Layer 1 (60%): Tool message trimming - Does NOT break cache
-        // Layer 2 (75%): Thinking purification - Breaks cache but preserves signatures
-        // Layer 3 (90%): Fork conversation + XML summary - Ultimate optimization
         let mut is_purified = false;
         let mut compression_applied = false;
-        
-        if !retried_without_thinking && scaling_enabled {  //  Execute compression logic only when scaling_enabled is true (linkage mechanism)
-            // 1. Determine context limit (Flash: ~1M, Pro: ~2M)
+
+        if !retried_without_thinking && scaling_enabled {
             let context_limit = if mapped_model.contains("flash") {
                 1_000_000
             } else {
                 2_000_000
             };
-
-            // 2. [ENHANCED] Use calibrator to improve estimation accuracy (PR #925)
             let raw_estimated = ContextManager::estimate_token_usage(&request_with_mapped);
             let calibrator = get_calibrator();
             let mut estimated_usage = calibrator.calibrate(raw_estimated);
             let mut usage_ratio = estimated_usage as f32 / context_limit as f32;
-            
+
             info!(
                 "[{}] [ContextManager] Context pressure: {:.1}% (raw: {}, calibrated: {} / {}), Calibration factor: {:.2}",
                 trace_id, usage_ratio * 100.0, raw_estimated, estimated_usage, context_limit, calibrator.get_factor()
             );
-
-            // ===== Layer 1: Tool Message Trimming (L1 threshold) =====
-            // Borrowed from Practical-Guide-to-Context-Engineering
-            // Advantage: Completely cache-friendly (only removes messages, doesn't modify content)
             if usage_ratio > threshold_l1
                 && !compression_applied
                 && ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5)
             {
                 info!(
                     "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
-                    trace_id, usage_ratio * 100.0, threshold_l1 * 100.0
+                    trace_id,
+                    usage_ratio * 100.0,
+                    threshold_l1 * 100.0
                 );
                 compression_applied = true;
-
-                // Re-estimate after trimming (with calibration)
                 let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
                 let new_usage = calibrator.calibrate(new_raw);
                 let new_ratio = new_usage as f32 / context_limit as f32;
 
                 info!(
                     "[{}] [Layer-1] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
-                    trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                    trace_id,
+                    usage_ratio * 100.0,
+                    new_ratio * 100.0,
+                    estimated_usage - new_usage
                 );
-
-                // If compression is sufficient, skip further layers
                 if new_ratio < 0.7 {
                     estimated_usage = new_usage;
                     usage_ratio = new_ratio;
-                    // Success, no need for Layer 2
                 } else {
-                    // Still high pressure, update for Layer 2
                     usage_ratio = new_ratio;
-                    compression_applied = false; // Allow Layer 2 to run
+                    compression_applied = false;
                 }
             }
-
-            // ===== Layer 2: Thinking Content Compression (L2 threshold) =====
-            // Preserve signatures while compressing thinking text
             if usage_ratio > threshold_l2 && !compression_applied {
                 info!(
                     "[{}] [Layer-2] Thinking compression triggered (usage: {:.1}%, threshold: {:.1}%)",
                     trace_id, usage_ratio * 100.0, threshold_l2 * 100.0
                 );
-                
-                // Use new signature-preserving compression
                 if ContextManager::compress_thinking_preserve_signature(
-                    &mut request_with_mapped.messages, 
-                    4 // Protect last 4 messages (~2 turns)
+                    &mut request_with_mapped.messages,
+                    4,
                 ) {
-                    is_purified = true; // Still breaks cache, but preserves signatures
+                    is_purified = true;
                     compression_applied = true;
-                    
+
                     let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
                     let new_usage = calibrator.calibrate(new_raw);
                     let new_ratio = new_usage as f32 / context_limit as f32;
-                    
+
                     info!(
                         "[{}] [Layer-2] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
-                        trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                        trace_id,
+                        usage_ratio * 100.0,
+                        new_ratio * 100.0,
+                        estimated_usage - new_usage
                     );
-                    
+
                     usage_ratio = new_ratio;
                 }
             }
-
-            // ===== Layer 3: Fork Conversation + XML Summary (L3 threshold) =====
-            // Ultimate optimization: Generate structured summary and start fresh conversation
-            // Advantage: Completely cache-friendly (append-only), extreme compression ratio
             if usage_ratio > threshold_l3 && !compression_applied {
                 info!(
                     "[{}] [Layer-3] Context pressure ({:.1}%) exceeded threshold ({:.1}%), attempting Fork+Summary",
                     trace_id, usage_ratio * 100.0, threshold_l3 * 100.0
                 );
-                
-                // Clone token_manager Arc to avoid borrow issues
                 let token_manager_clone = token_manager.clone();
-                
-                match try_compress_with_summary(&request_with_mapped, &trace_id, &token_manager_clone).await {
+
+                match try_compress_with_summary(
+                    &request_with_mapped,
+                    &trace_id,
+                    &token_manager_clone,
+                )
+                .await
+                {
                     Ok(forked_request) => {
                         info!(
                             "[{}] [Layer-3] Fork successful: {} → {} messages",
@@ -606,18 +538,19 @@ pub async fn handle_messages(
                             request_with_mapped.messages.len(),
                             forked_request.messages.len()
                         );
-                        
+
                         request_with_mapped = forked_request;
-                        is_purified = false; // Fork doesn't break cache!
-                        
-                        // Re-estimate after fork (with calibration)
+                        is_purified = false;
                         let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
                         let new_usage = calibrator.calibrate(new_raw);
                         let new_ratio = new_usage as f32 / context_limit as f32;
-                        
+
                         info!(
                             "[{}] [Layer-3] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
-                            trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                            trace_id,
+                            usage_ratio * 100.0,
+                            new_ratio * 100.0,
+                            estimated_usage - new_usage
                         );
                     }
                     Err(e) => {
@@ -625,8 +558,6 @@ pub async fn handle_messages(
                             "[{}] [Layer-3] Fork+Summary failed: {}, falling back to error response",
                             trace_id, e
                         );
-                        
-                        // Return friendly error to user
                         return (
                             StatusCode::BAD_REQUEST,
                             Json(json!({
@@ -642,31 +573,33 @@ pub async fn handle_messages(
                 }
             }
         }
-
-        //  Estimate AFTER purification to get accurate token count for calibrator learning
-        // Only estimate for calibrator when content was not purified, to avoid skewed learning
         let raw_estimated = if !is_purified {
             ContextManager::estimate_token_usage(&request_with_mapped)
         } else {
-            0 // Don't record calibration data when content was purified
+            0
         };
 
         request_with_mapped.model = mapped_model.clone();
 
-        // Generate Trace ID (simple timestamp suffix)
-        // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
-
-        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking) {
+        let gemini_body = match transform_claude_request_in(
+            &request_with_mapped,
+            &project_id,
+            retried_without_thinking,
+        ) {
             Ok(b) => {
-                debug!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
+                debug!(
+                    "[{}] Transformed Gemini Body: {}",
+                    trace_id,
+                    serde_json::to_string_pretty(&b).unwrap_or_default()
+                );
                 b
-            },
+            }
             Err(e) => {
-                 let headers = [
+                let headers = [
                     ("X-Mapped-Model", request_with_mapped.model.as_str()),
                     ("X-Account-Email", email.as_str()),
                 ];
-                 return (
+                return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     headers,
                     Json(json!({
@@ -675,8 +608,9 @@ pub async fn handle_messages(
                             "type": "api_error",
                             "message": format!("Transform error: {}", e)
                         }
-                    }))
-                ).into_response();
+                    })),
+                )
+                    .into_response();
             }
         };
 
@@ -691,29 +625,42 @@ pub async fn handle_messages(
                 "attempt": attempt,
                 "v1internal_request": gemini_body.clone(),
             });
-            debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "v1internal_request", &payload).await;
+            debug_logger::write_debug_payload(
+                &debug_cfg,
+                Some(&trace_id),
+                "v1internal_request",
+                &payload,
+            )
+            .await;
         }
-        
-    // 4. Upstream call - Auto-conversion logic
-    let client_wants_stream = request.stream;
-    // [AUTO-CONVERSION] Auto-convert non-stream requests to stream to enjoy more relaxed quota
-    let force_stream_internally = !client_wants_stream;
-    let actual_stream = client_wants_stream || force_stream_internally;
-    
-    if force_stream_internally {
-        info!("[{}] 🔄 Auto-converting non-stream request to stream for better quota", trace_id);
-    }
-    
-    let method = if actual_stream { "streamGenerateContent" } else { "generateContent" };
-    let query = if actual_stream { Some("alt=sse") } else { None };
-        // Prepare Robust Beta Headers for Claude models
+        let client_wants_stream = request.stream;
+        let force_stream_internally = !client_wants_stream;
+        let actual_stream = client_wants_stream || force_stream_internally;
+
+        if force_stream_internally {
+            info!(
+                "[{}] 🔄 Auto-converting non-stream request to stream for better quota",
+                trace_id
+            );
+        }
+
+        let method = if actual_stream {
+            "streamGenerateContent"
+        } else {
+            "generateContent"
+        };
+        let query = if actual_stream { Some("alt=sse") } else { None };
         let mut extra_headers = std::collections::HashMap::new();
         if crate::proxy::common::model_mapping::is_claude_model(&mapped_model) {
-            extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219".to_string());
-            tracing::debug!("[{}] Added Comprehensive Beta Headers for Claude model", trace_id);
+            extra_headers.insert(
+                "anthropic-beta".to_string(),
+                "claude-code-20250219".to_string(),
+            );
+            tracing::debug!(
+                "[{}] Added Comprehensive Beta Headers for Claude model",
+                trace_id
+            );
         }
-        
-        //  Inject Beta Headers from Client Adapter
         if let Some(adapter) = &client_adapter {
             let mut temp_headers = HeaderMap::new();
             adapter.inject_beta_headers(&mut temp_headers);
@@ -727,31 +674,37 @@ pub async fn handle_messages(
             }
         }
 
-        // Upstream call configuration continued...
-
         let response = match upstream
-            .call_v1_internal_with_headers(method, &access_token, gemini_body, query, extra_headers.clone(), Some(account_id.as_str()))
-            .await {
+            .call_v1_internal_with_headers(
+                method,
+                &access_token,
+                gemini_body,
+                query,
+                extra_headers.clone(),
+                Some(account_id.as_str()),
+            )
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
-                debug!("Request failed on attempt {}/{}: {}", attempt + 1, max_attempts, e);
+                debug!(
+                    "Request failed on attempt {}/{}: {}",
+                    attempt + 1,
+                    max_attempts,
+                    e
+                );
                 continue;
             }
         };
-        
+
         let status = response.status();
         last_status = status;
-        
-        // Success
         if status.is_success() {
-            // [Smart Rate Limiting] Request success, reset the consecutive failure count for this account
             token_manager.mark_account_success(&email);
-            
-                // Determine context limit based on model
-                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
-
-            // Handle streaming response
+            let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(
+                &request_with_mapped.model,
+            );
             if actual_stream {
                 let meta = json!({
                     "protocol": "anthropic",
@@ -771,10 +724,6 @@ pub async fn handle_messages(
                 );
 
                 let current_message_count = request_with_mapped.messages.len();
-
-                // Enhanced Peek logic to handle heartbeats and slow start
-                // We must pre-read until we find a MEANINGFUL content block (like message_start).
-                // If we only get heartbeats (ping) and then the stream dies, we should rotate account.
                 let mut claude_stream = create_claude_sse_stream(
                     gemini_stream,
                     trace_id.clone(),
@@ -782,47 +731,57 @@ pub async fn handle_messages(
                     Some(session_id_str.clone()),
                     scaling_enabled,
                     context_limit,
-                    Some(raw_estimated), //  Pass estimated tokens for calibrator learning
-                    current_message_count, //  Pass message count for rewind detection
-                    client_adapter.clone(), //  Pass client adapter
+                    Some(raw_estimated),
+                    current_message_count,
+                    client_adapter.clone(),
                 );
 
                 let mut first_data_chunk = None;
                 let mut retry_this_account = false;
-
-                // Loop to skip heartbeats during peek
                 loop {
-                    match tokio::time::timeout(std::time::Duration::from_secs(60), claude_stream.next()).await {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(60),
+                        claude_stream.next(),
+                    )
+                    .await
+                    {
                         Ok(Some(Ok(bytes))) => {
                             if bytes.is_empty() {
                                 continue;
                             }
-                            
+
                             let text = String::from_utf8_lossy(&bytes);
-                            // Skip SSE comments/pings
                             if text.trim().starts_with(":") {
                                 debug!("[{}] Skipping peek heartbeat: {}", trace_id, text.trim());
                                 continue;
                             }
-
-                            // We found real data!
                             first_data_chunk = Some(bytes);
                             break;
                         }
                         Ok(Some(Err(e))) => {
-                            tracing::warn!("[{}] Stream error during peek: {}, retrying...", trace_id, e);
+                            tracing::warn!(
+                                "[{}] Stream error during peek: {}, retrying...",
+                                trace_id,
+                                e
+                            );
                             last_error = format!("Stream error during peek: {}", e);
                             retry_this_account = true;
                             break;
                         }
                         Ok(None) => {
-                            tracing::warn!("[{}] Stream ended during peek (Empty Response), retrying...", trace_id);
+                            tracing::warn!(
+                                "[{}] Stream ended during peek (Empty Response), retrying...",
+                                trace_id
+                            );
                             last_error = "Empty response stream during peek".to_string();
                             retry_this_account = true;
                             break;
                         }
                         Err(_) => {
-                            tracing::warn!("[{}] Timeout waiting for first data (60s), retrying...", trace_id);
+                            tracing::warn!(
+                                "[{}] Timeout waiting for first data (60s), retrying...",
+                                trace_id
+                            );
                             last_error = "Timeout waiting for first data".to_string();
                             retry_this_account = true;
                             break;
@@ -836,19 +795,20 @@ pub async fn handle_messages(
 
                 match first_data_chunk {
                     Some(bytes) => {
-                        // We have data! Construct the combined stream
                         let stream_rest = claude_stream;
-                        let combined_stream = Box::pin(futures::stream::once(async move { Ok(bytes) })
-                            .chain(stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
-                                match result {
-                                    Ok(b) => Ok(b),
-                                    Err(e) => Ok(Bytes::from(format!("data: {{\"error\":\"{}\"}}\n\n", e))),
-                                }
-                            })));
-
-                        // Determine format expected by the client
+                        let combined_stream =
+                            Box::pin(futures::stream::once(async move { Ok(bytes) }).chain(
+                                stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
+                                    match result {
+                                        Ok(b) => Ok(b),
+                                        Err(e) => Ok(Bytes::from(format!(
+                                            "data: {{\"error\":\"{}\"}}\n\n",
+                                            e
+                                        ))),
+                                    }
+                                }),
+                            ));
                         if client_wants_stream {
-                            // Client expects Stream, return SSE directly
                             return Response::builder()
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "text/event-stream")
@@ -857,110 +817,149 @@ pub async fn handle_messages(
                                 .header("X-Accel-Buffering", "no")
                                 .header("X-Account-Email", &email)
                                 .header("X-Mapped-Model", &request_with_mapped.model)
-                                .header("X-Context-Purified", if is_purified { "true" } else { "false" })
+                                .header(
+                                    "X-Context-Purified",
+                                    if is_purified { "true" } else { "false" },
+                                )
                                 .body(Body::from_stream(combined_stream))
                                 .unwrap();
                         } else {
-                            // Client expects non-Stream, need to collect full response and convert to JSON
                             use crate::proxy::mappers::claude::collect_stream_to_json;
-                            
+
                             match collect_stream_to_json(combined_stream).await {
                                 Ok(full_response) => {
-                                    info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
+                                    info!(
+                                        "[{}] ✓ Stream collected and converted to JSON",
+                                        trace_id
+                                    );
                                     return Response::builder()
                                         .status(StatusCode::OK)
                                         .header(header::CONTENT_TYPE, "application/json")
                                         .header("X-Account-Email", &email)
                                         .header("X-Mapped-Model", &request_with_mapped.model)
-                                        .header("X-Context-Purified", if is_purified { "true" } else { "false" })
-                                        .body(Body::from(serde_json::to_string(&full_response).unwrap()))
+                                        .header(
+                                            "X-Context-Purified",
+                                            if is_purified { "true" } else { "false" },
+                                        )
+                                        .body(Body::from(
+                                            serde_json::to_string(&full_response).unwrap(),
+                                        ))
                                         .unwrap();
                                 }
                                 Err(e) => {
-                                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("Stream collection error: {}", e)).into_response();
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        format!("Stream collection error: {}", e),
+                                    )
+                                        .into_response();
                                 }
                             }
                         }
-                    },
+                    }
 
                     None => {
-                        tracing::warn!("[{}] Stream ended immediately (Empty Response), retrying...", trace_id);
+                        tracing::warn!(
+                            "[{}] Stream ended immediately (Empty Response), retrying...",
+                            trace_id
+                        );
                         last_error = "Empty response stream (None)".to_string();
                         continue;
                     }
                 }
             } else {
-                // Handle non-streaming response
                 let bytes = match response.bytes().await {
                     Ok(b) => b,
-                    Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to read body: {}", e)).into_response(),
+                    Err(e) => {
+                        return (
+                            StatusCode::BAD_GATEWAY,
+                            format!("Failed to read body: {}", e),
+                        )
+                            .into_response()
+                    }
                 };
-                
-                // Debug print
                 if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     debug!("Upstream Response for Claude request: {}", text);
                 }
 
                 let gemini_resp: Value = match serde_json::from_slice(&bytes) {
                     Ok(v) => v,
-                    Err(e) => return (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)).into_response(),
+                    Err(e) => {
+                        return (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e))
+                            .into_response()
+                    }
                 };
-
-                // Unwrap response field (v1internal format)
                 let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
-
-                // Convert to Gemini Response structure
-                let gemini_response: crate::proxy::mappers::claude::models::GeminiResponse = match serde_json::from_value(raw.clone()) {
-                    Ok(r) => r,
-                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Convert error: {}", e)).into_response(),
-                };
-                
-                // Determine context limit based on model
-                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
-
-                // Convert
-                // Pass session_id and model_name for signature caching
+                let gemini_response: crate::proxy::mappers::claude::models::GeminiResponse =
+                    match serde_json::from_value(raw.clone()) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("Convert error: {}", e),
+                            )
+                                .into_response()
+                        }
+                    };
+                let context_limit =
+                    crate::proxy::mappers::claude::utils::get_context_limit_for_model(
+                        &request_with_mapped.model,
+                    );
                 let s_id_owned = session_id.map(|s| s.to_string());
-                // Convert
                 let claude_response = match transform_response(
                     &gemini_response,
                     scaling_enabled,
                     context_limit,
                     s_id_owned,
                     request_with_mapped.model.clone(),
-                    request_with_mapped.messages.len(), //  Pass message count for rewind detection
+                    request_with_mapped.messages.len(),
                 ) {
                     Ok(r) => r,
-                    Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Transform error: {}", e)).into_response(),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("Transform error: {}", e),
+                        )
+                            .into_response()
+                    }
                 };
-
-                // [Optimization] Record closed-loop log: consumption status
-                let cache_info = if let Some(cached) = claude_response.usage.cache_read_input_tokens {
+                let cache_info = if let Some(cached) = claude_response.usage.cache_read_input_tokens
+                {
                     format!(", Cached: {}", cached)
                 } else {
                     String::new()
                 };
-                
+
                 tracing::info!(
-                    "[{}] Request finished. Model: {}, Tokens: In {}, Out {}{}", 
-                    trace_id, 
-                    request_with_mapped.model, 
-                    claude_response.usage.input_tokens, 
+                    "[{}] Request finished. Model: {}, Tokens: In {}, Out {}{}",
+                    trace_id,
+                    request_with_mapped.model,
+                    claude_response.usage.input_tokens,
                     claude_response.usage.output_tokens,
                     cache_info
                 );
 
-                return (StatusCode::OK, [("X-Account-Email", email.as_str()), ("X-Mapped-Model", request_with_mapped.model.as_str())], Json(claude_response)).into_response();
+                return (
+                    StatusCode::OK,
+                    [
+                        ("X-Account-Email", email.as_str()),
+                        ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                    ],
+                    Json(claude_response),
+                )
+                    .into_response();
             }
         }
-        
-        // 1. Extract status code and headers immediately (to prevent response from being moved)
         let status_code = status.as_u16();
         last_status = status;
-        let retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
-        
-        // 2. Get error text and transfer Response ownership
-        let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status));
+        let retry_after = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", status));
         last_error = format!("HTTP {}: {}", status_code, error_text);
         debug!("[{}] Upstream Error Response: {}", trace_id, error_text);
         if debug_logger::is_enabled(&debug_cfg) {
@@ -975,16 +974,25 @@ pub async fn handle_messages(
                 "status": status_code,
                 "error_text": error_text,
             });
-            debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "upstream_response_error", &payload).await;
+            debug_logger::write_debug_payload(
+                &debug_cfg,
+                Some(&trace_id),
+                "upstream_response_error",
+                &payload,
+            )
+            .await;
         }
-        
-        // 3. Mark rate limiting status (for UI display) - use async version to support real-time quota refresh
-        //  Pass the actual model used to implement model-level rate limiting, avoiding interference between different model quotas
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
-            token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text, Some(&request_with_mapped.model)).await;
+            token_manager
+                .mark_rate_limited_async(
+                    &email,
+                    status_code,
+                    retry_after.as_deref(),
+                    &error_text,
+                    Some(&request_with_mapped.model),
+                )
+                .await;
         }
-
-        // 4. Handle 400 error (Thinking signature invalidated or block order error)
         if status_code == 400
             && !retried_without_thinking
             && (error_text.contains("Invalid `signature`")
@@ -999,50 +1007,40 @@ pub async fn handle_messages(
                 || error_text.contains("Found `text`")
                 || error_text.contains("Found 'text'")
                 || error_text.contains("must be `thinking`")
-                || error_text.contains("must be 'thinking'")
-                )
+                || error_text.contains("must be 'thinking'"))
         {
-            // Existing logic for thinking signature...\n            retried_without_thinking = true;
-            
-            // Use WARN level as this shouldn't happen frequently (already actively filtered)
             tracing::warn!(
                 "[{}] Unexpected thinking signature error (should have been filtered). \
                  Retrying with all thinking blocks removed.",
                 trace_id
             );
-
-            //  Append repair prompt to the last user message
             if let Some(last_msg) = request_for_body.messages.last_mut() {
                 if last_msg.role == "user" {
                     let repair_prompt = "\n\n[System Recovery] Your previous output contained an invalid signature. Please regenerate the response without the corrupted signature block.";
-                    
+
                     match &mut last_msg.content {
                         crate::proxy::mappers::claude::models::MessageContent::String(s) => {
                             s.push_str(repair_prompt);
                         }
                         crate::proxy::mappers::claude::models::MessageContent::Array(blocks) => {
-                            blocks.push(crate::proxy::mappers::claude::models::ContentBlock::Text {
-                                text: repair_prompt.to_string(),
-                            });
+                            blocks.push(
+                                crate::proxy::mappers::claude::models::ContentBlock::Text {
+                                    text: repair_prompt.to_string(),
+                                },
+                            );
                         }
                     }
                     tracing::debug!("[{}] Appended repair prompt to last user message", trace_id);
                 }
             }
-
-            //  No longer disable Thinking mode!
-            // Since we converted historical Thinking Blocks to Text, current request can be treated as a new Thinking session
-            // Keep thinking config enabled to allow model to regenerate thoughts, avoiding degradation to simple "OK" replies
-            // request_for_body.thinking = None;
-            
-            // Clean all Thinking blocks in historical messages, converting them to Text to preserve context
             for msg in request_for_body.messages.iter_mut() {
-                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) = &mut msg.content {
+                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) =
+                    &mut msg.content
+                {
                     let mut new_blocks = Vec::with_capacity(blocks.len());
                     for block in blocks.drain(..) {
                         match block {
                             crate::proxy::mappers::claude::models::ContentBlock::Thinking { thinking, .. } => {
-                                // Downgrade to text
                                 if !thinking.is_empty() {
                                     tracing::debug!("[Fallback] Converting thinking block to text (len={})", thinking.len());
                                     new_blocks.push(crate::proxy::mappers::claude::models::ContentBlock::Text { 
@@ -1051,7 +1049,6 @@ pub async fn handle_messages(
                                 }
                             },
                             crate::proxy::mappers::claude::models::ContentBlock::RedactedThinking { .. } => {
-                                // Redacted thinking is useless, discard directly
                             },
                             _ => new_blocks.push(block),
                         }
@@ -1059,43 +1056,29 @@ pub async fn handle_messages(
                     *blocks = new_blocks;
                 }
             }
-            
-            //  Heal session after stripping thinking blocks to prevent "naked ToolResult" rejection
-            // This ensures that any ToolResult in history is properly "closed" with synthetic messages
-            // if its preceding Thinking block was just converted to Text.
             crate::proxy::mappers::claude::thinking_utils::close_tool_loop_for_thinking(
                 &mut request_for_body.messages,
             );
-
-            // Clean retry model to canonical Claude ID
             request_for_body.model =
                 crate::proxy::common::model_mapping::normalize_claude_retry_model(
                     &request_for_body.model,
                 );
-            
-            //  Force retry: as we have cleaned thinking blocks, this is a new, retryable request
-            // Do not use determine_retry_strategy, as it will return NoRetry because retried_without_thinking=true
             if apply_retry_strategy(
-                RetryStrategy::FixedDelay(Duration::from_millis(200)), 
-                attempt, 
+                RetryStrategy::FixedDelay(Duration::from_millis(200)),
+                attempt,
                 max_attempts,
-                status_code, 
-                &trace_id
-            ).await {
+                status_code,
+                &trace_id,
+            )
+            .await
+            {
                 continue;
             }
         }
-
-        // 5. Unified handling of all retryable errors
-        // [REMOVED] No longer special treatment for QUOTA_EXHAUSTED, allowing account rotation
-        // Original logic would return directly when the first account's quota was exhausted, preventing the "balance" mode from switching accounts
-
-        //  Set is_forbidden status on 403 to avoid repeatedly selecting the account
         if status_code == 403 {
-            // Check for VALIDATION_REQUIRED error - temporarily block account
-            if error_text.contains("VALIDATION_REQUIRED") ||
-               error_text.contains("verify your account") ||
-               error_text.contains("validation_url")
+            if error_text.contains("VALIDATION_REQUIRED")
+                || error_text.contains("verify your account")
+                || error_text.contains("validation_url")
             {
                 tracing::warn!(
                     "[Claude] VALIDATION_REQUIRED detected on account {}, temporarily blocking",
@@ -1103,33 +1086,35 @@ pub async fn handle_messages(
                 );
                 let block_minutes = 10i64;
                 let block_until = chrono::Utc::now().timestamp() + (block_minutes * 60);
-                if let Err(e) = token_manager.set_validation_block_public(&account_id, block_until, &error_text).await {
+                if let Err(e) = token_manager
+                    .set_validation_block_public(&account_id, block_until, &error_text)
+                    .await
+                {
                     tracing::error!("Failed to set validation block: {}", e);
                 }
             }
-
-            // Set is_forbidden status
             if let Err(e) = token_manager.set_forbidden(&account_id, &error_text).await {
                 tracing::error!("Failed to set forbidden status for {}: {}", email, e);
             } else {
                 tracing::warn!("[Claude] Account {} marked as forbidden due to 403", email);
             }
         }
-
-        // Determine retry strategy
         let strategy = determine_retry_strategy(status_code, &error_text, retried_without_thinking);
-        
-        // Execute backoff
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
-            // Determine if account rotation is needed
             if !should_rotate_account(status_code) {
-                debug!("[{}] Keeping same account for status {} (server-side issue)", trace_id, status_code);
+                debug!(
+                    "[{}] Keeping same account for status {} (server-side issue)",
+                    trace_id, status_code
+                );
             }
             continue;
         } else {
-            // 5. Enhanced 400 error handling: Prompt Too Long friendly tip
-            if status_code == 400 && (error_text.contains("too long") || error_text.contains("exceeds") || error_text.contains("limit")) {
-                 return (
+            if status_code == 400
+                && (error_text.contains("too long")
+                    || error_text.contains("exceeds")
+                    || error_text.contains("limit"))
+            {
+                return (
                     StatusCode::BAD_REQUEST,
                     [("X-Account-Email", email.as_str())],
                     Json(json!({
@@ -1146,25 +1131,32 @@ pub async fn handle_messages(
                     }))
                 ).into_response();
             }
-
-            // Non-retryable error, return directly
-            error!("[{}] Non-retryable error {}: {}", trace_id, status_code, error_text);
-            return (status, [
-                ("X-Account-Email", email.as_str()),
-                ("X-Mapped-Model", request_with_mapped.model.as_str())
-            ], error_text).into_response();
+            error!(
+                "[{}] Non-retryable error {}: {}",
+                trace_id, status_code, error_text
+            );
+            return (
+                status,
+                [
+                    ("X-Account-Email", email.as_str()),
+                    ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                ],
+                error_text,
+            )
+                .into_response();
         }
     }
-    
-    
+
     if let Some(email) = last_email {
-        //  Include X-Mapped-Model in exhaustion error
         let mut headers = HeaderMap::new();
-        headers.insert("X-Account-Email", header::HeaderValue::from_str(&email).unwrap());
+        headers.insert(
+            "X-Account-Email",
+            header::HeaderValue::from_str(&email).unwrap(),
+        );
         if let Some(model) = last_mapped_model {
-             if let Ok(v) = header::HeaderValue::from_str(&model) {
+            if let Ok(v) = header::HeaderValue::from_str(&model) {
                 headers.insert("X-Mapped-Model", v);
-             }
+            }
         }
 
         let error_type = match last_status.as_u16() {
@@ -1175,8 +1167,6 @@ pub async fn handle_messages(
             529 => "overloaded_error",
             _ => "api_error",
         };
-
-        //  Return 503 on 403 to prevent Claude Code client from exiting to the login page
         let response_status = if last_status.as_u16() == 403 {
             StatusCode::SERVICE_UNAVAILABLE
         } else {
@@ -1192,12 +1182,11 @@ pub async fn handle_messages(
             }
         }))).into_response()
     } else {
-        // Fallback if no email (e.g. mapping error before token)
         let mut headers = HeaderMap::new();
         if let Some(model) = last_mapped_model {
-             if let Ok(v) = header::HeaderValue::from_str(&model) {
+            if let Ok(v) = header::HeaderValue::from_str(&model) {
                 headers.insert("X-Mapped-Model", v);
-             }
+            }
         }
 
         let error_type = match last_status.as_u16() {
@@ -1208,8 +1197,6 @@ pub async fn handle_messages(
             529 => "overloaded_error",
             _ => "api_error",
         };
-
-        //  Return 503 on 403 to prevent Claude Code client from exiting to login page
         let response_status = if last_status.as_u16() == 403 {
             StatusCode::SERVICE_UNAVAILABLE
         } else {
@@ -1226,20 +1213,17 @@ pub async fn handle_messages(
         }))).into_response()
     }
 }
-
-// List available models
 pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
     build_models_list_response(&state).await
 }
-
-// Count tokens (placeholder)
 pub async fn handle_count_tokens(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
     let zai = state.config.zai.read().await.clone();
-    let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+    let zai_enabled =
+        zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
 
     if zai_enabled {
         return crate::proxy::providers::zai_anthropic::forward_anthropic_json(
@@ -1248,7 +1232,7 @@ pub async fn handle_count_tokens(
             "/v1/messages/count_tokens",
             &headers,
             body,
-            0, //  Tokens count doesn't need rewind detection
+            0,
         )
         .await;
     }
@@ -1259,34 +1243,15 @@ pub async fn handle_count_tokens(
     }))
     .into_response()
 }
-
-// Removed invalidated simple unit tests, full integration tests will be added later
-/*
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_handle_list_models() {
-        // handle_list_models now requires AppState, skipping old unit test here
-    }
-}
-*/
-
-// ===== Background Task Detection Helper Functions =====
-
-// Background task types
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BackgroundTaskType {
-    TitleGeneration,      // Title generation
-    SimpleSummary,        // Simple summary
-    ContextCompression,   // Context compression
-    PromptSuggestion,     // Prompt suggestion
-    SystemMessage,        // System message
-    EnvironmentProbe,     // Environment probe
+    TitleGeneration,
+    SimpleSummary,
+    ContextCompression,
+    PromptSuggestion,
+    SystemMessage,
+    EnvironmentProbe,
 }
-
-// Title generation keywords
 const TITLE_KEYWORDS: &[&str] = &[
     "write a 5-10 word title",
     "Please write a 5-10 word title",
@@ -1298,8 +1263,6 @@ const TITLE_KEYWORDS: &[&str] = &[
     "Generate title",
     "Give the conversation a title",
 ];
-
-// Summary generation keywords
 const SUMMARY_KEYWORDS: &[&str] = &[
     "Summarize this coding conversation",
     "Summarize the conversation",
@@ -1311,8 +1274,6 @@ const SUMMARY_KEYWORDS: &[&str] = &[
     "shorten the conversation history",
     "extract key points from",
 ];
-
-// Suggestion generation keywords
 const SUGGESTION_KEYWORDS: &[&str] = &[
     "prompt suggestion generator",
     "suggest next prompts",
@@ -1321,95 +1282,78 @@ const SUGGESTION_KEYWORDS: &[&str] = &[
     "recommend next steps",
     "possible next actions",
 ];
-
-// System message keywords
-const SYSTEM_KEYWORDS: &[&str] = &[
-    "Warmup",
-    "<system-reminder>",
-    // Removed: "Caveat: The messages below were generated" - this is a normal Claude Desktop system prompt
-    "This is a system message",
-];
-
-// Environment probe keywords
+const SYSTEM_KEYWORDS: &[&str] = &["Warmup", "<system-reminder>", "This is a system message"];
 const PROBE_KEYWORDS: &[&str] = &[
     "check current directory",
     "list available tools",
     "verify environment",
     "test connection",
 ];
-
-// Detect background task and return task type
 fn detect_background_task_type(request: &ClaudeRequest) -> Option<BackgroundTaskType> {
     let last_user_msg = extract_last_user_message_for_detection(request)?;
     let preview = last_user_msg.chars().take(500).collect::<String>();
-    
-    // Length filtering: background tasks usually do not exceed 800 characters
     if last_user_msg.len() > 800 {
         return None;
     }
-    
-    // Match by priority
     if matches_keywords(&preview, SYSTEM_KEYWORDS) {
         return Some(BackgroundTaskType::SystemMessage);
     }
-    
+
     if matches_keywords(&preview, TITLE_KEYWORDS) {
         return Some(BackgroundTaskType::TitleGeneration);
     }
-    
+
     if matches_keywords(&preview, SUMMARY_KEYWORDS) {
         if preview.contains("in under 50 characters") {
             return Some(BackgroundTaskType::SimpleSummary);
         }
         return Some(BackgroundTaskType::ContextCompression);
     }
-    
+
     if matches_keywords(&preview, SUGGESTION_KEYWORDS) {
         return Some(BackgroundTaskType::PromptSuggestion);
     }
-    
+
     if matches_keywords(&preview, PROBE_KEYWORDS) {
         return Some(BackgroundTaskType::EnvironmentProbe);
     }
-    
+
     None
 }
-
-// Helper function: keyword matching
 fn matches_keywords(text: &str, keywords: &[&str]) -> bool {
     keywords.iter().any(|kw| text.contains(kw))
 }
-
-// Helper function: extract the last user message (for detection)
 fn extract_last_user_message_for_detection(request: &ClaudeRequest) -> Option<String> {
-    request.messages.iter().rev()
+    request
+        .messages
+        .iter()
+        .rev()
         .filter(|m| m.role == "user")
         .find_map(|m| {
             let content = match &m.content {
                 crate::proxy::mappers::claude::models::MessageContent::String(s) => s.to_string(),
-                crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
-                    arr.iter()
-                        .filter_map(|block| match block {
-                            crate::proxy::mappers::claude::models::ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                }
+                crate::proxy::mappers::claude::models::MessageContent::Array(arr) => arr
+                    .iter()
+                    .filter_map(|block| match block {
+                        crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
+                            Some(text.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
             };
-            
-            if content.trim().is_empty() 
-                || content.starts_with("Warmup") 
-                || content.contains("<system-reminder>") 
+
+            if content.trim().is_empty()
+                || content.starts_with("Warmup")
+                || content.contains("<system-reminder>")
             {
-                None 
+                None
             } else {
                 Some(content)
             }
         })
 }
-
-// Select appropriate model according to background task type
 fn select_background_model(task_type: BackgroundTaskType) -> &'static str {
     match task_type {
         BackgroundTaskType::TitleGeneration => INTERNAL_BACKGROUND_TASK,
@@ -1420,30 +1364,14 @@ fn select_background_model(task_type: BackgroundTaskType) -> &'static str {
         BackgroundTaskType::ContextCompression => INTERNAL_BACKGROUND_TASK,
     }
 }
-
-// ===== Warmup request interception =====
-
-// Detect if it is a Warmup request
-// 
-// Claude Code sends a warmup request every 10 seconds, features include:
-// 1. User message content starts with "Warmup" or contains "Warmup"
-// 2. tool_result content is "Warmup" error
-// 3. Message loop pattern: assistant sends tool call, user returns Warmup error
 fn is_warmup_request(request: &ClaudeRequest) -> bool {
-    //  Only check the LATEST message for Warmup characteristics.
-    // Scanning history (take(10)) caused a "poisoned session" bug where one historical Warmup
-    // message would cause all subsequent user inputs (e.g. "Continue") to be intercepted 
-    // and replied with "OK".
-    
     if let Some(msg) = request.messages.last() {
-        // We only care if the *current* trigger is a Warmup
         match &msg.content {
             crate::proxy::mappers::claude::models::MessageContent::String(s) => {
-                // Check if simple text starts with Warmup (and is short)
                 if s.trim().starts_with("Warmup") && s.len() < 100 {
                     return true;
                 }
-            },
+            }
             crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
                 for block in arr {
                     match block {
@@ -1452,61 +1380,49 @@ fn is_warmup_request(request: &ClaudeRequest) -> bool {
                             if trimmed == "Warmup" || trimmed.starts_with("Warmup\n") {
                                 return true;
                             }
-                        },
-                        crate::proxy::mappers::claude::models::ContentBlock::ToolResult { 
-                            content, is_error, .. 
+                        }
+                        crate::proxy::mappers::claude::models::ContentBlock::ToolResult {
+                            content,
+                            is_error,
+                            ..
                         } => {
-                            // Check tool result errors
                             let content_str = if let Some(s) = content.as_str() {
                                 s.to_string()
                             } else {
                                 content.to_string()
                             };
-                            
-                            // If it's an error and starts with Warmup, it's a warmup signal
                             if *is_error == Some(true) && content_str.trim().starts_with("Warmup") {
                                 return true;
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
             }
         }
     }
-    
+
     false
 }
-
-// Create simulated response for Warmup requests
-// 
-// Returns a simple response, does not consume upstream quota
 fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response {
     let model = &request.model;
     let message_id = format!("msg_warmup_{}", chrono::Utc::now().timestamp_millis());
-    
+
     if is_stream {
-        // Streaming response: send standard SSE event sequence
         let events = [
-            // message_start
             format!(
                 "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"{}\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"{}\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{{\"input_tokens\":1,\"output_tokens\":0}}}}}}\n\n",
                 message_id, model
             ),
-            // content_block_start
             "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_string(),
-            // content_block_delta
             "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\n".to_string(),
-            // content_block_stop
             "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string(),
-            // message_delta
             "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n".to_string(),
-            // message_stop
             "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string(),
         ];
-        
+
         let body = events.join("");
-        
+
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
@@ -1516,7 +1432,6 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
             .body(Body::from(body))
             .unwrap()
     } else {
-        // Non-streaming response
         let response = json!({
             "id": message_id,
             "type": "message",
@@ -1533,48 +1448,36 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
                 "output_tokens": 1
             }
         });
-        
+
         (
             StatusCode::OK,
             [("X-Warmup-Intercepted", "true")],
-
-    
-    Json(response)
-        ).into_response()
+            Json(response),
+        )
+            .into_response()
     }
 }
-
-// ===== [Helper] Synchronous Upstream Call =====
-// Reusable function for making non-streaming calls to Gemini API
-// Used by Layer 3 and potentially other internal operations
-
-// Call Gemini API synchronously and return the response text
-// 
-// This is used for internal operations that need to wait for a complete response,
-// such as generating summaries or other background tasks.
 async fn call_gemini_sync(
     model: &str,
     request: &ClaudeRequest,
     token_manager: &Arc<crate::proxy::TokenManager>,
     trace_id: &str,
 ) -> Result<String, String> {
-    // Get token and transform request
     let (access_token, project_id, _, _, _wait_ms) = token_manager
         .get_token("gemini", false, None, model)
         .await
         .map_err(|e| format!("Failed to get account: {}", e))?;
-    
-    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false)
-        .map_err(|e| format!("Failed to transform request: {}", e))?;
-    
-    // Call Gemini API
+
+    let gemini_body =
+        crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false)
+            .map_err(|e| format!("Failed to transform request: {}", e))?;
     let upstream_url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
     );
-    
+
     debug!("[{}] Calling Gemini API: {}", trace_id, model);
-    
+
     let response = reqwest::Client::new()
         .post(&upstream_url)
         .header("Authorization", format!("Bearer {}", access_token))
@@ -1583,19 +1486,19 @@ async fn call_gemini_sync(
         .send()
         .await
         .map_err(|e| format!("API call failed: {}", e))?;
-    
+
     if !response.status().is_success() {
         return Err(format!(
-            "API returned {}: {}", 
-            response.status(), 
+            "API returned {}: {}",
+            response.status(),
             response.text().await.unwrap_or_default()
         ));
     }
-    
-    let gemini_response: Value = response.json().await
+
+    let gemini_response: Value = response
+        .json()
+        .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
-    
-    // Extract text from response
     gemini_response
         .get("candidates")
         .and_then(|c| c.get(0))
@@ -1607,55 +1510,38 @@ async fn call_gemini_sync(
         .map(|s| s.to_string())
         .ok_or_else(|| "Failed to extract text from response".to_string())
 }
-
-// ===== [Layer 3] Fork Conversation + XML Summary =====
-// This is the ultimate context compression strategy
-// Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
-
-// Try to compress context by generating an XML summary and forking the conversation
-// 
-// This function:
-// 1. Extracts the last valid thinking signature
-            // 2. Calls a cheap model (gemini-3-flash) to generate XML summary
-// 3. Creates a new message sequence with summary as prefix
-// 4. Preserves the signature in the summary
-// 5. Returns the forked request
-// 
-// Returns Ok(forked_request) on success, Err(error_message) on failure
 async fn try_compress_with_summary(
     original_request: &ClaudeRequest,
     trace_id: &str,
     token_manager: &Arc<crate::proxy::TokenManager>,
 ) -> Result<ClaudeRequest, String> {
-    info!("[{}] [Layer-3] Starting context compression with XML summary", trace_id);
-    
-    // 1. Extract last valid signature
+    info!(
+        "[{}] [Layer-3] Starting context compression with XML summary",
+        trace_id
+    );
     let last_signature = ContextManager::extract_last_valid_signature(&original_request.messages);
-    
+
     if let Some(ref sig) = last_signature {
-        debug!("[{}] [Layer-3] Extracted signature (len: {})", trace_id, sig.len());
+        debug!(
+            "[{}] [Layer-3] Extracted signature (len: {})",
+            trace_id,
+            sig.len()
+        );
     }
-    
-    // 2. Build summary request
     let mut summary_messages = original_request.messages.clone();
-    
-    // Add instruction to include signature in summary
     let signature_instruction = if let Some(ref sig) = last_signature {
         format!("\n\n**CRITICAL**: The last thinking signature is:\n```\n{}\n```\nYou MUST include this EXACTLY in the <latest_thinking_signature> section.", sig)
     } else {
         "\n\n**Note**: No thinking signature found in history. Leave <latest_thinking_signature> empty.".to_string()
     };
-    
-    // Append summary request as the last user message
     summary_messages.push(Message {
         role: "user".to_string(),
         content: MessageContent::String(format!(
             "{}{}",
-            CONTEXT_SUMMARY_PROMPT,
-            signature_instruction
+            CONTEXT_SUMMARY_PROMPT, signature_instruction
         )),
     });
-    
+
     let summary_request = ClaudeRequest {
         model: INTERNAL_BACKGROUND_TASK.to_string(),
         messages: summary_messages,
@@ -1672,20 +1558,24 @@ async fn try_compress_with_summary(
         size: None,
         quality: None,
     };
-    
-    debug!("[{}] [Layer-3] Calling {} for summary generation", trace_id, INTERNAL_BACKGROUND_TASK);
-    
-    // 3. Call upstream using helper function (reuse existing infrastructure)
+
+    debug!(
+        "[{}] [Layer-3] Calling {} for summary generation",
+        trace_id, INTERNAL_BACKGROUND_TASK
+    );
     let xml_summary = call_gemini_sync(
         INTERNAL_BACKGROUND_TASK,
         &summary_request,
         token_manager,
         trace_id,
-    ).await?;
-    
-    info!("[{}] [Layer-3] Generated XML summary (len: {} chars)", trace_id, xml_summary.len());
-    
-    // 4. Create forked conversation with summary as prefix
+    )
+    .await?;
+
+    info!(
+        "[{}] [Layer-3] Generated XML summary (len: {} chars)",
+        trace_id,
+        xml_summary.len()
+    );
     let mut forked_messages = vec![
         Message {
             role: "user".to_string(),
@@ -1701,25 +1591,21 @@ async fn try_compress_with_summary(
             ),
         },
     ];
-    
-    // 5. Append the user's latest message (if exists and is not the summary request)
     if let Some(last_msg) = original_request.messages.last() {
         if last_msg.role == "user" {
-            // Check if it's not the summary instruction we just added
-            if !matches!(&last_msg.content, MessageContent::String(s) if s.contains(CONTEXT_SUMMARY_PROMPT)) {
+            if !matches!(&last_msg.content, MessageContent::String(s) if s.contains(CONTEXT_SUMMARY_PROMPT))
+            {
                 forked_messages.push(last_msg.clone());
             }
         }
     }
-    
+
     info!(
         "[{}] [Layer-3] Fork successful: {} messages → {} messages",
         trace_id,
         original_request.messages.len(),
         forked_messages.len()
     );
-    
-    // 6. Return forked request
     Ok(ClaudeRequest {
         model: original_request.model.clone(),
         messages: forked_messages,
@@ -1737,4 +1623,3 @@ async fn try_compress_with_summary(
         quality: original_request.quality.clone(),
     })
 }
-

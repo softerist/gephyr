@@ -1,15 +1,13 @@
+mod commands;
+pub mod constants;
+pub mod error;
 mod models;
 mod modules;
-mod commands;
-mod utils;
 mod proxy;
-pub mod error;
-pub mod constants;
+mod utils;
 
 use modules::logger;
 use tracing::{error, info, warn};
-
-// Increase file descriptor limit for macOS to prevent "Too many open files" errors
 #[cfg(target_os = "macos")]
 fn increase_nofile_limit() {
     unsafe {
@@ -19,9 +17,10 @@ fn increase_nofile_limit() {
         };
 
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
-            info!("Current open file limit: soft={}, hard={}", rl.rlim_cur, rl.rlim_max);
-
-            // Attempt to increase to 4096 or maximum hard limit
+            info!(
+                "Current open file limit: soft={}, hard={}",
+                rl.rlim_cur, rl.rlim_max
+            );
             let target = 4096.min(rl.rlim_max);
             if rl.rlim_cur < target {
                 rl.rlim_cur = target;
@@ -96,7 +95,6 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
 }
 
 fn apply_security_hardening(config: &mut crate::models::AppConfig) {
-    // In headless mode we default to strict auth unless explicitly configured otherwise.
     if matches!(
         config.proxy.auth_mode,
         crate::proxy::ProxyAuthMode::Off | crate::proxy::ProxyAuthMode::Auto
@@ -113,8 +111,6 @@ async fn start_headless_runtime() -> Result<(), String> {
 
     apply_headless_env_overrides(&mut config);
     apply_security_hardening(&mut config);
-
-    // Validate configuration before starting (fail-fast)
     modules::validation::validate_app_config(&config).map_err(|errors| {
         format!(
             "configuration_validation_failed:\n{}",
@@ -126,7 +122,10 @@ async fn start_headless_runtime() -> Result<(), String> {
         )
     })?;
 
-    info!("Starting headless proxy service on port {}", config.proxy.port);
+    info!(
+        "Starting headless proxy service on port {}",
+        config.proxy.port
+    );
     if config.proxy.allow_lan_access {
         warn!("LAN access is enabled (bind address will be 0.0.0.0)");
     } else {

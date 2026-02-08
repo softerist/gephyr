@@ -1,9 +1,4 @@
-// Claude Data Models
-// Data models related to the Claude protocol
-
 use serde::{Deserialize, Serialize};
-
-// Claude API Request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeRequest {
     pub model: String,
@@ -26,26 +21,20 @@ pub struct ClaudeRequest {
     pub thinking: Option<ThinkingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    // Output configuration for effort level (Claude API v2.0.67+)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<OutputConfig>,
-    //  Image generation parameters (for Anthropic protocol compatibility)
     #[serde(default)]
     pub size: Option<String>,
     #[serde(default)]
     pub quality: Option<String>,
 }
-
-// Thinking Configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingConfig {
     #[serde(rename = "type")]
-    pub type_: String, // "enabled"
+    pub type_: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
 }
-
-// System Prompt
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SystemPrompt {
@@ -59,8 +48,6 @@ pub struct SystemBlock {
     pub block_type: String,
     pub text: String,
 }
-
-// Message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
@@ -73,8 +60,6 @@ pub enum MessageContent {
     String(String),
     Array(Vec<ContentBlock>),
 }
-
-// Content Block (Claude)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
@@ -105,9 +90,7 @@ pub enum ContentBlock {
     },
 
     #[serde(rename = "redacted_thinking")]
-    RedactedThinking {
-        data: String,
-    },
+    RedactedThinking { data: String },
 
     #[serde(rename = "tool_use")]
     ToolUse {
@@ -123,7 +106,7 @@ pub enum ContentBlock {
     #[serde(rename = "tool_result")]
     ToolResult {
         tool_use_id: String,
-        content: serde_json::Value, // Changed from String to Value to support Array of Blocks
+        content: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
@@ -153,38 +136,30 @@ pub struct ImageSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
-    pub media_type: String,  // e.g. "application/pdf"
-    pub data: String,        // base64 data
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
 }
-
-// Tool - supports both client tools (with input_schema) and server tools (like web_search)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
-    // Tool type - for server tools like "web_search_20250305"
     #[serde(rename = "type")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_: Option<String>,
-    // Tool name - "web_search" for server tools, custom name for client tools
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    // Input schema - required for client tools, absent for server tools
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<serde_json::Value>,
 }
 
 impl Tool {
-    // Check if this is the web_search server tool
     pub fn is_web_search(&self) -> bool {
-        // Check by type (preferred for server tools)
         if let Some(ref t) = self.type_ {
             if t.starts_with("web_search") {
                 return true;
             }
         }
-        // Check by name (fallback)
         if let Some(ref n) = self.name {
             if n == "web_search" {
                 return true;
@@ -192,12 +167,9 @@ impl Tool {
         }
         false
     }
-
-    // Get the effective tool name
     #[allow(dead_code)]
     pub fn get_name(&self) -> String {
         self.name.clone().unwrap_or_else(|| {
-            // For server tools, derive name from type
             if let Some(ref t) = self.type_ {
                 if t.starts_with("web_search") {
                     return "web_search".to_string();
@@ -207,24 +179,16 @@ impl Tool {
         })
     }
 }
-
-// Metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
 }
-
-// Output Configuration (Claude API v2.0.67+)
-// Controls effort level for model reasoning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputConfig {
-    // Effort level: "high", "medium", "low"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
 }
-
-// Claude API Response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeResponse {
     pub id: String,
@@ -238,8 +202,6 @@ pub struct ClaudeResponse {
     pub stop_sequence: Option<String>,
     pub usage: Usage,
 }
-
-// Usage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: u32,
@@ -251,17 +213,11 @@ pub struct Usage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub server_tool_use: Option<serde_json::Value>,
 }
-
-// ========== Gemini Data Models ==========
-
-// Gemini Content
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiContent {
     pub role: String,
     pub parts: Vec<GeminiPart>,
 }
-
-// Gemini Part
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiPart {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -310,8 +266,6 @@ pub struct InlineData {
     pub mime_type: String,
     pub data: String,
 }
-
-// Gemini Complete Response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -356,10 +310,6 @@ pub struct UsageMetadata {
     #[serde(rename = "cachedContentTokenCount")]
     pub cached_content_token_count: Option<u32>,
 }
-
-// ========== Grounding Metadata (for googleSearch results) ==========
-
-// Gemini Grounding Metadata - contains search results from googleSearch tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroundingMetadata {
     #[serde(rename = "webSearchQueries")]

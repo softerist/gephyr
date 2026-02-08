@@ -1,13 +1,8 @@
-//! Configuration validation module
-//!
-//! Provides fail-fast startup validation for application configuration.
-//! All validation errors are collected and reported together for better UX.
-
 use crate::models::AppConfig;
-use crate::proxy::config::{ProxyConfig, ZaiConfig, ProxyPoolConfig, ExperimentalConfig, UpstreamProxyConfig};
+use crate::proxy::config::{
+    ExperimentalConfig, ProxyConfig, ProxyPoolConfig, UpstreamProxyConfig, ZaiConfig,
+};
 use std::fmt;
-
-/// A configuration validation error with context
 #[derive(Debug, Clone)]
 pub struct ConfigError {
     pub field: String,
@@ -33,7 +28,11 @@ impl ConfigError {
         }
     }
 
-    fn with_value(field: impl Into<String>, message: impl Into<String>, value: impl ToString) -> Self {
+    fn with_value(
+        field: impl Into<String>,
+        message: impl Into<String>,
+        value: impl ToString,
+    ) -> Self {
         Self {
             field: field.into(),
             message: message.into(),
@@ -41,16 +40,9 @@ impl ConfigError {
         }
     }
 }
-
-/// Validate the entire application configuration.
-/// Returns Ok(()) if valid, or Err with all collected errors.
 pub fn validate_app_config(config: &AppConfig) -> Result<(), Vec<ConfigError>> {
     let mut errors = Vec::new();
-
-    // Validate proxy config
     validate_proxy_config(&config.proxy, &mut errors);
-
-    // Validate quota protection
     if config.quota_protection.enabled {
         let threshold = config.quota_protection.threshold_percentage;
         if threshold == 0 || threshold >= 100 {
@@ -61,8 +53,6 @@ pub fn validate_app_config(config: &AppConfig) -> Result<(), Vec<ConfigError>> {
             ));
         }
     }
-
-    // Validate circuit breaker
     if config.circuit_breaker.enabled {
         if config.circuit_breaker.backoff_steps.is_empty() {
             errors.push(ConfigError::new(
@@ -87,10 +77,7 @@ pub fn validate_app_config(config: &AppConfig) -> Result<(), Vec<ConfigError>> {
         Err(errors)
     }
 }
-
-/// Validate proxy service configuration
 fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
-    // Port validation
     if config.port == 0 {
         errors.push(ConfigError::with_value(
             "proxy.port",
@@ -98,16 +85,9 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
             config.port,
         ));
     }
-
-    // API key validation
     if config.api_key.trim().is_empty() {
-        errors.push(ConfigError::new(
-            "proxy.api_key",
-            "must not be empty",
-        ));
+        errors.push(ConfigError::new("proxy.api_key", "must not be empty"));
     }
-
-    // Request timeout validation
     if config.request_timeout == 0 {
         errors.push(ConfigError::with_value(
             "proxy.request_timeout",
@@ -121,21 +101,11 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
             config.request_timeout,
         ));
     }
-
-    // Upstream proxy validation
     validate_upstream_proxy(&config.upstream_proxy, errors);
-
-    // z.ai validation
     validate_zai_config(&config.zai, errors);
-
-    // Experimental thresholds validation
     validate_experimental_config(&config.experimental, errors);
-
-    // Proxy pool validation
     validate_proxy_pool(&config.proxy_pool, errors);
 }
-
-/// Validate upstream proxy configuration
 fn validate_upstream_proxy(config: &UpstreamProxyConfig, errors: &mut Vec<ConfigError>) {
     if config.enabled && !config.url.is_empty() {
         if !is_valid_proxy_url(&config.url) {
@@ -147,8 +117,6 @@ fn validate_upstream_proxy(config: &UpstreamProxyConfig, errors: &mut Vec<Config
         }
     }
 }
-
-/// Validate z.ai provider configuration
 fn validate_zai_config(config: &ZaiConfig, errors: &mut Vec<ConfigError>) {
     if config.enabled {
         if config.api_key.trim().is_empty() {
@@ -167,14 +135,10 @@ fn validate_zai_config(config: &ZaiConfig, errors: &mut Vec<ConfigError>) {
         }
     }
 }
-
-/// Validate experimental feature configuration
 fn validate_experimental_config(config: &ExperimentalConfig, errors: &mut Vec<ConfigError>) {
     let l1 = config.context_compression_threshold_l1;
     let l2 = config.context_compression_threshold_l2;
     let l3 = config.context_compression_threshold_l3;
-
-    // Validate individual thresholds are in range 0.0-1.0
     if !(0.0..=1.0).contains(&l1) {
         errors.push(ConfigError::with_value(
             "experimental.context_compression_threshold_l1",
@@ -196,8 +160,6 @@ fn validate_experimental_config(config: &ExperimentalConfig, errors: &mut Vec<Co
             l3,
         ));
     }
-
-    // Validate ordering: L1 < L2 < L3
     if l1 >= l2 {
         errors.push(ConfigError::with_value(
             "experimental.context_compression_threshold_l1",
@@ -213,8 +175,6 @@ fn validate_experimental_config(config: &ExperimentalConfig, errors: &mut Vec<Co
         ));
     }
 }
-
-/// Validate proxy pool configuration
 fn validate_proxy_pool(config: &ProxyPoolConfig, errors: &mut Vec<ConfigError>) {
     if config.enabled {
         for (i, proxy) in config.proxies.iter().enumerate() {
@@ -228,14 +188,12 @@ fn validate_proxy_pool(config: &ProxyPoolConfig, errors: &mut Vec<ConfigError>) 
         }
     }
 }
-
-/// Check if a URL is a valid proxy URL
 fn is_valid_proxy_url(url: &str) -> bool {
     let url_lower = url.to_lowercase();
-    (url_lower.starts_with("http://") || 
-     url_lower.starts_with("https://") || 
-     url_lower.starts_with("socks5://")) &&
-    url::Url::parse(url).is_ok()
+    (url_lower.starts_with("http://")
+        || url_lower.starts_with("https://")
+        || url_lower.starts_with("socks5://"))
+        && url::Url::parse(url).is_ok()
 }
 
 #[cfg(test)]
@@ -247,7 +205,11 @@ mod tests {
     fn test_valid_default_config() {
         let config = AppConfig::new();
         let result = validate_app_config(&config);
-        assert!(result.is_ok(), "Default config should be valid: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Default config should be valid: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -293,7 +255,6 @@ mod tests {
     #[test]
     fn test_compression_thresholds_ordering() {
         let mut config = AppConfig::new();
-        // L1 >= L2 should fail
         config.proxy.experimental.context_compression_threshold_l1 = 0.6;
         config.proxy.experimental.context_compression_threshold_l2 = 0.5;
         let result = validate_app_config(&config);
@@ -321,25 +282,21 @@ mod tests {
         let result = validate_app_config(&config);
         assert!(result.is_err());
         let errors = result.unwrap_err();
-        assert!(errors.iter().any(|e| e.field.contains("upstream_proxy.url")));
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("upstream_proxy.url")));
     }
 
     #[test]
     fn test_quota_protection_threshold_bounds() {
         let mut config = AppConfig::new();
         config.quota_protection.enabled = true;
-        
-        // Test 0
         config.quota_protection.threshold_percentage = 0;
         let result = validate_app_config(&config);
         assert!(result.is_err());
-        
-        // Test 100
         config.quota_protection.threshold_percentage = 100;
         let result = validate_app_config(&config);
         assert!(result.is_err());
-        
-        // Test valid
         config.quota_protection.threshold_percentage = 50;
         let result = validate_app_config(&config);
         assert!(result.is_ok());

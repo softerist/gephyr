@@ -24,8 +24,6 @@ pub enum AppError {
     #[error("Unknown error: {0}")]
     Unknown(String),
 }
-
-// Implement Serialize so it can be returned by HTTP or internal command layers.
 impl Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -34,6 +32,4 @@ impl Serialize for AppError {
         serializer.serialize_str(self.to_string().as_str())
     }
 }
-
-// Implement alias for Result to simplify usage
 pub type AppResult<T> = Result<T, AppError>;

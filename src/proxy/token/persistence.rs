@@ -61,7 +61,9 @@ pub(crate) fn set_validation_block(
     block_until: i64,
     reason: &str,
 ) -> Result<(), String> {
-    let path = data_dir.join("accounts").join(format!("{}.json", account_id));
+    let path = data_dir
+        .join("accounts")
+        .join(format!("{}.json", account_id));
     if !path.exists() {
         return Err(format!("Account file not found: {:?}", path));
     }
@@ -76,7 +78,9 @@ pub(crate) fn set_validation_block(
 }
 
 pub(crate) fn set_forbidden(data_dir: &PathBuf, account_id: &str) -> Result<(), String> {
-    let path = data_dir.join("accounts").join(format!("{}.json", account_id));
+    let path = data_dir
+        .join("accounts")
+        .join(format!("{}.json", account_id));
     if !path.exists() {
         return Err(format!("Account file not found: {:?}", path));
     }
@@ -97,7 +101,9 @@ pub(crate) fn set_forbidden(data_dir: &PathBuf, account_id: &str) -> Result<(), 
 }
 
 pub(crate) fn get_quota_reset_time(data_dir: &PathBuf, account_id: &str) -> Option<String> {
-    let account_path = data_dir.join("accounts").join(format!("{}.json", account_id));
+    let account_path = data_dir
+        .join("accounts")
+        .join(format!("{}.json", account_id));
     let content = std::fs::read_to_string(&account_path).ok()?;
     let account: serde_json::Value = serde_json::from_str(&content).ok()?;
 

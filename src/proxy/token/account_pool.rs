@@ -24,7 +24,10 @@ pub(crate) fn remove_account(
     if let Ok(mut preferred) = preferred_account_id.try_write() {
         if preferred.as_deref() == Some(account_id) {
             *preferred = None;
-            tracing::info!("[Proxy] Cleared preferred account status for {}", account_id);
+            tracing::info!(
+                "[Proxy] Cleared preferred account status for {}",
+                account_id
+            );
         }
     }
 }
@@ -39,7 +42,10 @@ pub(crate) async fn load_accounts(
     let accounts_dir = data_dir.join("accounts");
 
     if !accounts_dir.exists() {
-        return Err(format!("Account directory does not exist: {:?}", accounts_dir));
+        return Err(format!(
+            "Account directory does not exist: {:?}",
+            accounts_dir
+        ));
     }
 
     tokens.clear();
@@ -83,7 +89,9 @@ pub(crate) async fn reload_account(
     preferred_account_id: &tokio::sync::RwLock<Option<String>>,
     account_id: &str,
 ) -> Result<(), String> {
-    let path = data_dir.join("accounts").join(format!("{}.json", account_id));
+    let path = data_dir
+        .join("accounts")
+        .join(format!("{}.json", account_id));
     if !path.exists() {
         return Err(format!("Account file does not exist: {:?}", path));
     }

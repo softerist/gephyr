@@ -1,9 +1,10 @@
+use crate::models::QuotaData;
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use crate::models::QuotaData;
 
-const QUOTA_API_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels";
+const QUOTA_API_URL: &str =
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels";
 
 const MAX_RETRIES: u32 = 3;
 
@@ -47,8 +48,6 @@ struct Tier {
     #[allow(dead_code)]
     slug: Option<String>,
 }
-
-// Get shared HTTP Client (15s timeout)
 async fn create_client(account_id: Option<&str>) -> reqwest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 15).await
@@ -58,17 +57,25 @@ async fn create_client(account_id: Option<&str>) -> reqwest::Client {
 }
 
 const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
-
-// Fetch project ID and subscription tier
-async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
+async fn fetch_project_id(
+    access_token: &str,
+    email: &str,
+    account_id: Option<&str>,
+) -> (Option<String>, Option<String>) {
     let client = create_client(account_id).await;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
 
     let res = client
         .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", access_token),
+        )
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(reqwest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
+        .header(
+            reqwest::header::USER_AGENT,
+            crate::constants::USER_AGENT.as_str(),
+        )
         .json(&meta)
         .send()
         .await;
@@ -78,40 +85,45 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
             if res.status().is_success() {
                 if let Ok(data) = res.json::<LoadProjectResponse>().await {
                     let project_id = data.project_id.clone();
-                    
-                    // Core logic: Priority to subscription ID from paid_tier, which better reflects actual account benefits than current_tier
-                    let subscription_tier = data.paid_tier
+                    let subscription_tier = data
+                        .paid_tier
                         .and_then(|t| t.id)
                         .or_else(|| data.current_tier.and_then(|t| t.id));
-                    
+
                     if let Some(ref tier) = subscription_tier {
                         crate::modules::logger::log_info(&format!(
-                            "📊 [{}] Subscription identified successfully: {}", email, tier
+                            "📊 [{}] Subscription identified successfully: {}",
+                            email, tier
                         ));
                     }
-                    
+
                     return (project_id, subscription_tier);
                 }
             } else {
                 crate::modules::logger::log_warn(&format!(
-                    "⚠️  [{}] loadCodeAssist failed: Status: {}", email, res.status()
+                    "⚠️  [{}] loadCodeAssist failed: Status: {}",
+                    email,
+                    res.status()
                 ));
             }
         }
         Err(e) => {
-            crate::modules::logger::log_error(&format!("❌ [{}] loadCodeAssist network error: {}", email, e));
+            crate::modules::logger::log_error(&format!(
+                "❌ [{}] loadCodeAssist network error: {}",
+                email, e
+            ));
         }
     }
-    
+
     (None, None)
 }
-
-// Unified entry point for fetching account quota
-pub async fn fetch_quota(access_token: &str, email: &str, account_id: Option<&str>) -> crate::error::AppResult<(QuotaData, Option<String>)> {
+pub async fn fetch_quota(
+    access_token: &str,
+    email: &str,
+    account_id: Option<&str>,
+) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     fetch_quota_with_cache(access_token, email, None, account_id).await
 }
-
-// Fetch quota with cache support
 pub async fn fetch_quota_with_cache(
     access_token: &str,
     email: &str,
@@ -119,21 +131,19 @@ pub async fn fetch_quota_with_cache(
     account_id: Option<&str>,
 ) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     use crate::error::AppError;
-    
-    // Optimization: Skip loadCodeAssist call if project_id is cached to save API quota
     let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
         (Some(pid.to_string()), None)
     } else {
         fetch_project_id(access_token, email, account_id).await
     };
-    
+
     let final_project_id = project_id.as_deref().unwrap_or("bamboo-precept-lgxtn");
-    
+
     let client = create_client(account_id).await;
     let payload = json!({
         "project": final_project_id
     });
-    
+
     let url = QUOTA_API_URL;
     let mut last_error: Option<AppError> = None;
 
@@ -141,17 +151,17 @@ pub async fn fetch_quota_with_cache(
         match client
             .post(url)
             .bearer_auth(access_token)
-            .header(reqwest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
+            .header(
+                reqwest::header::USER_AGENT,
+                crate::constants::USER_AGENT.as_str(),
+            )
             .json(&json!(payload))
             .send()
             .await
         {
             Ok(response) => {
-                // Convert HTTP error status to AppError
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
-                    
-                    // ✅ Special handling for 403 Forbidden - return directly, no retry
                     if status == reqwest::StatusCode::FORBIDDEN {
                         crate::modules::logger::log_warn(&format!(
                             "Account unauthorized (403 Forbidden), marking as forbidden"
@@ -161,52 +171,52 @@ pub async fn fetch_quota_with_cache(
                         q.subscription_tier = subscription_tier.clone();
                         return Ok((q, project_id.clone()));
                     }
-                    
-                    // Continue retry logic for other errors
                     if attempt < MAX_RETRIES {
-                         let text = response.text().await.unwrap_or_default();
-                         crate::modules::logger::log_warn(&format!("API Error: {} - {} (Attempt {}/{})", status, text, attempt, MAX_RETRIES));
-                         last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
-                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                         continue;
+                        let text = response.text().await.unwrap_or_default();
+                        crate::modules::logger::log_warn(&format!(
+                            "API Error: {} - {} (Attempt {}/{})",
+                            status, text, attempt, MAX_RETRIES
+                        ));
+                        last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
                     } else {
-                         let text = response.text().await.unwrap_or_default();
-                         return Err(AppError::Unknown(format!("API Error: {} - {}", status, text)));
+                        let text = response.text().await.unwrap_or_default();
+                        return Err(AppError::Unknown(format!(
+                            "API Error: {} - {}",
+                            status, text
+                        )));
                     }
                 }
 
-                let quota_response: QuotaResponse = response
-                    .json()
-                    .await
-                    .map_err(|e| AppError::Network(e))?;
-                
+                let quota_response: QuotaResponse =
+                    response.json().await.map_err(|e| AppError::Network(e))?;
+
                 let mut quota_data = QuotaData::new();
-                
-                // Use debug level for detailed info to avoid console noise
                 tracing::debug!("Quota API returned {} models", quota_response.models.len());
 
                 for (name, info) in quota_response.models {
                     if let Some(quota_info) = info.quota_info {
-                        let percentage = quota_info.remaining_fraction
+                        let percentage = quota_info
+                            .remaining_fraction
                             .map(|f| (f * 100.0) as i32)
                             .unwrap_or(0);
-                        
+
                         let reset_time = quota_info.reset_time.unwrap_or_default();
-                        
-                        // Only keep models we care about
                         if name.contains("gemini") || name.contains("claude") {
                             quota_data.add_model(name, percentage, reset_time);
                         }
                     }
                 }
-                
-                // Set subscription tier
                 quota_data.subscription_tier = subscription_tier.clone();
-                
+
                 return Ok((quota_data, project_id.clone()));
-            },
+            }
             Err(e) => {
-                crate::modules::logger::log_warn(&format!("Request failed: {} (Attempt {}/{})", e, attempt, MAX_RETRIES));
+                crate::modules::logger::log_warn(&format!(
+                    "Request failed: {} (Attempt {}/{})",
+                    e, attempt, MAX_RETRIES
+                ));
                 last_error = Some(AppError::Network(e));
                 if attempt < MAX_RETRIES {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -214,19 +224,20 @@ pub async fn fetch_quota_with_cache(
             }
         }
     }
-    
+
     Err(last_error.unwrap_or_else(|| AppError::Unknown("Quota fetch failed".to_string())))
 }
-
-// Internal fetch quota logic
 #[allow(dead_code)]
-pub async fn fetch_quota_inner(access_token: &str, email: &str) -> crate::error::AppResult<(QuotaData, Option<String>)> {
+pub async fn fetch_quota_inner(
+    access_token: &str,
+    email: &str,
+) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     fetch_quota_with_cache(access_token, email, None, None).await
 }
-
-// Batch fetch all account quotas (backup functionality)
 #[allow(dead_code)]
-pub async fn fetch_all_quotas(accounts: Vec<(String, String, String)>) -> Vec<(String, crate::error::AppResult<QuotaData>)> {
+pub async fn fetch_all_quotas(
+    accounts: Vec<(String, String, String)>,
+) -> Vec<(String, crate::error::AppResult<QuotaData>)> {
     let mut results = Vec::new();
     for (id, email, access_token) in accounts {
         let res = fetch_quota(&access_token, &email, Some(&id)).await;

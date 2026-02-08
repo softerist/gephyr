@@ -25,7 +25,12 @@ pub(crate) fn set_validation_block(
         token.validation_blocked_until = block_until;
     }
 
-    crate::proxy::token::persistence::set_validation_block(data_dir, account_id, block_until, reason)?;
+    crate::proxy::token::persistence::set_validation_block(
+        data_dir,
+        account_id,
+        block_until,
+        reason,
+    )?;
     session_accounts.retain(|_, v| *v != account_id);
     Ok(())
 }

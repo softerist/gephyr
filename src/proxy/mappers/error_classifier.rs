@@ -1,24 +1,16 @@
-// Error classification module - converts low-level errors to user-friendly messages
 use reqwest::Error;
-
-// Classifies stream response errors and returns error type, English message, and i18n key
-// 
-// Returns: (error type, English error message, i18n_key)
-// - Error type: used for logs and error codes
-// - English message: fallback message for non-browser clients
-// - i18n_key: frontend translation key for browser client localization
 pub fn classify_stream_error(error: &Error) -> (&'static str, &'static str, &'static str) {
     if error.is_timeout() {
         (
             "timeout_error",
             "Request timeout, please check your network connection",
-            "errors.stream.timeout_error"
+            "errors.stream.timeout_error",
         )
     } else if error.is_connect() {
         (
             "connection_error",
             "Connection failed, please check your network or proxy settings",
-            "errors.stream.connection_error"
+            "errors.stream.connection_error",
         )
     } else if error.is_decode() {
         (
@@ -30,13 +22,13 @@ pub fn classify_stream_error(error: &Error) -> (&'static str, &'static str, &'st
         (
             "stream_error",
             "Stream transmission error, please retry later",
-            "errors.stream.stream_error"
+            "errors.stream.stream_error",
         )
     } else {
         (
             "unknown_error",
             "Unknown error occurred",
-            "errors.stream.unknown_error"
+            "errors.stream.unknown_error",
         )
     }
 }
@@ -47,18 +39,15 @@ mod tests {
 
     #[test]
     fn test_classify_timeout_error() {
-        // Create a simulated timeout error
         let url = "http://example.com";
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(1))
             .build()
             .unwrap();
-        
+
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let error = rt.block_on(async {
-            client.get(url).send().await.unwrap_err()
-        });
-        
+        let error = rt.block_on(async { client.get(url).send().await.unwrap_err() });
+
         if error.is_timeout() {
             let (error_type, message, i18n_key) = classify_stream_error(&error);
             assert_eq!(error_type, "timeout_error");
@@ -69,36 +58,26 @@ mod tests {
 
     #[test]
     fn test_error_message_format() {
-        // Test error message format
         let url = "http://invalid-domain-that-does-not-exist-12345.com";
         let client = reqwest::Client::new();
-        
+
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let error = rt.block_on(async {
-            client.get(url).send().await.unwrap_err()
-        });
-        
+        let error = rt.block_on(async { client.get(url).send().await.unwrap_err() });
+
         let (error_type, message, i18n_key) = classify_stream_error(&error);
-        
-        // Error type should be one of the known types
         assert!(
-            error_type == "timeout_error" ||
-            error_type == "connection_error" ||
-            error_type == "decode_error" ||
-            error_type == "stream_error" ||
-            error_type == "unknown_error"
+            error_type == "timeout_error"
+                || error_type == "connection_error"
+                || error_type == "decode_error"
+                || error_type == "stream_error"
+                || error_type == "unknown_error"
         );
-        
-        // Message should not be empty
         assert!(!message.is_empty());
-        
-        // i18n_key should start with errors.stream.
         assert!(i18n_key.starts_with("errors.stream."));
     }
 
     #[test]
     fn test_i18n_keys_format() {
-        // Verify that all error types have the correct i18n_key format
         let test_cases = vec![
             ("timeout_error", "errors.stream.timeout_error"),
             ("connection_error", "errors.stream.connection_error"),
@@ -106,8 +85,6 @@ mod tests {
             ("stream_error", "errors.stream.stream_error"),
             ("unknown_error", "errors.stream.unknown_error"),
         ];
-        
-        // Here we only verify the i18n_key format
         for (expected_type, expected_key) in test_cases {
             assert_eq!(format!("errors.stream.{}", expected_type), expected_key);
         }

@@ -1,6 +1,4 @@
 use serde_json::Value;
-
-// Strip all content marked as thinking blocks (thought: true)
 pub fn strip_all_thinking_blocks(contents: Vec<Value>) -> Vec<Value> {
     contents
         .into_iter()
@@ -15,6 +13,11 @@ pub fn strip_all_thinking_blocks(contents: Vec<Value>) -> Vec<Value> {
             }
             content
         })
-        .filter(|msg| !msg["parts"].as_array().map(|a| a.is_empty()).unwrap_or(true))
+        .filter(|msg| {
+            !msg["parts"]
+                .as_array()
+                .map(|a| a.is_empty())
+                .unwrap_or(true)
+        })
         .collect()
 }

@@ -1,39 +1,26 @@
-// Claude non-streaming response conversion (Gemini → Claude)
-// Corresponds to NonStreamingProcessor
-
 use super::models::*;
 use super::utils::to_claude_usage;
 use serde_json::json;
-
-// Known parameter remappings for Gemini → Claude compatibility
-//  Gemini sometimes uses different parameter names than specified in tool schema
 fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
-    //  Always log incoming tool usage for diagnosis
     if let Some(obj) = args.as_object() {
         tracing::debug!("[Response] Tool Call: '{}' Args: {:?}", tool_name, obj);
     }
 
     if let Some(obj) = args.as_object_mut() {
-        //  Case-insensitive matching for tool names
         match tool_name.to_lowercase().as_str() {
             "grep" | "search" | "search_code_definitions" | "search_code_snippets" => {
-                //  Gemini hallucination: maps parameter description to "description" field
                 if let Some(desc) = obj.remove("description") {
                     if !obj.contains_key("pattern") {
                         obj.insert("pattern".to_string(), desc);
                         tracing::debug!("[Response] Remapped Grep: description → pattern");
                     }
                 }
-
-                // Gemini uses "query", Claude Code expects "pattern"
                 if let Some(query) = obj.remove("query") {
                     if !obj.contains_key("pattern") {
                         obj.insert("pattern".to_string(), query);
                         tracing::debug!("[Response] Remapped Grep: query → pattern");
                     }
                 }
-
-                // Claude Code uses "path" (string), NOT "paths" (array)!
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
@@ -49,32 +36,24 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         obj.insert("path".to_string(), serde_json::json!(path_str));
                         tracing::debug!("[Response] Remapped Grep: paths → path(\"{}\")", path_str);
                     } else {
-                        // Default to current directory if missing
                         obj.insert("path".to_string(), json!("."));
                         tracing::debug!("[Response] Added default path: \".\"");
                     }
                 }
-
-                // Note: We keep "-n" and "output_mode" if present as they are valid in Grep schema
             }
             "glob" => {
-                //  Gemini hallucination: maps parameter description to "description" field
                 if let Some(desc) = obj.remove("description") {
                     if !obj.contains_key("pattern") {
                         obj.insert("pattern".to_string(), desc);
                         tracing::debug!("[Response] Remapped Glob: description → pattern");
                     }
                 }
-
-                // Gemini uses "query", Claude Code expects "pattern"
                 if let Some(query) = obj.remove("query") {
                     if !obj.contains_key("pattern") {
                         obj.insert("pattern".to_string(), query);
                         tracing::debug!("[Response] Remapped Glob: query → pattern");
                     }
                 }
-
-                // Claude Code uses "path" (string), NOT "paths" (array)!
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
@@ -90,14 +69,12 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         obj.insert("path".to_string(), serde_json::json!(path_str));
                         tracing::debug!("[Response] Remapped Glob: paths → path(\"{}\")", path_str);
                     } else {
-                        // Default to current directory if missing
                         obj.insert("path".to_string(), json!("."));
                         tracing::debug!("[Response] Added default path: \".\"");
                     }
                 }
             }
             "read" => {
-                // Gemini might use "path" vs "file_path"
                 if let Some(path) = obj.remove("path") {
                     if !obj.contains_key("file_path") {
                         obj.insert("file_path".to_string(), path);
@@ -106,15 +83,12 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                 }
             }
             "ls" => {
-                // LS tool: ensure "path" parameter exists
                 if !obj.contains_key("path") {
                     obj.insert("path".to_string(), serde_json::json!("."));
                     tracing::debug!("[Response] Remapped LS: default path → \".\"");
                 }
             }
             other => {
-                // Generic Property Mapping for all tools
-                // If a tool has "paths" (array of 1) but no "path", convert it.
                 let mut path_to_inject = None;
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
@@ -143,8 +117,6 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
         }
     }
 }
-
-// Non-streaming response processor
 pub struct NonStreamingProcessor {
     content_blocks: Vec<ContentBlock>,
     text_builder: String,
@@ -156,7 +128,7 @@ pub struct NonStreamingProcessor {
     pub context_limit: u32,
     pub session_id: Option<String>,
     pub model_name: String,
-    pub message_count: usize, //  Message count for rewind detection
+    pub message_count: usize,
 }
 
 impl NonStreamingProcessor {
@@ -169,14 +141,12 @@ impl NonStreamingProcessor {
             trailing_signature: None,
             has_tool_call: false,
             scaling_enabled: false,
-            context_limit: 1_048_576, // Default to 1M
+            context_limit: 1_048_576,
             session_id,
             model_name,
             message_count,
         }
     }
-
-    // Process Gemini response and convert to Claude response
     pub fn process(
         &mut self,
         gemini_response: &GeminiResponse,
@@ -185,7 +155,6 @@ impl NonStreamingProcessor {
     ) -> ClaudeResponse {
         self.scaling_enabled = scaling_enabled;
         self.context_limit = context_limit;
-        // Get parts
         let empty_parts = vec![];
         let parts = gemini_response
             .candidates
@@ -194,24 +163,16 @@ impl NonStreamingProcessor {
             .and_then(|candidate| candidate.content.as_ref())
             .map(|content| &content.parts)
             .unwrap_or(&empty_parts);
-
-        // Process all parts
         for part in parts {
             self.process_part(part);
         }
-
-        // Handle grounding (web search) -> convert to server_tool_use / web_search_tool_result
         if let Some(candidate) = gemini_response.candidates.as_ref().and_then(|c| c.get(0)) {
             if let Some(grounding) = &candidate.grounding_metadata {
                 self.process_grounding(grounding);
             }
         }
-
-        // Flush remaining content
         self.flush_thinking();
         self.flush_text();
-
-        // Handle trailingSignature (empty text with signature)
         if let Some(signature) = self.trailing_signature.take() {
             self.content_blocks.push(ContentBlock::Thinking {
                 thinking: String::new(),
@@ -219,38 +180,33 @@ impl NonStreamingProcessor {
                 cache_control: None,
             });
         }
-
-        // Build response
         self.build_response(gemini_response)
     }
-
-    // Process single part
     fn process_part(&mut self, part: &GeminiPart) {
         let signature = part.thought_signature.as_ref().map(|sig| {
             use base64::Engine;
             match base64::engine::general_purpose::STANDARD.decode(sig) {
-                Ok(decoded_bytes) => {
-                    match String::from_utf8(decoded_bytes) {
-                        Ok(decoded_str) => {
-                            tracing::debug!(
-                                "[Response] Decoded base64 signature (len {} -> {})",
-                                sig.len(),
-                                decoded_str.len()
-                            );
-                            decoded_str
-                        }
-                        Err(_) => sig.clone(), // Not valid UTF-8, keep as is
+                Ok(decoded_bytes) => match String::from_utf8(decoded_bytes) {
+                    Ok(decoded_str) => {
+                        tracing::debug!(
+                            "[Response] Decoded base64 signature (len {} -> {})",
+                            sig.len(),
+                            decoded_str.len()
+                        );
+                        decoded_str
                     }
-                }
-                Err(_) => sig.clone(), // Not base64, keep as is
+                    Err(_) => sig.clone(),
+                },
+                Err(_) => sig.clone(),
             }
         });
-
-        // Cache signature in NonStreamingProcessor
         if let Some(sig) = &signature {
             if let Some(s_id) = &self.session_id {
-                crate::proxy::SignatureCache::global()
-                    .cache_session_signature(s_id, sig.to_string(), self.message_count);
+                crate::proxy::SignatureCache::global().cache_session_signature(
+                    s_id,
+                    sig.to_string(),
+                    self.message_count,
+                );
                 crate::proxy::SignatureCache::global()
                     .cache_thinking_family(sig.to_string(), self.model_name.clone());
                 tracing::debug!(
@@ -260,13 +216,9 @@ impl NonStreamingProcessor {
                 );
             }
         }
-
-        // 1. FunctionCall handling
         if let Some(fc) = &part.function_call {
             self.flush_thinking();
             self.flush_text();
-
-            // Handle trailingSignature (B4/C3 scenarios)
             if let Some(trailing_sig) = self.trailing_signature.take() {
                 self.content_blocks.push(ContentBlock::Thinking {
                     thinking: String::new(),
@@ -276,8 +228,6 @@ impl NonStreamingProcessor {
             }
 
             self.has_tool_call = true;
-
-            // Generate tool_use id
             let tool_id = fc.id.clone().unwrap_or_else(|| {
                 format!(
                     "{}-{}",
@@ -287,13 +237,9 @@ impl NonStreamingProcessor {
             });
 
             let mut tool_name = fc.name.clone();
-            // [OPTIMIZED] Only rename if it's "search" which is a known hallucination.
-            // Avoid renaming "grep" to "Grep" if possible to protect signature.
             if tool_name.to_lowercase() == "search" {
                 tool_name = "Grep".to_string();
             }
-
-            //  Remap args for Gemini → Claude compatibility
             let mut args = fc.args.clone().unwrap_or(serde_json::json!({}));
             remap_function_call_args(&tool_name, &mut args);
 
@@ -304,8 +250,6 @@ impl NonStreamingProcessor {
                 signature: None,
                 cache_control: None,
             };
-
-            // Only use FC's own signature
             if let ContentBlock::ToolUse { signature: sig, .. } = &mut tool_use {
                 *sig = signature;
             }
@@ -313,14 +257,9 @@ impl NonStreamingProcessor {
             self.content_blocks.push(tool_use);
             return;
         }
-
-        // 2. Text handling
         if let Some(text) = &part.text {
             if part.thought.unwrap_or(false) {
-                // Thinking part
                 self.flush_text();
-
-                // Handle trailingSignature
                 if let Some(trailing_sig) = self.trailing_signature.take() {
                     self.flush_thinking();
                     self.content_blocks.push(ContentBlock::Thinking {
@@ -335,9 +274,7 @@ impl NonStreamingProcessor {
                     self.thinking_signature = signature;
                 }
             } else {
-                // Regular Text
                 if text.is_empty() {
-                    // Empty text with signature - temporarily store in trailingSignature
                     if signature.is_some() {
                         self.trailing_signature = signature;
                     }
@@ -345,8 +282,6 @@ impl NonStreamingProcessor {
                 }
 
                 self.flush_thinking();
-
-                // Handle previous trailingSignature
                 if let Some(trailing_sig) = self.trailing_signature.take() {
                     self.flush_text();
                     self.content_blocks.push(ContentBlock::Thinking {
@@ -357,8 +292,6 @@ impl NonStreamingProcessor {
                 }
 
                 self.text_builder.push_str(text);
-
-                // Non-empty text with signature - flush immediately and output empty thinking block
                 if let Some(sig) = signature {
                     self.flush_text();
                     self.content_blocks.push(ContentBlock::Thinking {
@@ -369,8 +302,6 @@ impl NonStreamingProcessor {
                 }
             }
         }
-
-        // 3. InlineData (Image) handling
         if let Some(img) = &part.inline_data {
             self.flush_thinking();
 
@@ -383,20 +314,14 @@ impl NonStreamingProcessor {
             }
         }
     }
-
-    // Handle Grounding metadata (Web Search results)
     fn process_grounding(&mut self, grounding: &GroundingMetadata) {
         let mut grounding_text = String::new();
-
-        // 1. Handle search queries
         if let Some(queries) = &grounding.web_search_queries {
             if !queries.is_empty() {
                 grounding_text.push_str("\n\n---\n**🔍 Searched for you:** ");
                 grounding_text.push_str(&queries.join(", "));
             }
         }
-
-        // 2. Handle source links (Chunks)
         if let Some(chunks) = &grounding.grounding_chunks {
             let mut links = Vec::new();
             for (i, chunk) in chunks.iter().enumerate() {
@@ -414,15 +339,12 @@ impl NonStreamingProcessor {
         }
 
         if !grounding_text.is_empty() {
-            // Flush and insert text before and after regular content
             self.flush_thinking();
             self.flush_text();
             self.text_builder.push_str(&grounding_text);
             self.flush_text();
         }
     }
-
-    // Flush text builder
     fn flush_text(&mut self) {
         if self.text_builder.is_empty() {
             return;
@@ -430,8 +352,6 @@ impl NonStreamingProcessor {
 
         let mut current_text = self.text_builder.clone();
         self.text_builder.clear();
-
-        //  MCP XML Bridge: Loop through possible XML tags in the text
         while let Some(start_idx) = current_text.find("<mcp__") {
             if let Some(tag_end_idx) = current_text[start_idx..].find('>') {
                 let actual_tag_end = start_idx + tag_end_idx;
@@ -439,14 +359,11 @@ impl NonStreamingProcessor {
                 let end_tag = format!("</{}>", tool_name);
 
                 if let Some(close_idx) = current_text.find(&end_tag) {
-                    // 1. Handle text before the tag
                     if start_idx > 0 {
                         self.content_blocks.push(ContentBlock::Text {
                             text: current_text[..start_idx].to_string(),
                         });
                     }
-
-                    // 2. Parse XML content and convert to ToolUse
                     let input_str = &current_text[actual_tag_end + 1..close_idx];
                     let input_json: serde_json::Value = serde_json::from_str(input_str.trim())
                         .unwrap_or_else(|_| serde_json::json!({ "input": input_str.trim() }));
@@ -459,13 +376,10 @@ impl NonStreamingProcessor {
                         cache_control: None,
                     });
                     self.has_tool_call = true;
-
-                    // 3. Continue processing remaining text
                     current_text = current_text[close_idx + end_tag.len()..].to_string();
                     continue;
                 }
             }
-            // If XML format is incomplete, break loop and treat as regular text
             break;
         }
 
@@ -474,10 +388,7 @@ impl NonStreamingProcessor {
                 .push(ContentBlock::Text { text: current_text });
         }
     }
-
-    // Flush thinking builder
     fn flush_thinking(&mut self) {
-        // If there is neither content nor signature, return directly
         if self.thinking_builder.is_empty() && self.thinking_signature.is_none() {
             return;
         }
@@ -492,8 +403,6 @@ impl NonStreamingProcessor {
         });
         self.thinking_builder.clear();
     }
-
-    // Build final response
     fn build_response(&self, gemini_response: &GeminiResponse) -> ClaudeResponse {
         let finish_reason = gemini_response
             .candidates
@@ -542,7 +451,7 @@ pub fn transform_response(
     context_limit: u32,
     session_id: Option<String>,
     model_name: String,
-    message_count: usize, //  Message count for rewind detection
+    message_count: usize,
 ) -> Result<ClaudeResponse, String> {
     let mut processor = NonStreamingProcessor::new(session_id, model_name, message_count);
     Ok(processor.process(gemini_response, scaling_enabled, context_limit))

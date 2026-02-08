@@ -1,6 +1,3 @@
-// Mappers Module - Protocol Converters
-// Protocol Converter Module
-
 pub mod claude;
 pub mod common_utils;
 pub mod context_manager;

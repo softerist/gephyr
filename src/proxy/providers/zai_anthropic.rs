@@ -50,8 +50,7 @@ fn build_client(
     upstream_proxy: Option<crate::proxy::config::UpstreamProxyConfig>,
     timeout_secs: u64,
 ) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs.max(5)));
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs.max(5)));
 
     if let Some(config) = upstream_proxy {
         if config.enabled && !config.url.is_empty() {
@@ -62,13 +61,12 @@ fn build_client(
     }
 
     builder
-        .tcp_nodelay(true) // Disable Nagle's algorithm to improve latency for small requests
+        .tcp_nodelay(true)
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
 fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
-    // Only forward a conservative set of headers to avoid leaking the local proxy key or cookies.
     let mut out = HeaderMap::new();
 
     for (k, v) in incoming.iter() {
@@ -77,7 +75,6 @@ fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
             "content-type" | "accept" | "anthropic-version" | "user-agent" => {
                 out.insert(k.clone(), v.clone());
             }
-            // Some clients use these for streaming; safe to pass through.
             "accept-encoding" | "cache-control" => {
                 out.insert(k.clone(), v.clone());
             }
@@ -89,10 +86,6 @@ fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
 }
 
 fn set_zai_auth(headers: &mut HeaderMap, incoming: &HeaderMap, api_key: &str) {
-    // Prefer to keep the same auth scheme as the incoming request:
-    // - If the client used x-api-key (Anthropic style), replace it.
-    // - Else if it used Authorization, replace it with Bearer.
-    // - Else default to x-api-key.
     let has_x_api_key = incoming.contains_key("x-api-key");
     let has_auth = incoming.contains_key(header::AUTHORIZATION);
 
@@ -108,9 +101,6 @@ fn set_zai_auth(headers: &mut HeaderMap, incoming: &HeaderMap, api_key: &str) {
         }
     }
 }
-
-// Recursively remove cache_control from all nested objects/arrays
-// This is a defensive fix that works regardless of serde annotations
 pub fn deep_remove_cache_control(value: &mut Value) {
     match value {
         Value::Object(map) => {
@@ -136,7 +126,7 @@ pub async fn forward_anthropic_json(
     path: &str,
     incoming_headers: &HeaderMap,
     mut body: Value,
-    message_count: usize, //  Pass message count for rewind detection
+    message_count: usize,
 ) -> Response {
     let zai = state.config.zai.read().await.clone();
     if !zai.enabled || zai.dispatch_mode == crate::proxy::ZaiDispatchMode::Off {
@@ -150,13 +140,15 @@ pub async fn forward_anthropic_json(
     if let Some(model) = body.get("model").and_then(|v| v.as_str()) {
         let mapped = map_model_for_zai(model, &zai);
         body["model"] = Value::String(mapped.clone());
-
-        //  Caching for z.ai (to support thinking-filter)
-        if let Some(sig) = body.get("thinking").and_then(|t| t.get("signature")).and_then(|s| s.as_str()) {
+        if let Some(sig) = body
+            .get("thinking")
+            .and_then(|t| t.get("signature"))
+            .and_then(|s| s.as_str())
+        {
             crate::proxy::SignatureCache::global().cache_session_signature(
-                "zai-session", 
-                sig.to_string(), 
-                message_count
+                "zai-session",
+                sig.to_string(),
+                message_count,
             );
             crate::proxy::SignatureCache::global().cache_thinking_family(sig.to_string(), mapped);
         }
@@ -176,29 +168,26 @@ pub async fn forward_anthropic_json(
 
     let mut headers = copy_passthrough_headers(incoming_headers);
     set_zai_auth(&mut headers, incoming_headers, &zai.api_key);
-
-    // Ensure JSON content type.
     headers
         .entry(header::CONTENT_TYPE)
         .or_insert(HeaderValue::from_static("application/json"));
-
-    // Clean cache_control before sending to Anthropic API
-    // This prevents "Extra inputs are not permitted" errors
     if let Some(cc) = body.get("cache_control") {
         tracing::info!(" Deep cleaning cache_control from ROOT: {:?}", cc);
     }
     deep_remove_cache_control(&mut body);
-
-    // Explicitly serialize body to Vec<u8> to ensure Content-Length is set correctly.
-    // This avoids "Transfer-Encoding: chunked" for small bodies which caused connection errors.
     let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
     let body_len = body_bytes.len();
-    
-    tracing::debug!("Forwarding request to z.ai (len: {} bytes): {}", body_len, url);
 
-    let req = client.request(method, &url)
+    tracing::debug!(
+        "Forwarding request to z.ai (len: {} bytes): {}",
+        body_len,
+        url
+    );
+
+    let req = client
+        .request(method, &url)
         .headers(headers)
-        .body(body_bytes); // Use .body(Vec<u8>) instead of .json()
+        .body(body_bytes);
 
     let resp = match req.send().await {
         Ok(r) => r,
@@ -217,15 +206,16 @@ pub async fn forward_anthropic_json(
     if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
         out = out.header(header::CONTENT_TYPE, ct.clone());
     }
-
-    // Stream response body to the client (covers SSE and non-SSE).
     let stream = resp.bytes_stream().map(|chunk| match chunk {
         Ok(b) => Ok::<Bytes, std::io::Error>(b),
         Err(e) => Ok(Bytes::from(format!("Upstream stream error: {}", e))),
     });
 
     out.body(Body::from_stream(stream)).unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to build response",
+        )
+            .into_response()
     })
 }
-

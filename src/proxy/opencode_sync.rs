@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::PathBuf;
-use std::process::Command;
-use std::fs;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -38,7 +38,10 @@ struct OpencodeAccount {
     refresh_token: String,
     #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
     project_id: Option<String>,
-    #[serde(rename = "rateLimitResetTimes", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "rateLimitResetTimes",
+        skip_serializing_if = "Option::is_none"
+    )]
     rate_limit_reset_times: Option<HashMap<String, i64>>,
 }
 
@@ -58,52 +61,42 @@ fn get_config_paths() -> Option<(PathBuf, PathBuf, PathBuf)> {
 
 fn extract_version(raw: &str) -> String {
     let trimmed = raw.trim();
-    
-    // Try to extract version from formats like "opencode/1.2.3" or "codex-cli 0.86.0"
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     for part in parts {
-        // Check for format like "opencode/1.2.3"
         if let Some(slash_idx) = part.find('/') {
             let after_slash = &part[slash_idx + 1..];
             if is_valid_version(after_slash) {
                 return after_slash.to_string();
             }
         }
-        // Check if part itself looks like a version
         if is_valid_version(part) {
             return part.to_string();
         }
     }
-    
-    // Fallback: extract last sequence of digits and dots
     let version_chars: String = trimmed
         .chars()
         .skip_while(|c| !c.is_ascii_digit())
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
-    
+
     if !version_chars.is_empty() && version_chars.contains('.') {
         return version_chars;
     }
-    
+
     "unknown".to_string()
 }
 
 fn is_valid_version(s: &str) -> bool {
-    // A valid version should start with digit and contain at least one dot
     s.chars().next().map_or(false, |c| c.is_ascii_digit())
         && s.contains('.')
         && s.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
 fn resolve_opencode_path() -> Option<PathBuf> {
-    // First, try to find in PATH
     if let Some(path) = find_in_path("opencode") {
         tracing::debug!("Found opencode in PATH: {:?}", path);
         return Some(path);
     }
-    
-    // Try fallback locations based on OS
     #[cfg(target_os = "windows")]
     {
         resolve_opencode_path_windows()
@@ -116,7 +109,6 @@ fn resolve_opencode_path() -> Option<PathBuf> {
 
 #[cfg(target_os = "windows")]
 fn resolve_opencode_path_windows() -> Option<PathBuf> {
-    // Check npm global location
     if let Ok(app_data) = env::var("APPDATA") {
         let npm_opencode_cmd = PathBuf::from(&app_data).join("npm").join("opencode.cmd");
         if npm_opencode_cmd.exists() {
@@ -129,22 +121,28 @@ fn resolve_opencode_path_windows() -> Option<PathBuf> {
             return Some(npm_opencode_exe);
         }
     }
-    
-    // Check pnpm location
     if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        let pnpm_opencode_cmd = PathBuf::from(&local_app_data).join("pnpm").join("opencode.cmd");
+        let pnpm_opencode_cmd = PathBuf::from(&local_app_data)
+            .join("pnpm")
+            .join("opencode.cmd");
         if pnpm_opencode_cmd.exists() {
-            tracing::debug!("Found opencode.cmd in LOCALAPPDATA\\pnpm: {:?}", pnpm_opencode_cmd);
+            tracing::debug!(
+                "Found opencode.cmd in LOCALAPPDATA\\pnpm: {:?}",
+                pnpm_opencode_cmd
+            );
             return Some(pnpm_opencode_cmd);
         }
-        let pnpm_opencode_exe = PathBuf::from(&local_app_data).join("pnpm").join("opencode.exe");
+        let pnpm_opencode_exe = PathBuf::from(&local_app_data)
+            .join("pnpm")
+            .join("opencode.exe");
         if pnpm_opencode_exe.exists() {
-            tracing::debug!("Found opencode.exe in LOCALAPPDATA\\pnpm: {:?}", pnpm_opencode_exe);
+            tracing::debug!(
+                "Found opencode.exe in LOCALAPPDATA\\pnpm: {:?}",
+                pnpm_opencode_exe
+            );
             return Some(pnpm_opencode_exe);
         }
     }
-    
-    // Check Yarn location
     if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
         let yarn_opencode = PathBuf::from(&local_app_data)
             .join("Yarn")
@@ -155,80 +153,69 @@ fn resolve_opencode_path_windows() -> Option<PathBuf> {
             return Some(yarn_opencode);
         }
     }
-    
-    // Scan NVM_HOME
     if let Ok(nvm_home) = env::var("NVM_HOME") {
         if let Some(path) = scan_nvm_directory(&nvm_home) {
             return Some(path);
         }
     }
-    
-    // Try common NVM locations
     if let Some(home) = dirs::home_dir() {
         let nvm_default = home.join(".nvm");
         if let Some(path) = scan_nvm_directory(&nvm_default) {
             return Some(path);
         }
     }
-    
+
     None
 }
 
 #[cfg(not(target_os = "windows"))]
 fn resolve_opencode_path_unix() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    
-    // Common user bin locations
     let user_bins = [
         home.join(".local").join("bin").join("opencode"),
         home.join(".npm-global").join("bin").join("opencode"),
         home.join("bin").join("opencode"),
     ];
-    
+
     for path in &user_bins {
         if path.exists() {
             tracing::debug!("Found opencode in user bin: {:?}", path);
             return Some(path.clone());
         }
     }
-    
-    // System-wide locations
     let system_bins = [
         PathBuf::from("/opt/homebrew/bin/opencode"),
         PathBuf::from("/usr/local/bin/opencode"),
         PathBuf::from("/usr/bin/opencode"),
     ];
-    
+
     for path in &system_bins {
         if path.exists() {
             tracing::debug!("Found opencode in system bin: {:?}", path);
             return Some(path.clone());
         }
     }
-    
-    // Scan nvm directories
-    let nvm_dirs = [
-        home.join(".nvm").join("versions").join("node"),
-    ];
-    
+    let nvm_dirs = [home.join(".nvm").join("versions").join("node")];
+
     for nvm_dir in &nvm_dirs {
         if let Some(path) = scan_node_versions(nvm_dir) {
             return Some(path);
         }
     }
-    
-    // Scan fnm directories
     let fnm_dirs = [
         home.join(".fnm").join("node-versions"),
-        home.join("Library").join("Application Support").join("fnm").join("node-versions"),
+        home.join("Library")
+            .join("Application Support")
+            .join("fnm")
+            .join("node-versions"),
     ];
-    
+
     for fnm_dir in &fnm_dirs {
         if let Some(path) = scan_fnm_versions(fnm_dir) {
             return Some(path);
         }
     }
-    
+
     None
 }
 
@@ -238,9 +225,9 @@ fn scan_nvm_directory(nvm_path: impl AsRef<std::path::Path>) -> Option<PathBuf> 
     if !nvm_path.exists() {
         return None;
     }
-    
+
     let entries = fs::read_dir(nvm_path).ok()?;
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -256,7 +243,7 @@ fn scan_nvm_directory(nvm_path: impl AsRef<std::path::Path>) -> Option<PathBuf> 
             }
         }
     }
-    
+
     None
 }
 
@@ -266,9 +253,9 @@ fn scan_node_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathB
     if !versions_dir.exists() {
         return None;
     }
-    
+
     let entries = fs::read_dir(versions_dir).ok()?;
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -279,7 +266,7 @@ fn scan_node_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathB
             }
         }
     }
-    
+
     None
 }
 
@@ -289,9 +276,9 @@ fn scan_fnm_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathBu
     if !versions_dir.exists() {
         return None;
     }
-    
+
     let entries = fs::read_dir(versions_dir).ok()?;
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -302,7 +289,7 @@ fn scan_fnm_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathBu
             }
         }
     }
-    
+
     None
 }
 
@@ -321,7 +308,7 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
             }
         }
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         if let Ok(path_var) = env::var("PATH") {
@@ -333,17 +320,15 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
             }
         }
     }
-    
+
     None
 }
 
 #[cfg(target_os = "windows")]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
     let path_str = opencode_path.to_string_lossy();
-    
-    // Check if it's a .cmd or .bat file that needs cmd.exe
     let is_cmd = path_str.ends_with(".cmd") || path_str.ends_with(".bat");
-    
+
     let output = if is_cmd {
         let mut cmd = Command::new("cmd.exe");
         cmd.arg("/C")
@@ -353,23 +338,20 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
         cmd.output()
     } else {
         let mut cmd = Command::new(opencode_path);
-        cmd.arg("--version")
-            .creation_flags(CREATE_NO_WINDOW);
+        cmd.arg("--version").creation_flags(CREATE_NO_WINDOW);
         cmd.output()
     };
-    
+
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
-            // Some tools output version to stderr
             let raw = if stdout.trim().is_empty() {
                 stderr.to_string()
             } else {
                 stdout.to_string()
             };
-            
+
             tracing::debug!("opencode --version output: {}", raw.trim());
             Some(extract_version(&raw))
         }
@@ -386,22 +368,18 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 
 #[cfg(not(target_os = "windows"))]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
-    let output = Command::new(opencode_path)
-        .arg("--version")
-        .output();
-    
+    let output = Command::new(opencode_path).arg("--version").output();
+
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
-            // Some tools output version to stderr
             let raw = if stdout.trim().is_empty() {
                 stderr.to_string()
             } else {
                 stdout.to_string()
             };
-            
+
             tracing::debug!("opencode --version output: {}", raw.trim());
             Some(extract_version(&raw))
         }
@@ -418,7 +396,7 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 
 pub fn check_opencode_installed() -> (bool, Option<String>) {
     tracing::debug!("Checking opencode installation...");
-    
+
     let opencode_path = match resolve_opencode_path() {
         Some(path) => {
             tracing::debug!("Resolved opencode path: {:?}", path);
@@ -429,7 +407,7 @@ pub fn check_opencode_installed() -> (bool, Option<String>) {
             return (false, None);
         }
     };
-    
+
     match run_opencode_version(&opencode_path) {
         Some(version) => {
             tracing::debug!("opencode version detected: {}", version);
@@ -443,7 +421,8 @@ pub fn check_opencode_installed() -> (bool, Option<String>) {
 }
 
 fn get_provider_options<'a>(value: &'a Value, provider_name: &str) -> Option<&'a Value> {
-    value.get("provider")
+    value
+        .get("provider")
         .and_then(|p| p.get(provider_name))
         .and_then(|prov| prov.get("options"))
 }
@@ -457,9 +436,8 @@ pub fn get_sync_status(proxy_url: &str) -> (bool, bool, Option<String>) {
     let mut has_backup = false;
     let mut current_base_url = None;
 
-    let backup_path = config_path.with_file_name(
-        format!("{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX)
-    );
+    let backup_path =
+        config_path.with_file_name(format!("{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX));
     if backup_path.exists() {
         has_backup = true;
     }
@@ -528,8 +506,7 @@ fn create_backup(path: &PathBuf) -> Result<(), String> {
         return Ok(());
     }
 
-    fs::copy(path, &backup_path)
-        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    fs::copy(path, &backup_path).map_err(|e| format!("Failed to create backup: {}", e))?;
 
     Ok(())
 }
@@ -560,7 +537,7 @@ fn merge_provider_options(provider: &mut Value, base_url: &str, api_key: &str) {
     if provider.get("options").is_none() {
         provider["options"] = serde_json::json!({});
     }
-    
+
     if let Some(options) = provider.get_mut("options").and_then(|o| o.as_object_mut()) {
         options.insert("baseURL".to_string(), Value::String(base_url.to_string()));
         options.insert("apiKey".to_string(), Value::String(api_key.to_string()));
@@ -571,11 +548,14 @@ fn add_missing_models(provider: &mut Value, model_ids: &[&str]) {
     if provider.get("models").is_none() {
         provider["models"] = serde_json::json!({});
     }
-    
+
     if let Some(models) = provider.get_mut("models").and_then(|m| m.as_object_mut()) {
         for &model_id in model_ids {
             if !models.contains_key(model_id) {
-                models.insert(model_id.to_string(), serde_json::json!({ "name": model_id }));
+                models.insert(
+                    model_id.to_string(),
+                    serde_json::json!({ "name": model_id }),
+                );
             }
         }
     }
@@ -654,14 +634,16 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
     };
 
     let mut existing_rate_limits_by_email: HashMap<String, HashMap<String, i64>> = HashMap::new();
-    
+
     if let Some(ref content) = existing_content {
         if let Ok(existing_json) = serde_json::from_str::<Value>(content) {
-            if let Some(existing_accounts) = existing_json.get("accounts").and_then(|a| a.as_array()) {
+            if let Some(existing_accounts) =
+                existing_json.get("accounts").and_then(|a| a.as_array())
+            {
                 for acc in existing_accounts {
                     if let (Some(email), Some(rlt)) = (
                         acc.get("email").and_then(|e| e.as_str()),
-                        acc.get("rateLimitResetTimes").and_then(|r| r.as_object())
+                        acc.get("rateLimitResetTimes").and_then(|r| r.as_object()),
                     ) {
                         let mut limits = HashMap::new();
                         for (key, val) in rlt.iter() {
@@ -690,7 +672,7 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
 
         let refresh_token = acc.token.refresh_token.clone();
         let project_id = acc.token.project_id.clone();
-        
+
         let rate_limit_reset_times = existing_rate_limits_by_email
             .get(&acc.email)
             .cloned()
@@ -724,18 +706,16 @@ pub fn restore_opencode_config() -> Result<(), String> {
 
     let mut restored = false;
 
-    let config_backup = config_path.with_file_name(format!(
-        "{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX
-    ));
+    let config_backup =
+        config_path.with_file_name(format!("{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX));
     if config_backup.exists() {
         fs::rename(&config_backup, &config_path)
             .map_err(|e| format!("Failed to restore config: {}", e))?;
         restored = true;
     }
 
-    let accounts_backup = accounts_path.with_file_name(format!(
-        "{}{}", ANTIGRAVITY_ACCOUNTS_FILE, BACKUP_SUFFIX
-    ));
+    let accounts_backup =
+        accounts_path.with_file_name(format!("{}{}", ANTIGRAVITY_ACCOUNTS_FILE, BACKUP_SUFFIX));
     if accounts_backup.exists() {
         fs::rename(&accounts_backup, &accounts_path)
             .map_err(|e| format!("Failed to restore accounts: {}", e))?;
@@ -782,15 +762,11 @@ pub fn read_opencode_config_content(file_name: Option<String>) -> Result<String,
     let Some((opencode_path, ag_config_path, ag_accounts_path)) = get_config_paths() else {
         return Err("Failed to get OpenCode config directory".to_string());
     };
-
-    // Allowlist of permitted file names
     let allowed_files = [
         OPENCODE_CONFIG_FILE,
         ANTIGRAVITY_CONFIG_FILE,
         ANTIGRAVITY_ACCOUNTS_FILE,
     ];
-
-    // Determine which file to read
     let target_path = match file_name.as_deref() {
         Some(name) if name == ANTIGRAVITY_CONFIG_FILE => ag_config_path,
         Some(name) if name == ANTIGRAVITY_ACCOUNTS_FILE => ag_accounts_path,
@@ -801,15 +777,14 @@ pub fn read_opencode_config_content(file_name: Option<String>) -> Result<String,
                 name, allowed_files
             ))
         }
-        None => opencode_path, // Default to opencode.json
+        None => opencode_path,
     };
 
     if !target_path.exists() {
         return Err(format!("Config file does not exist: {:?}", target_path));
     }
 
-    fs::read_to_string(&target_path)
-        .map_err(|e| format!("Failed to read config: {}", e))
+    fs::read_to_string(&target_path).map_err(|e| format!("Failed to read config: {}", e))
 }
 
 pub async fn get_opencode_sync_status(proxy_url: String) -> Result<OpencodeStatus, String> {

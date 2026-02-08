@@ -1,11 +1,6 @@
-//! Security Database Module
-//! Database operations for security monitoring
-
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-// IP access logs
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpAccessLog {
     pub id: String,
@@ -22,8 +17,6 @@ pub struct IpAccessLog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
 }
-
-// IP blacklist entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpBlacklistEntry {
     pub id: String,
@@ -34,8 +27,6 @@ pub struct IpBlacklistEntry {
     pub created_by: String,
     pub hit_count: i64,
 }
-
-// IP whitelist entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpWhitelistEntry {
     pub id: String,
@@ -43,8 +34,6 @@ pub struct IpWhitelistEntry {
     pub description: Option<String>,
     pub created_at: i64,
 }
-
-// IP statistics overview
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpStats {
     pub total_requests: u64,
@@ -54,8 +43,6 @@ pub struct IpStats {
     pub blacklist_count: u64,
     pub whitelist_count: u64,
 }
-
-// IP access ranking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpRanking {
     pub client_ip: String,
@@ -63,23 +50,15 @@ pub struct IpRanking {
     pub last_seen: i64,
     pub is_blocked: bool,
 }
-
-// Get security database path
 pub fn get_security_db_path() -> Result<PathBuf, String> {
     let data_dir = crate::modules::account::get_data_dir()?;
     Ok(data_dir.join("security.db"))
 }
-
-// Connect to database
 fn connect_db() -> Result<Connection, String> {
     let db_path = get_security_db_path()?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-
-    // Enable WAL mode for better concurrency
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| e.to_string())?;
-
-    // Set busy timeout
     conn.pragma_update(None, "busy_timeout", 5000)
         .map_err(|e| e.to_string())?;
 
@@ -88,12 +67,8 @@ fn connect_db() -> Result<Connection, String> {
 
     Ok(conn)
 }
-
-// Initialize security database
 pub fn init_db() -> Result<(), String> {
     let conn = connect_db()?;
-
-    // IP access logs table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS ip_access_logs (
             id TEXT PRIMARY KEY,
@@ -111,8 +86,6 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // IP blacklist table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS ip_blacklist (
             id TEXT PRIMARY KEY,
@@ -126,8 +99,6 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // IP whitelist table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS ip_whitelist (
             id TEXT PRIMARY KEY,
@@ -138,8 +109,6 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // Create indexes
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_ip_access_ip ON ip_access_logs (client_ip)",
         [],
@@ -163,18 +132,10 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // Migration: Add username column to ip_access_logs
     let _ = conn.execute("ALTER TABLE ip_access_logs ADD COLUMN username TEXT", []);
 
     Ok(())
 }
-
-// ============================================================================
-// IP access log operations
-// ============================================================================
-
-// Save IP access log
 pub fn save_ip_access_log(log: &IpAccessLog) -> Result<(), String> {
     let conn = connect_db()?;
 
@@ -200,8 +161,6 @@ pub fn save_ip_access_log(log: &IpAccessLog) -> Result<(), String> {
 
     Ok(())
 }
-
-// Get IP access logs (paginated)
 pub fn get_ip_access_logs(
     limit: usize,
     offset: usize,
@@ -276,8 +235,6 @@ pub fn get_ip_access_logs(
     }
     Ok(logs)
 }
-
-// Get IP statistics overview
 pub fn get_ip_stats() -> Result<IpStats, String> {
     let conn = connect_db()?;
 
@@ -318,8 +275,6 @@ pub fn get_ip_stats() -> Result<IpStats, String> {
         whitelist_count,
     })
 }
-
-// Get TOP N IP access ranking
 pub fn get_top_ips(limit: usize, hours: i64) -> Result<Vec<IpRanking>, String> {
     let conn = connect_db()?;
 
@@ -342,7 +297,7 @@ pub fn get_top_ips(limit: usize, hours: i64) -> Result<Vec<IpRanking>, String> {
                 client_ip: row.get(0)?,
                 request_count: row.get(1)?,
                 last_seen: row.get(2)?,
-                is_blocked: false, // Populate later
+                is_blocked: false,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -350,15 +305,12 @@ pub fn get_top_ips(limit: usize, hours: i64) -> Result<Vec<IpRanking>, String> {
     let mut rankings = Vec::new();
     for r in rankings_iter {
         let mut ranking = r.map_err(|e| e.to_string())?;
-        // Check if in blacklist
         ranking.is_blocked = is_ip_in_blacklist(&ranking.client_ip)?;
         rankings.push(ranking);
     }
 
     Ok(rankings)
 }
-
-// Clean up old IP access logs
 #[cfg(test)]
 pub fn cleanup_old_ip_logs(days: i64) -> Result<usize, String> {
     let conn = connect_db()?;
@@ -371,18 +323,10 @@ pub fn cleanup_old_ip_logs(days: i64) -> Result<usize, String> {
             [cutoff_timestamp],
         )
         .map_err(|e| e.to_string())?;
-
-    // VACUUM to reclaim space
     conn.execute("VACUUM", []).map_err(|e| e.to_string())?;
 
     Ok(deleted)
 }
-
-// ============================================================================
-// Blacklist operations
-// ============================================================================
-
-// Add IP to blacklist
 pub fn add_to_blacklist(
     ip_pattern: &str,
     reason: Option<&str>,
@@ -411,8 +355,6 @@ pub fn add_to_blacklist(
         hit_count: 0,
     })
 }
-
-// Remove from blacklist
 pub fn remove_from_blacklist(id: &str) -> Result<(), String> {
     let conn = connect_db()?;
 
@@ -421,8 +363,6 @@ pub fn remove_from_blacklist(id: &str) -> Result<(), String> {
 
     Ok(())
 }
-
-// Get blacklist list
 pub fn get_blacklist() -> Result<Vec<IpBlacklistEntry>, String> {
     let conn = connect_db()?;
 
@@ -454,24 +394,16 @@ pub fn get_blacklist() -> Result<Vec<IpBlacklistEntry>, String> {
     }
     Ok(entries)
 }
-
-// Check if IP is in blacklist
 pub fn is_ip_in_blacklist(ip: &str) -> Result<bool, String> {
     get_blacklist_entry_for_ip(ip).map(|entry| entry.is_some())
 }
-
-// Get blacklist entry for IP (if exists)
 pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, String> {
     let conn = connect_db()?;
     let now = chrono::Utc::now().timestamp();
-
-    // Clean up expired blacklist entries
     let _ = conn.execute(
         "DELETE FROM ip_blacklist WHERE expires_at IS NOT NULL AND expires_at < ?1",
         [now],
     );
-
-    // Exact match
     let entry_result = conn.query_row(
         "SELECT id, ip_pattern, reason, created_at, expires_at, created_by, hit_count
          FROM ip_blacklist WHERE ip_pattern = ?1",
@@ -490,20 +422,16 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
     );
 
     if let Ok(entry) = entry_result {
-        // Increment hit count
         let _ = conn.execute(
             "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE ip_pattern = ?1",
             [ip],
         );
         return Ok(Some(entry));
     }
-
-    // CIDR match
     let entries = get_blacklist()?;
     for entry in entries {
         if entry.ip_pattern.contains('/') {
             if cidr_match(ip, &entry.ip_pattern) {
-                // Increment hit count
                 let _ = conn.execute(
                     "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE id = ?1",
                     [&entry.id],
@@ -515,8 +443,6 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
 
     Ok(None)
 }
-
-// Simple CIDR match
 fn cidr_match(ip: &str, cidr: &str) -> bool {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {
@@ -529,14 +455,8 @@ fn cidr_match(ip: &str, cidr: &str) -> bool {
         Err(_) => return false,
     };
 
-    let ip_parts: Vec<u8> = ip
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    let net_parts: Vec<u8> = network
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let ip_parts: Vec<u8> = ip.split('.').filter_map(|s| s.parse().ok()).collect();
+    let net_parts: Vec<u8> = network.split('.').filter_map(|s| s.parse().ok()).collect();
 
     if ip_parts.len() != 4 || net_parts.len() != 4 {
         return false;
@@ -553,13 +473,10 @@ fn cidr_match(ip: &str, cidr: &str) -> bool {
 
     (ip_u32 & mask) == (net_u32 & mask)
 }
-
-// ============================================================================
-// Whitelist operations
-// ============================================================================
-
-// Add IP to whitelist
-pub fn add_to_whitelist(ip_pattern: &str, description: Option<&str>) -> Result<IpWhitelistEntry, String> {
+pub fn add_to_whitelist(
+    ip_pattern: &str,
+    description: Option<&str>,
+) -> Result<IpWhitelistEntry, String> {
     let conn = connect_db()?;
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -579,8 +496,6 @@ pub fn add_to_whitelist(ip_pattern: &str, description: Option<&str>) -> Result<I
         created_at: now,
     })
 }
-
-// Remove from whitelist
 pub fn remove_from_whitelist(id: &str) -> Result<(), String> {
     let conn = connect_db()?;
 
@@ -589,8 +504,6 @@ pub fn remove_from_whitelist(id: &str) -> Result<(), String> {
 
     Ok(())
 }
-
-// Get whitelist list
 pub fn get_whitelist() -> Result<Vec<IpWhitelistEntry>, String> {
     let conn = connect_db()?;
 
@@ -619,12 +532,8 @@ pub fn get_whitelist() -> Result<Vec<IpWhitelistEntry>, String> {
     }
     Ok(entries)
 }
-
-// Check if IP is in whitelist
 pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
     let conn = connect_db()?;
-
-    // Exact match
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM ip_whitelist WHERE ip_pattern = ?1",
@@ -636,8 +545,6 @@ pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
     if count > 0 {
         return Ok(true);
     }
-
-    // CIDR match
     let entries = get_whitelist()?;
     for entry in entries {
         if entry.ip_pattern.contains('/') {
@@ -649,8 +556,6 @@ pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
 
     Ok(false)
 }
-
-// Clear all IP access logs
 pub fn clear_ip_access_logs() -> Result<(), String> {
     let conn = connect_db()?;
     conn.execute("DELETE FROM ip_access_logs", [])

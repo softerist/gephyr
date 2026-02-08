@@ -1,23 +1,12 @@
 use crate::proxy::TokenManager;
-use axum::{
-    extract::DefaultBodyLimit,
-    routing::get,
-    Router,
-};
+use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
-
-// Global pending account reload queue
-// When update_account_quota updates protected_models, add account ID to this queue
-// TokenManager checks and processes these accounts during get_token
 static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
-
-// Global pending account deletion queue 
-// When an account is deleted, add account ID to this queue; TokenManager will check and clean the memory cache during get_token
 static PENDING_DELETE_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
 
 fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
@@ -27,8 +16,6 @@ fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> 
 fn get_pending_delete_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
     PENDING_DELETE_ACCOUNTS.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
 }
-
-// Trigger account reload signal (for update_account_quota)
 pub fn trigger_account_reload(account_id: &str) {
     if let Ok(mut pending) = get_pending_reload_accounts().write() {
         pending.insert(account_id.to_string());
@@ -38,19 +25,12 @@ pub fn trigger_account_reload(account_id: &str) {
         );
     }
 }
-
-// Trigger account deletion signal 
 pub fn trigger_account_delete(account_id: &str) {
     if let Ok(mut pending) = get_pending_delete_accounts().write() {
         pending.insert(account_id.to_string());
-        tracing::debug!(
-            "[Proxy] Queued account {} for cache removal",
-            account_id
-        );
+        tracing::debug!("[Proxy] Queued account {} for cache removal", account_id);
     }
 }
-
-// Get and clear the list of pending reload accounts (for TokenManager)
 pub fn take_pending_reload_accounts() -> Vec<String> {
     if let Ok(mut pending) = get_pending_reload_accounts().write() {
         let accounts: Vec<String> = pending.drain().collect();
@@ -65,8 +45,6 @@ pub fn take_pending_reload_accounts() -> Vec<String> {
         Vec::new()
     }
 }
-
-// Get and clear the list of pending delete accounts 
 pub fn take_pending_delete_accounts() -> Vec<String> {
     if let Ok(mut pending) = get_pending_delete_accounts().write() {
         let accounts: Vec<String> = pending.drain().collect();
@@ -82,11 +60,7 @@ pub fn take_pending_delete_accounts() -> Vec<String> {
     }
 }
 
-use crate::proxy::state::{
-    AppState, ConfigState, CoreServices, RuntimeState,
-};
-
-// Axum server instance
+use crate::proxy::state::{AppState, ConfigState, CoreServices, RuntimeState};
 #[derive(Clone)]
 pub struct AxumServer {
     pub is_running: Arc<RwLock<bool>>,
@@ -99,8 +73,6 @@ impl AxumServer {
         *r = running;
         tracing::info!("Proxy service running status updated to: {}", running);
     }
-
-    // Start Axum server
     #[allow(clippy::too_many_arguments)]
     pub async fn start(
         host: String,
@@ -117,15 +89,14 @@ impl AxumServer {
         debug_logging: crate::proxy::config::DebugLoggingConfig,
 
         integration: crate::modules::integration::SystemManager,
-        proxy_pool_config: crate::proxy::config::ProxyPoolConfig, // 
+        proxy_pool_config: crate::proxy::config::ProxyPoolConfig,
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
         let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
         let proxy_pool_state = Arc::new(tokio::sync::RwLock::new(proxy_pool_config));
-        let proxy_pool_manager = crate::proxy::proxy_pool::init_global_proxy_pool(proxy_pool_state.clone());
-    
-    // Start health check loop
-    proxy_pool_manager.clone().start_health_check_loop();
+        let proxy_pool_manager =
+            crate::proxy::proxy_pool::init_global_proxy_pool(proxy_pool_state.clone());
+        proxy_pool_manager.clone().start_health_check_loop();
         let security_state = Arc::new(RwLock::new(security_config));
         let zai_state = Arc::new(RwLock::new(zai_config));
         let provider_rr = Arc::new(AtomicUsize::new(0));
@@ -143,7 +114,6 @@ impl AxumServer {
                 Some(upstream_proxy.clone()),
                 Some(proxy_pool_manager.clone()),
             ));
-            // Initialize User-Agent override
             if user_agent_override.is_some() {
                 u.set_user_agent_override(user_agent_override).await;
             }
@@ -164,7 +134,7 @@ impl AxumServer {
             experimental: experimental_state.clone(),
             debug_logging: debug_logging_state.clone(),
             security: security_state.clone(),
-            request_timeout: 300, // 5 minutes timeout
+            request_timeout: 300,
         });
         let runtime_state = Arc::new(RuntimeState {
             thought_signature_map: thought_signature_map.clone(),
@@ -181,37 +151,36 @@ impl AxumServer {
             config: config_state.clone(),
             runtime: runtime_state.clone(),
         };
-
-        // Build routes
-        use crate::proxy::middleware::{
-            cors_layer, service_status_middleware,
-        };
-
-        // 1. Build main AI proxy routes (following auth_mode configuration)
+        use crate::proxy::middleware::{cors_layer, service_status_middleware};
         let proxy_routes = crate::proxy::routes::build_proxy_routes(state.clone());
-        // 2. Build Admin API (Mandatory authentication)
         let admin_routes = crate::proxy::routes::build_admin_routes(state.clone());
-
-        // 3. Integrate and apply global layers
-        // Read body size limit from environment variables, default 100MB
         let max_body_size: usize = std::env::var("ABV_MAX_BODY_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(100 * 1024 * 1024); // Default 100MB
-        tracing::info!("Request body size limit: {} MB", max_body_size / 1024 / 1024);
+            .unwrap_or(100 * 1024 * 1024);
+        tracing::info!(
+            "Request body size limit: {} MB",
+            max_body_size / 1024 / 1024
+        );
 
         let enable_admin_api = std::env::var("ABV_ENABLE_ADMIN_API")
             .ok()
-            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .map(|v| {
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
             .unwrap_or(false);
 
         let app = {
             let base = Router::new().merge(proxy_routes);
             let base = if enable_admin_api {
                 tracing::warn!("Admin API enabled at /api");
-                base
-                    .nest("/api", admin_routes)
-                    .route("/auth/callback", get(crate::proxy::admin::handle_oauth_callback))
+                base.nest("/api", admin_routes).route(
+                    "/auth/callback",
+                    get(crate::proxy::admin::handle_oauth_callback),
+                )
             } else {
                 tracing::info!(
                     "Admin API disabled (set ABV_ENABLE_ADMIN_API=true to expose /api routes)"
@@ -219,18 +188,14 @@ impl AxumServer {
                 base
             };
 
-            base
-                // Apply global monitoring and status layer (outer layer)
-                .layer(axum::middleware::from_fn_with_state(
-                    state.clone(),
-                    service_status_middleware,
-                ))
-                .layer(cors_layer())
-                .layer(DefaultBodyLimit::max(max_body_size)) // Relax body size limit
-                .with_state(state.clone())
+            base.layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                service_status_middleware,
+            ))
+            .layer(cors_layer())
+            .layer(DefaultBodyLimit::max(max_body_size))
+            .with_state(state.clone())
         };
-
-        // Bind address
         let addr = format!("{}:{}", host, port);
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
@@ -242,8 +207,6 @@ impl AxumServer {
             is_running: is_running_state,
             token_manager: token_manager.clone(),
         };
-
-        // Start server in a new task
         let handle = tokio::spawn(async move {
             use hyper::server::conn::http1;
             use hyper_util::rt::TokioIo;
@@ -253,15 +216,15 @@ impl AxumServer {
                 match listener.accept().await {
                     Ok((stream, remote_addr)) => {
                         let io = TokioIo::new(stream);
-
-                        // Inject ConnectInfo (for obtaining real IP)
-                        use tower::ServiceExt;
                         use hyper::body::Incoming;
-                        let app_with_info =
-                            app.clone().map_request(move |mut req: axum::http::Request<Incoming>| {
-                                req.extensions_mut().insert(axum::extract::ConnectInfo(remote_addr));
+                        use tower::ServiceExt;
+                        let app_with_info = app.clone().map_request(
+                            move |mut req: axum::http::Request<Incoming>| {
+                                req.extensions_mut()
+                                    .insert(axum::extract::ConnectInfo(remote_addr));
                                 req
-                            });
+                            },
+                        );
 
                         let service = TowerToHyperService::new(app_with_info);
 
@@ -285,8 +248,3 @@ impl AxumServer {
         Ok((server_instance, handle))
     }
 }
-
-// ===== API Handlers (Old code removed, taken over by src/proxy/handlers/*) =====
-
-// Health check handler
-

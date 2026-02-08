@@ -1,7 +1,7 @@
-use serde_json::Value;
-use tokio::fs;
-use std::path::PathBuf;
 use futures::StreamExt;
+use serde_json::Value;
+use std::path::PathBuf;
+use tokio::fs;
 
 use crate::proxy::config::DebugLoggingConfig;
 
@@ -62,8 +62,6 @@ pub async fn write_debug_payload(
 pub fn is_enabled(cfg: &DebugLoggingConfig) -> bool {
     cfg.enabled
 }
-
-// Parse SSE stream data, extracting thinking and body content
 fn parse_sse_stream(raw: &str) -> (String, String) {
     let mut thinking_parts: Vec<String> = Vec::new();
     let mut content_parts: Vec<String> = Vec::new();
@@ -73,31 +71,29 @@ fn parse_sse_stream(raw: &str) -> (String, String) {
         if !line.starts_with("data: ") {
             continue;
         }
-        let json_str = &line[6..]; // Remove "data: " prefix
+        let json_str = &line[6..];
         if json_str.is_empty() || json_str == "[DONE]" {
             continue;
         }
-
-        // Try to parse JSON
         if let Ok(parsed) = serde_json::from_str::<Value>(json_str) {
-            // Gemini/v1internal format: response.candidates[0].content.parts[0]
-            if let Some(candidates) = parsed.get("response")
+            if let Some(candidates) = parsed
+                .get("response")
                 .and_then(|r| r.get("candidates"))
                 .and_then(|c| c.as_array())
             {
                 for candidate in candidates {
-                    if let Some(parts) = candidate.get("content")
+                    if let Some(parts) = candidate
+                        .get("content")
                         .and_then(|c| c.get("parts"))
                         .and_then(|p| p.as_array())
                     {
                         for part in parts {
-                            let text = part.get("text")
-                                .and_then(|t| t.as_str())
-                                .unwrap_or("");
-                            let is_thought = part.get("thought")
+                            let text = part.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                            let is_thought = part
+                                .get("thought")
                                 .and_then(|t| t.as_bool())
                                 .unwrap_or(false);
-                            
+
                             if !text.is_empty() {
                                 if is_thought {
                                     thinking_parts.push(text.to_string());
@@ -108,9 +104,7 @@ fn parse_sse_stream(raw: &str) -> (String, String) {
                         }
                     }
                 }
-            }
-            // OpenAI format compatibility: choices[0].delta.content
-            else if let Some(choices) = parsed.get("choices").and_then(|c| c.as_array()) {
+            } else if let Some(choices) = parsed.get("choices").and_then(|c| c.as_array()) {
                 for choice in choices {
                     if let Some(delta) = choice.get("delta") {
                         if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
@@ -128,7 +122,9 @@ fn parse_sse_stream(raw: &str) -> (String, String) {
 }
 
 pub fn wrap_reqwest_stream_with_debug(
-    stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>,
+    stream: std::pin::Pin<
+        Box<dyn futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>,
+    >,
     cfg: DebugLoggingConfig,
     trace_id: String,
     prefix: &'static str,
@@ -150,14 +146,12 @@ pub fn wrap_reqwest_stream_with_debug(
 
         let raw_text = String::from_utf8_lossy(&collected).to_string();
         let (thinking_content, response_content) = parse_sse_stream(&raw_text);
-        
+
         let mut payload = serde_json::json!({
             "kind": "upstream_response",
             "trace_id": trace_id,
             "meta": meta,
         });
-        
-        // Only add corresponding fields when there is content
         if !thinking_content.is_empty() {
             payload["thinking_content"] = serde_json::Value::String(thinking_content);
         }

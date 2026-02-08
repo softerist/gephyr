@@ -34,19 +34,13 @@ impl TokenManager {
         }
 
         let sid = session_id?;
-
-        // 1. Check if session is already bound to an account.
         let bound_id = self.session_accounts.get(sid).map(|v| v.clone())?;
-
-        // 2. Convert email -> account_id to check if the bound account is rate-limited.
         if let Some(bound_token) = tokens_snapshot.iter().find(|t| t.account_id == bound_id) {
-            let key = crate::proxy::token::lookup::account_id_by_email(&self.tokens, &bound_token.email)
-                .unwrap_or_else(|| bound_token.account_id.clone());
-
-            // Pass None for specific model wait time if not applicable.
+            let key =
+                crate::proxy::token::lookup::account_id_by_email(&self.tokens, &bound_token.email)
+                    .unwrap_or_else(|| bound_token.account_id.clone());
             let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
             if reset_sec > 0 {
-                // Unbind and switch account immediately; do not block.
                 tracing::debug!(
                     "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
                     bound_token.email,
@@ -87,8 +81,6 @@ impl TokenManager {
 
             return None;
         }
-
-        // Bound account no longer exists (possibly deleted); unbind it.
         tracing::debug!(
             "Sticky Session: Bound account not found for session {}, unbinding",
             sid
@@ -113,8 +105,6 @@ impl TokenManager {
         if rotate || quota_group == "image_gen" || !use_sticky_mode {
             return (None, None);
         }
-
-        // Try recent-account lock first.
         if let Some((account_id, last_time)) = last_used_account_id {
             if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
                 if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
@@ -150,8 +140,6 @@ impl TokenManager {
                 }
             }
         }
-
-        // If no lock candidate, use P2C selection.
         let non_limited = self
             .collect_non_limited_candidates(tokens_snapshot, normalized_target)
             .await;

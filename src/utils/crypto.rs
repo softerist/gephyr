@@ -2,7 +2,7 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use rand::RngCore;
 use sha2::Digest;
 
@@ -14,8 +14,6 @@ fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     nonce.copy_from_slice(&LEGACY_NONCE_SEED[..NONCE_LEN]);
     nonce
 }
-
-// Derive a local encryption key from the machine identifier.
 fn get_encryption_key() -> [u8; 32] {
     let device_id = machine_uid::get().unwrap_or_else(|_| "default".to_string());
     let mut key = [0u8; 32];
@@ -55,7 +53,6 @@ where
     D: Deserializer<'de>,
 {
     let raw = String::deserialize(deserializer)?;
-    // Backward compatible: if decrypt fails (plaintext / non-base64), treat as plaintext.
     Ok(decrypt_secret_or_plaintext(&raw).unwrap_or(raw))
 }
 
@@ -74,7 +71,8 @@ pub fn encrypt_string(password: &str) -> Result<String, String> {
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let ciphertext = cipher.encrypt(nonce, password.as_bytes())
+    let ciphertext = cipher
+        .encrypt(nonce, password.as_bytes())
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
     let mut packed = Vec::with_capacity(NONCE_LEN + ciphertext.len());
@@ -87,10 +85,9 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
     let key = get_encryption_key();
     let cipher = Aes256Gcm::new(&key.into());
 
-    let decoded = general_purpose::STANDARD.decode(encrypted)
+    let decoded = general_purpose::STANDARD
+        .decode(encrypted)
         .map_err(|e| format!("Base64 decode failed: {}", e))?;
-
-    // Preferred format: base64(nonce || ciphertext).
     if decoded.len() > NONCE_LEN {
         let (nonce_bytes, ciphertext) = decoded.split_at(NONCE_LEN);
         let nonce = Nonce::from_slice(nonce_bytes);
@@ -99,8 +96,6 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
                 .map_err(|e| format!("UTF-8 conversion failed: {}", e));
         }
     }
-
-    // Backward-compatible fallback for records encrypted with a fixed nonce.
     let legacy_nonce = legacy_nonce_bytes();
     let nonce = Nonce::from_slice(&legacy_nonce);
     let plaintext = cipher

@@ -1,4 +1,3 @@
-// OpenAI streaming conversion
 use bytes::{Bytes, BytesMut};
 use chrono::Utc;
 use futures::{Stream, StreamExt};
@@ -7,20 +6,16 @@ use serde_json::{json, Value};
 use std::pin::Pin;
 use tracing::debug;
 use uuid::Uuid;
-
-
-
-// Save thoughtSignature to session cache
 pub fn store_thought_signature(sig: &str, session_id: &str, message_count: usize) {
     if sig.is_empty() {
         return;
     }
+    crate::proxy::SignatureCache::global().cache_session_signature(
+        session_id,
+        sig.to_string(),
+        message_count,
+    );
 
-
-
-    // 2. [CRITICAL] Store in Session isolated cache (align with Claude protocol)
-    crate::proxy::SignatureCache::global().cache_session_signature(session_id, sig.to_string(), message_count);
-    
     tracing::debug!(
         "[ThoughtSig] Storing Session signature (sid: {}, len: {}, msg_count: {})",
         session_id,
@@ -28,10 +23,6 @@ pub fn store_thought_signature(sig: &str, session_id: &str, message_count: usize
         message_count
     );
 }
-
-
-
-// Extract and convert Gemini usageMetadata to OpenAI usage format
 fn extract_usage_metadata(u: &Value) -> Option<super::models::OpenAIUsage> {
     use super::models::{OpenAIUsage, PromptTokensDetails};
 
@@ -130,9 +121,6 @@ pub fn create_openai_sse_stream(
                                                                     emitted_tool_calls.insert(call_key);
                                                                     let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                                                                     let mut args = func_call.get("args").unwrap_or(&json!({})).clone();
-                                                                    
-                                                                    // Normalize shell tool parameter names
-                                                                    // Gemini might use cmd/code/script as alternative parameter names, unified to command
                                                                     if name == "shell" || name == "bash" || name == "local_shell" {
                                                                         if let Some(obj) = args.as_object_mut() {
                                                                             if !obj.contains_key("command") {
@@ -146,7 +134,7 @@ pub fn create_openai_sse_stream(
                                                                             }
                                                                         }
                                                                     }
-                                                                    
+
                                                                     let args_str = serde_json::to_string(&args).unwrap_or_default();
                                                                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
                                                                     use std::hash::{Hash, Hasher};
@@ -212,9 +200,6 @@ pub fn create_openai_sse_stream(
                                                         "RECITATION" => "content_filter",
                                                         _ => f,
                                                     });
-
-                                                    // If tool calls were emitted, force set to tool_calls
-                                                     // Resolve issue where OpenAI client thinks conversation ended when Gemini returns STOP but has tool calls
                                                     let finish_reason = if !emitted_tool_calls.is_empty() && gemini_finish_reason.is_some() {
                                                         Some("tool_calls")
                                                     } else {
@@ -300,10 +285,12 @@ pub fn create_legacy_sse_stream(
     let mut buffer = BytesMut::new();
     let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
-    let random_str: String = (0..28).map(|_| {
-        let idx = rng.gen_range(0..charset.len());
-        charset.chars().nth(idx).unwrap()
-    }).collect();
+    let random_str: String = (0..28)
+        .map(|_| {
+            let idx = rng.gen_range(0..charset.len());
+            charset.chars().nth(idx).unwrap()
+        })
+        .collect();
     let stream_id = format!("cmpl-{}", random_str);
     let created_ts = Utc::now().timestamp();
 
@@ -398,10 +385,12 @@ pub fn create_codex_sse_stream(
     let mut buffer = BytesMut::new();
     let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
-    let random_str: String = (0..24).map(|_| {
-        let idx = rng.gen_range(0..charset.len());
-        charset.chars().nth(idx).unwrap()
-    }).collect();
+    let random_str: String = (0..24)
+        .map(|_| {
+            let idx = rng.gen_range(0..charset.len());
+            charset.chars().nth(idx).unwrap()
+        })
+        .collect();
     let response_id = format!("resp-{}", random_str);
 
     let stream = async_stream::stream! {
@@ -443,7 +432,6 @@ pub fn create_codex_sse_stream(
                                                             let call_key = serde_json::to_string(func_call).unwrap_or_default();
                                                             if !emitted_tool_calls.contains(&call_key) {
                                                                 emitted_tool_calls.insert(call_key);
-                                                                // (Codex tool call mapping logic omitted for brevity, keeping it simple but valid)
                                                             }
                                                         }
                                                     }

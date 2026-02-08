@@ -3,7 +3,6 @@ use crate::proxy::mappers::claude::models::ClaudeRequest;
 
 #[test]
 fn test_claude_request_deserialization_leak() {
-    // Simulate a request containing cache_control: null
     let incoming_json = json!({
         "model": "claude-sonnet-4-5",
         "messages": [
@@ -22,8 +21,6 @@ fn test_claude_request_deserialization_leak() {
     });
 
     let request: ClaudeRequest = serde_json::from_value(incoming_json).expect("Deserialization failed");
-    
-    // Check the deserialized value
     if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) = &request.messages[0].content {
         if let crate::proxy::mappers::claude::models::ContentBlock::Thinking { cache_control, .. } = &blocks[0] {
             println!("Debug: cache_control after deserialization: {:?}", cache_control);

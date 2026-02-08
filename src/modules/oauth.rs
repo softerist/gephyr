@@ -1,15 +1,6 @@
-use serde::{Deserialize, Serialize};
 use base64::Engine as _;
+use serde::{Deserialize, Serialize};
 use sha2::Digest;
-
-// Google OAuth configuration
-//
-// IMPORTANT: Do not hardcode OAuth credentials in the repository.
-// Provide them via environment variables.
-//
-// Supported env vars (first match wins):
-// - Client ID:     GEPHYR_GOOGLE_OAUTH_CLIENT_ID, ABV_GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_ID
-// - Client secret: GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET, ABV_GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_CLIENT_SECRET
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 
@@ -55,7 +46,6 @@ fn client_secret_optional() -> Option<String> {
 }
 
 pub fn generate_pkce_verifier() -> String {
-    // RFC 7636: 43..128 chars. 32 random bytes -> base64url(no pad) => 43 chars.
     let mut bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -86,16 +76,12 @@ pub struct UserInfo {
 }
 
 impl UserInfo {
-    // Get best display name
     pub fn get_display_name(&self) -> Option<String> {
-        // Prefer name
         if let Some(name) = &self.name {
             if !name.trim().is_empty() {
                 return Some(name.clone());
             }
         }
-        
-        // If name is empty, combine given_name and family_name
         match (&self.given_name, &self.family_name) {
             (Some(given), Some(family)) => Some(format!("{} {}", given, family)),
             (Some(given), None) => Some(given.clone()),
@@ -104,10 +90,11 @@ impl UserInfo {
         }
     }
 }
-
-
-// Generate OAuth authorization URL
-pub fn get_auth_url(redirect_uri: &str, state: &str, code_challenge: &str) -> Result<String, String> {
+pub fn get_auth_url(
+    redirect_uri: &str,
+    state: &str,
+    code_challenge: &str,
+) -> Result<String, String> {
     let cid = client_id()?;
 
     let params = vec![
@@ -123,13 +110,15 @@ pub fn get_auth_url(redirect_uri: &str, state: &str, code_challenge: &str) -> Re
         ("code_challenge_method", "S256"),
     ];
 
-    let url = url::Url::parse_with_params(AUTH_URL, &params).map_err(|e| format!("Invalid Auth URL: {}", e))?;
+    let url = url::Url::parse_with_params(AUTH_URL, &params)
+        .map_err(|e| format!("Invalid Auth URL: {}", e))?;
     Ok(url.to_string())
 }
-
-// Exchange authorization code for token
-pub async fn exchange_code(code: &str, redirect_uri: &str, code_verifier: &str) -> Result<TokenResponse, String> {
-    //  For login actions, no account_id is present yet; use the global pool ladder logic
+pub async fn exchange_code(
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+) -> Result<TokenResponse, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(None, 60).await
     } else {
@@ -138,8 +127,6 @@ pub async fn exchange_code(code: &str, redirect_uri: &str, code_verifier: &str) 
 
     let cid = client_id()?;
     let secret = client_secret_optional();
-
-    // Use PKCE always. Include client_secret only when provided.
     let mut params: Vec<(&str, String)> = vec![
         ("client_id", cid),
         ("code", code.to_string()),
@@ -165,47 +152,46 @@ pub async fn exchange_code(code: &str, redirect_uri: &str, code_verifier: &str) 
         })?;
 
     if response.status().is_success() {
-        let token_res = response.json::<TokenResponse>()
+        let token_res = response
+            .json::<TokenResponse>()
             .await
             .map_err(|e| format!("Token parsing failed: {}", e))?;
-        
-        // Add detailed logs
         crate::modules::logger::log_info(&format!(
             "Token exchange successful! access_token: {}..., refresh_token: {}",
             &token_res.access_token.chars().take(20).collect::<String>(),
-            if token_res.refresh_token.is_some() { "✓" } else { "✗ Missing" }
+            if token_res.refresh_token.is_some() {
+                "✓"
+            } else {
+                "✗ Missing"
+            }
         ));
-        
-        // Log warning if refresh_token is missing
         if token_res.refresh_token.is_none() {
             crate::modules::logger::log_warn(
                 "Warning: Google did not return a refresh_token. Potential reasons:\n\
                  1. User has previously authorized this application\n\
                  2. Need to revoke access in Google Cloud Console and retry\n\
-                 3. OAuth parameter configuration issue"
+                 3. OAuth parameter configuration issue",
             );
         }
-        
+
         Ok(token_res)
     } else {
         let error_text = response.text().await.unwrap_or_default();
         Err(format!("Token exchange failed: {}", error_text))
     }
 }
-
-// Refresh access_token using refresh_token
-pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>) -> Result<TokenResponse, String> {
-    //  Use the corresponding proxy based on the account_id
+pub async fn refresh_access_token(
+    refresh_token: &str,
+    account_id: Option<&str>,
+) -> Result<TokenResponse, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 60).await
     } else {
         crate::utils::http::get_long_client()
     };
-    
+
     let cid = client_id()?;
     let secret = client_secret_optional();
-
-    // Some OAuth clients require client_secret for refresh, some do not. We include it when provided.
     let mut params: Vec<(&str, String)> = vec![
         ("client_id", cid),
         ("refresh_token", refresh_token.to_string()),
@@ -214,14 +200,12 @@ pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>)
     if let Some(s) = secret {
         params.push(("client_secret", s));
     }
-
-    //  Provide more detailed logs to help diagnose proxy issues in Docker environments
     if let Some(id) = account_id {
         crate::modules::logger::log_info(&format!("Refreshing Token for account: {}...", id));
     } else {
         crate::modules::logger::log_info("Refreshing Token for generic request (no account_id)...");
     }
-    
+
     let response = client
         .post(TOKEN_URL)
         .form(&params)
@@ -240,23 +224,27 @@ pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>)
             .json::<TokenResponse>()
             .await
             .map_err(|e| format!("Refresh data parsing failed: {}", e))?;
-        
-        crate::modules::logger::log_info(&format!("Token refreshed successfully! Expires in: {} seconds", token_data.expires_in));
+
+        crate::modules::logger::log_info(&format!(
+            "Token refreshed successfully! Expires in: {} seconds",
+            token_data.expires_in
+        ));
         Ok(token_data)
     } else {
         let error_text = response.text().await.unwrap_or_default();
         Err(format!("Refresh failed: {}", error_text))
     }
 }
-
-// Get user info
-pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Result<UserInfo, String> {
+pub async fn get_user_info(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 15).await
     } else {
         crate::utils::http::get_client()
     };
-    
+
     let response = client
         .get(USERINFO_URL)
         .bearer_auth(access_token)
@@ -265,7 +253,8 @@ pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Resu
         .map_err(|e| format!("User info request failed: {}", e))?;
 
     if response.status().is_success() {
-        response.json::<UserInfo>()
+        response
+            .json::<UserInfo>()
             .await
             .map_err(|e| format!("User info parsing failed: {}", e))
     } else {
@@ -273,32 +262,26 @@ pub async fn get_user_info(access_token: &str, account_id: Option<&str>) -> Resu
         Err(format!("Failed to get user info: {}", error_text))
     }
 }
-
-// Check and refresh Token if needed
-// Returns the latest access_token
 pub async fn ensure_fresh_token(
     current_token: &crate::models::TokenData,
     account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
     let now = chrono::Local::now().timestamp();
-    
-    // If no expiry or more than 5 minutes valid, return direct
     if current_token.expiry_timestamp > now + 300 {
         return Ok(current_token.clone());
     }
-    
-    // Need to refresh
-    crate::modules::logger::log_info(&format!("Token expiring soon for account {:?}, refreshing...", account_id));
+    crate::modules::logger::log_info(&format!(
+        "Token expiring soon for account {:?}, refreshing...",
+        account_id
+    ));
     let response = refresh_access_token(&current_token.refresh_token, account_id).await?;
-    
-    // Construct new TokenData
     Ok(crate::models::TokenData::new(
         response.access_token,
-        current_token.refresh_token.clone(), // refresh_token may not be returned on refresh
+        current_token.refresh_token.clone(),
         response.expires_in,
         current_token.email.clone(),
-        current_token.project_id.clone(), // Keep original project_id
-        None,  // session_id will be generated in token_manager
+        current_token.project_id.clone(),
+        None,
     ))
 }
 
@@ -308,13 +291,16 @@ mod tests {
 
     #[test]
     fn test_get_auth_url_contains_state() {
-        std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", "test-client.apps.googleusercontent.com");
+        std::env::set_var(
+            "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "test-client.apps.googleusercontent.com",
+        );
         let redirect_uri = "http://localhost:8080/callback";
         let state = "test-state-123456";
         let verifier = generate_pkce_verifier();
         let challenge = pkce_challenge_s256(&verifier);
         let url = get_auth_url(redirect_uri, state, &challenge).expect("auth url");
-        
+
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
         assert!(url.contains("response_type=code"));

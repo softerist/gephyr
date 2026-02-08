@@ -17,9 +17,7 @@ impl SystemIntegration for HeadlessIntegration {
         Ok(())
     }
 
-    fn refresh_runtime_state(&self) {
-        // No-op in headless mode.
-    }
+    fn refresh_runtime_state(&self) {}
 
     fn show_notification(&self, title: &str, body: &str) {
         crate::modules::logger::log_info(&format!("[Notification] {}: {}", title, body));

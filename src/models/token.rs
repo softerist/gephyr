@@ -16,11 +16,10 @@ pub struct TokenData {
     pub expiry_timestamp: i64,
     pub token_type: String,
     pub email: Option<String>,
-    // Google Cloud Project ID, used for API request identification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,  //  Antigravity sessionId
+    pub session_id: Option<String>,
 }
 
 impl TokenData {

@@ -1,28 +1,25 @@
-// OpenAI protocol response transformation module
 use super::models::*;
 use serde_json::Value;
 
-pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&str>, message_count: usize) -> OpenAIResponse {
-    // Unpack response field
+pub fn transform_openai_response(
+    gemini_response: &Value,
+    session_id: Option<&str>,
+    message_count: usize,
+) -> OpenAIResponse {
     let raw = gemini_response.get("response").unwrap_or(gemini_response);
 
     let mut choices = Vec::new();
-
-    // Support multiple candidate results (n > 1)
     if let Some(candidates) = raw.get("candidates").and_then(|c| c.as_array()) {
         for (idx, candidate) in candidates.iter().enumerate() {
             let mut content_out = String::new();
             let mut thought_out = String::new();
             let mut tool_calls = Vec::new();
-
-            // Extract content and tool_calls
             if let Some(parts) = candidate
                 .get("content")
                 .and_then(|c| c.get("parts"))
                 .and_then(|p| p.as_array())
             {
                 for part in parts {
-                    // Capture thoughtSignature (required for Gemini 3 tool calls)
                     if let Some(sig) = part
                         .get("thoughtSignature")
                         .or(part.get("thought_signature"))
@@ -32,25 +29,17 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
                             super::streaming::store_thought_signature(sig, sid, message_count);
                         }
                     }
-
-                    // Check if this part is thinking content (thought: true)
                     let is_thought_part = part
                         .get("thought")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-
-                    // Text part
                     if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                         if is_thought_part {
-                            // When thought: true, text is thinking content
                             thought_out.push_str(text);
                         } else {
-                            // Normal content
                             content_out.push_str(text);
                         }
                     }
-
-                    // Tool call part
                     if let Some(fc) = part.get("functionCall") {
                         let name = fc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                         let args = fc
@@ -72,8 +61,6 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
                             },
                         });
                     }
-
-                    // Image processing (in case image is directly returned in response)
                     if let Some(img) = part.get("inlineData") {
                         let mime_type = img
                             .get("mimeType")
@@ -87,12 +74,8 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
                     }
                 }
             }
-
-            // Extract and process grounding metadata for the candidate result
             if let Some(grounding) = candidate.get("groundingMetadata") {
                 let mut grounding_text = String::new();
-
-                // 1. Process search queries
                 if let Some(queries) = grounding.get("webSearchQueries").and_then(|q| q.as_array())
                 {
                     let query_list: Vec<&str> = queries.iter().filter_map(|v| v.as_str()).collect();
@@ -101,8 +84,6 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
                         grounding_text.push_str(&query_list.join(", "));
                     }
                 }
-
-                // 2. Process source links (Chunks)
                 if let Some(chunks) = grounding.get("groundingChunks").and_then(|c| c.as_array()) {
                     let mut links = Vec::new();
                     for (i, chunk) in chunks.iter().enumerate() {
@@ -126,8 +107,6 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
                     content_out.push_str(&grounding_text);
                 }
             }
-
-            // Extract finish_reason for the candidate result
             let finish_reason = candidate
                 .get("finishReason")
                 .and_then(|f| f.as_str())
@@ -166,8 +145,6 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
             });
         }
     }
-
-    // Extract and map usage metadata from Gemini to OpenAI format
     let usage = raw.get("usageMetadata").and_then(|u| {
         let prompt_tokens = u
             .get("promptTokenCount")

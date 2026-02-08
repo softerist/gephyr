@@ -1,5 +1,3 @@
-// OpenAI Data Models
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -13,7 +11,7 @@ pub struct OpenAIRequest {
     #[serde(default)]
     pub stream: bool,
     #[serde(default)]
-    pub n: Option<u32>, //  Support for multiple candidate results
+    pub n: Option<u32>,
     #[serde(rename = "max_tokens")]
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
@@ -27,26 +25,21 @@ pub struct OpenAIRequest {
     pub tool_choice: Option<Value>,
     #[serde(rename = "parallel_tool_calls")]
     pub parallel_tool_calls: Option<bool>,
-    // Codex proprietary fields
     pub instructions: Option<String>,
     pub input: Option<Value>,
-    //  Image generation parameters (for Chat API compatibility)
     #[serde(default)]
     pub size: Option<String>,
     #[serde(default)]
     pub quality: Option<String>,
     #[serde(default, rename = "personGeneration")]
     pub person_generation: Option<String>,
-    //  Thinking/Extended Thinking support (compatible with Anthropic/Claude protocols)
     #[serde(default)]
     pub thinking: Option<ThinkingConfig>,
 }
-
-// Thinking configuration (compatible with Anthropic and OpenAI extension protocols)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingConfig {
     #[serde(rename = "type")]
-    pub thinking_type: Option<String>, // "enabled" or "disabled"
+    pub thinking_type: Option<String>,
     #[serde(rename = "budget_tokens")]
     pub budget_tokens: Option<u32>,
 }

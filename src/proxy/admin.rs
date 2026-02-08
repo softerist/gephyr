@@ -26,7 +26,6 @@ pub(crate) struct AccountResponse {
     proxy_disabled_reason: Option<String>,
     proxy_disabled_at: Option<i64>,
     protected_models: Vec<String>,
-    // 403 validation blocking status
     validation_blocked: bool,
     validation_blocked_until: Option<i64>,
     validation_blocked_reason: Option<String>,
@@ -94,12 +93,6 @@ fn to_account_response(
     }
 }
 
-// ============================================================================
-// Integrated Admin Handlers
-// ============================================================================
-
-// [Integration Cleanup] Old model definitions and mappers moved up
-
 pub(crate) async fn admin_list_accounts(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
@@ -158,8 +151,6 @@ pub(crate) async fn admin_list_accounts(
         accounts: account_responses,
     }))
 }
-
-// Export accounts with refresh tokens (for backup/migration)
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ExportAccountsRequest {
@@ -246,7 +237,8 @@ pub(crate) async fn admin_add_account(
     Json(payload): Json<AddAccountRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
-        .core.account_service
+        .core
+        .account_service
         .add_account(&payload.refresh_token)
         .await
         .map_err(|e| {
@@ -255,8 +247,6 @@ pub(crate) async fn admin_add_account(
                 Json(ErrorResponse { error: e }),
             )
         })?;
-
-    // Reload TokenManager immediately after account change
     if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
             "[API] Failed to reload accounts after adding: {}",
@@ -278,7 +268,8 @@ pub(crate) async fn admin_delete_account(
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
-        .core.account_service
+        .core
+        .account_service
         .delete_account(&account_id)
         .map_err(|e| {
             (
@@ -286,8 +277,6 @@ pub(crate) async fn admin_delete_account(
                 Json(ErrorResponse { error: e }),
             )
         })?;
-
-    // Reload TokenManager immediately after account change
     if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
             "[API] Failed to reload accounts after deletion: {}",
@@ -338,8 +327,6 @@ pub(crate) async fn admin_switch_account(
     match result {
         Ok(()) => {
             logger::log_info(&format!("[API] Account switch successful: {}", account_id));
-
-            // Sync memory status immediately after account switch
             state.core.token_manager.clear_all_sessions();
             if let Err(e) = state.core.token_manager.load_accounts().await {
                 logger::log_error(&format!(
@@ -360,8 +347,8 @@ pub(crate) async fn admin_switch_account(
     }
 }
 
-pub(crate) async fn admin_refresh_all_quotas() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
-{
+pub(crate) async fn admin_refresh_all_quotas(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     logger::log_info("[API] Starting refresh of all account quotas");
     let stats = account::refresh_all_quotas_logic().await.map_err(|e| {
         (
@@ -373,13 +360,12 @@ pub(crate) async fn admin_refresh_all_quotas() -> Result<impl IntoResponse, (Sta
     Ok(Json(stats))
 }
 
-// --- OAuth Handlers ---
-
 pub(crate) async fn admin_prepare_oauth_url(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let url = state
-        .core.account_service
+        .core
+        .account_service
         .prepare_oauth_url()
         .await
         .map_err(|e| {
@@ -395,7 +381,8 @@ pub(crate) async fn admin_start_oauth_login(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
-        .core.account_service
+        .core
+        .account_service
         .start_oauth_login()
         .await
         .map_err(|e| {
@@ -417,7 +404,8 @@ pub(crate) async fn admin_complete_oauth_login(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
-        .core.account_service
+        .core
+        .account_service
         .complete_oauth_login()
         .await
         .map_err(|e| {
@@ -453,7 +441,8 @@ pub(crate) async fn admin_submit_oauth_code(
     Json(payload): Json<SubmitCodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
-        .core.account_service
+        .core
+        .account_service
         .submit_oauth_code(payload.code, payload.state)
         .await
         .map_err(|e| {
@@ -502,7 +491,8 @@ pub(crate) struct LogsCountRequest {
     errors_only: bool,
 }
 
-pub(crate) async fn admin_get_config() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+pub(crate) async fn admin_get_config(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let cfg = config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -523,47 +513,28 @@ pub(crate) async fn admin_save_config(
     Json(payload): Json<SaveConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let new_config = payload.config;
-    // 1. Persistence
     config::save_app_config(&new_config).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
         )
     })?;
-
-    // 2. Hot-update memory state
-    // Reuse the internal component update methods directly here.
-    // Note: AppState already holds Arc<RwLock> handles (or direct refs) to components.
-
-    // We need a way to access the current AxumServer instance for hot updates.
-    // Or directly operate on various states in AppState.
-    // In this refactoring, each state is already in AppState.
-
-    // Update model mapping
     {
         let mut mapping = state.config.custom_mapping.write().await;
         *mapping = new_config.clone().proxy.custom_mapping;
     }
-
-    // Update upstream proxy
     {
         let mut proxy = state.config.upstream_proxy.write().await;
         *proxy = new_config.clone().proxy.upstream_proxy;
     }
-
-    // Update security policy
     {
         let mut security = state.config.security.write().await;
         *security = crate::proxy::ProxySecurityConfig::from_proxy_config(&new_config.proxy);
     }
-
-    // Update Z.ai configuration
     {
         let mut zai = state.config.zai.write().await;
         *zai = new_config.clone().proxy.zai;
     }
-
-    // Update experimental configuration
     {
         let mut exp = state.config.experimental.write().await;
         *exp = new_config.clone().proxy.experimental;
@@ -571,24 +542,18 @@ pub(crate) async fn admin_save_config(
 
     Ok(StatusCode::OK)
 }
-
-// Get proxy pool config
 pub(crate) async fn admin_get_proxy_pool_config(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = state.runtime.proxy_pool_state.read().await;
     Ok(Json(config.clone()))
 }
-
-// Get all account proxy bindings
 pub(crate) async fn admin_get_all_account_bindings(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let bindings = state.runtime.proxy_pool_manager.get_all_bindings_snapshot();
     Ok(Json(bindings))
 }
-
-// Bind account to proxy
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BindAccountProxyRequest {
@@ -600,14 +565,19 @@ pub(crate) async fn admin_bind_account_proxy(
     State(state): State<AppState>,
     Json(payload): Json<BindAccountProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.runtime.proxy_pool_manager
+    state
+        .runtime
+        .proxy_pool_manager
         .bind_account_to_proxy(payload.account_id, payload.proxy_id)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(StatusCode::OK)
 }
-
-// Unbind account from proxy
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct UnbindAccountProxyRequest {
@@ -618,31 +588,37 @@ pub(crate) async fn admin_unbind_account_proxy(
     State(state): State<AppState>,
     Json(payload): Json<UnbindAccountProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.runtime.proxy_pool_manager.unbind_account_proxy(payload.account_id).await;
+    state
+        .runtime
+        .proxy_pool_manager
+        .unbind_account_proxy(payload.account_id)
+        .await;
     Ok(StatusCode::OK)
 }
-
-// Get account proxy binding
 pub(crate) async fn admin_get_account_proxy_binding(
     State(state): State<AppState>,
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let binding = state.runtime.proxy_pool_manager.get_account_binding(&account_id);
+    let binding = state
+        .runtime
+        .proxy_pool_manager
+        .get_account_binding(&account_id);
     Ok(Json(binding))
 }
-
-// Trigger proxy pool health check
 pub(crate) async fn admin_trigger_proxy_health_check(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.runtime.proxy_pool_manager.health_check().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    // Return updated proxy pool configuration (including health status)
+    state
+        .runtime
+        .proxy_pool_manager
+        .health_check()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     let config = state.runtime.proxy_pool_state.read().await;
     Ok(Json(serde_json::json!({
         "success": true,
@@ -654,7 +630,6 @@ pub(crate) async fn admin_trigger_proxy_health_check(
 pub(crate) async fn admin_get_proxy_status(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // In Headless/Axum mode, since AxumServer is running, it's typically "running"
     let active_accounts = state.core.token_manager.len();
 
     let is_running = { *state.runtime.is_running.read().await };
@@ -667,15 +642,15 @@ pub(crate) async fn admin_get_proxy_status(
 }
 
 pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
-    // 1. Persist configuration
     if let Ok(mut config) = crate::modules::config::load_app_config() {
         config.proxy.auto_start = true;
         let _ = crate::modules::config::save_app_config(&config);
     }
-
-    // 2. Ensure accounts are loaded (if first start)
     if let Err(e) = state.core.token_manager.load_accounts().await {
-        logger::log_error(&format!("[API] Failed to enable service and load accounts: {}", e));
+        logger::log_error(&format!(
+            "[API] Failed to enable service and load accounts: {}",
+            e
+        ));
     }
 
     let mut running = state.runtime.is_running.write().await;
@@ -685,7 +660,6 @@ pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> 
 }
 
 pub(crate) async fn admin_stop_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
-    // 1. Persist configuration
     if let Ok(mut config) = crate::modules::config::load_app_config() {
         config.proxy.auto_start = false;
         let _ = crate::modules::config::save_app_config(&config);
@@ -708,15 +682,10 @@ pub(crate) async fn admin_update_model_mapping(
     Json(payload): Json<UpdateMappingWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = payload.config;
-
-    // 1. Update memory state (Hot-reload)
     {
         let mut mapping = state.config.custom_mapping.write().await;
         *mapping = config.custom_mapping.clone();
     }
-
-    // 2. Persist to disk
-    // Load current config, update mapping, then save
     let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -742,13 +711,17 @@ pub(crate) async fn admin_generate_api_key() -> impl IntoResponse {
     Json(new_key)
 }
 
-pub(crate) async fn admin_clear_proxy_session_bindings(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn admin_clear_proxy_session_bindings(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     state.core.token_manager.clear_all_sessions();
     logger::log_info("[API] All session bindings cleared");
     StatusCode::OK
 }
 
-pub(crate) async fn admin_clear_all_rate_limits(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn admin_clear_all_rate_limits(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     state.core.token_manager.clear_all_rate_limits();
     logger::log_info("[API] All rate limit records cleared");
     StatusCode::OK
@@ -760,14 +733,19 @@ pub(crate) async fn admin_clear_rate_limit(
 ) -> impl IntoResponse {
     let cleared = state.core.token_manager.clear_rate_limit(&account_id);
     if cleared {
-        logger::log_info(&format!("[API] Rate limit record for account {} cleared", account_id));
+        logger::log_info(&format!(
+            "[API] Rate limit record for account {} cleared",
+            account_id
+        ));
         StatusCode::OK
     } else {
         StatusCode::NOT_FOUND
     }
 }
 
-pub(crate) async fn admin_get_preferred_account(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn admin_get_preferred_account(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let pref = state.core.token_manager.get_preferred_account().await;
     Json(pref)
 }
@@ -783,7 +761,8 @@ pub(crate) async fn admin_set_preferred_account(
     Json(payload): Json<SetPreferredAccountRequest>,
 ) -> impl IntoResponse {
     state
-        .core.token_manager
+        .core
+        .token_manager
         .set_preferred_account(payload.account_id)
         .await;
     StatusCode::OK
@@ -791,11 +770,8 @@ pub(crate) async fn admin_set_preferred_account(
 
 pub(crate) async fn admin_fetch_zai_models(
     Path(_id): Path<String>,
-    Json(payload): Json<serde_json::Value>, // Reuse parameters sent from the frontend
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // Simple implementation here; for more complex fetching logic, the zai module can be called
-    // Currently, frontend fetch_zai_models is essentially a utility function,
-    // we can fetch it via reqwest proxy on the backend.
     let zai_config = payload.get("zai").ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -813,8 +789,6 @@ pub(crate) async fn admin_fetch_zai_models(
         .get("base_url")
         .and_then(|v| v.as_str())
         .unwrap_or("https://api.z.ai");
-
-    // Attempt to get models from z.ai
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{}/v1/models", base_url))
@@ -838,8 +812,6 @@ pub(crate) async fn admin_fetch_zai_models(
             }),
         )
     })?;
-
-    // Extract model ID list
     let models = data
         .get("data")
         .and_then(|v| v.as_array())
@@ -864,8 +836,6 @@ pub(crate) async fn admin_set_proxy_monitor_enabled(
         .get("enabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-
-    // Only log and set when the state actually changes, to avoid the "reboot" illusion caused by repeated triggers
     if state.core.monitor.is_enabled() != enabled {
         state.core.monitor.set_enabled(enabled);
         logger::log_info(&format!("[API] Monitor status set to: {}", enabled));
@@ -985,37 +955,43 @@ pub(crate) async fn admin_get_data_dir_path() -> impl IntoResponse {
     }
 }
 
-// --- User Token Handlers ---
-
-pub(crate) async fn admin_list_user_tokens() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let tokens = crate::commands::user_token::list_user_tokens().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+pub(crate) async fn admin_list_user_tokens(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let tokens = crate::commands::user_token::list_user_tokens()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(Json(tokens))
 }
 
-pub(crate) async fn admin_get_user_token_summary() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let summary = crate::commands::user_token::get_user_token_summary().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+pub(crate) async fn admin_get_user_token_summary(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let summary = crate::commands::user_token::get_user_token_summary()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(Json(summary))
 }
 
 pub(crate) async fn admin_create_user_token(
     Json(payload): Json<crate::commands::user_token::CreateTokenRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let token = crate::commands::user_token::create_user_token(payload).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    let token = crate::commands::user_token::create_user_token(payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(Json(token))
 }
 
@@ -1029,24 +1005,28 @@ pub(crate) async fn admin_renew_user_token(
     Path(id): Path<String>,
     Json(payload): Json<RenewTokenRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::commands::user_token::renew_user_token(id, payload.expires_type).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    crate::commands::user_token::renew_user_token(id, payload.expires_type)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(StatusCode::OK)
 }
 
 pub(crate) async fn admin_delete_user_token(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::commands::user_token::delete_user_token(id).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    crate::commands::user_token::delete_user_token(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1054,17 +1034,19 @@ pub(crate) async fn admin_update_user_token(
     Path(id): Path<String>,
     Json(payload): Json<crate::commands::user_token::UpdateTokenRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::commands::user_token::update_user_token(id, payload).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    crate::commands::user_token::update_user_token(id, payload)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(StatusCode::OK)
 }
 
-pub(crate) async fn admin_should_check_updates() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
-{
+pub(crate) async fn admin_should_check_updates(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let settings = crate::modules::update_checker::load_update_settings().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1075,8 +1057,8 @@ pub(crate) async fn admin_should_check_updates() -> Result<impl IntoResponse, (S
     Ok(Json(should))
 }
 
-pub(crate) async fn admin_get_antigravity_path() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
-{
+pub(crate) async fn admin_get_antigravity_path(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let path = crate::commands::get_antigravity_path(Some(true))
         .await
         .map_err(|e| {
@@ -1088,8 +1070,8 @@ pub(crate) async fn admin_get_antigravity_path() -> Result<impl IntoResponse, (S
     Ok(Json(path))
 }
 
-pub(crate) async fn admin_get_antigravity_args() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)>
-{
+pub(crate) async fn admin_get_antigravity_args(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let args = crate::commands::get_antigravity_args().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1101,12 +1083,14 @@ pub(crate) async fn admin_get_antigravity_args() -> Result<impl IntoResponse, (S
 
 pub(crate) async fn admin_clear_antigravity_cache(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = crate::commands::clear_antigravity_cache().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    let res = crate::commands::clear_antigravity_cache()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(Json(res))
 }
 
@@ -1123,7 +1107,8 @@ pub(crate) async fn admin_get_antigravity_cache_paths(
     Ok(Json(res))
 }
 
-pub(crate) async fn admin_clear_log_cache() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+pub(crate) async fn admin_clear_log_cache(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::commands::clear_log_cache().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1132,8 +1117,6 @@ pub(crate) async fn admin_clear_log_cache() -> Result<impl IntoResponse, (Status
     })?;
     Ok(StatusCode::OK)
 }
-
-// Token Stats Handlers
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StatsPeriodQuery {
@@ -1270,10 +1253,7 @@ pub(crate) async fn admin_get_token_stats_by_model(
 
 pub(crate) async fn admin_get_token_stats_model_trend_hourly(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(|| {
-        token_stats::get_model_trend_hourly(24) // Default 24 hours
-    })
-    .await;
+    let res = tokio::task::spawn_blocking(|| token_stats::get_model_trend_hourly(24)).await;
 
     match res {
         Ok(Ok(stats)) => Ok(Json(stats)),
@@ -1292,10 +1272,7 @@ pub(crate) async fn admin_get_token_stats_model_trend_hourly(
 
 pub(crate) async fn admin_get_token_stats_model_trend_daily(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(|| {
-        token_stats::get_model_trend_daily(7) // Default 7 days
-    })
-    .await;
+    let res = tokio::task::spawn_blocking(|| token_stats::get_model_trend_daily(7)).await;
 
     match res {
         Ok(Ok(stats)) => Ok(Json(stats)),
@@ -1314,10 +1291,7 @@ pub(crate) async fn admin_get_token_stats_model_trend_daily(
 
 pub(crate) async fn admin_get_token_stats_account_trend_hourly(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(|| {
-        token_stats::get_account_trend_hourly(24) // Default 24 hours
-    })
-    .await;
+    let res = tokio::task::spawn_blocking(|| token_stats::get_account_trend_hourly(24)).await;
 
     match res {
         Ok(Ok(stats)) => Ok(Json(stats)),
@@ -1336,10 +1310,7 @@ pub(crate) async fn admin_get_token_stats_account_trend_hourly(
 
 pub(crate) async fn admin_get_token_stats_account_trend_daily(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res = tokio::task::spawn_blocking(|| {
-        token_stats::get_account_trend_daily(7) // Default 7 days
-    })
-    .await;
+    let res = tokio::task::spawn_blocking(|| token_stats::get_account_trend_daily(7)).await;
 
     match res {
         Ok(Ok(stats)) => Ok(Json(stats)),
@@ -1358,7 +1329,6 @@ pub(crate) async fn admin_get_token_stats_account_trend_daily(
 
 pub(crate) async fn admin_clear_token_stats() -> impl IntoResponse {
     let res = tokio::task::spawn_blocking(|| {
-        // Clear databases (brute force)
         if let Ok(path) = token_stats::get_db_path() {
             let _ = std::fs::remove_file(path);
         }
@@ -1379,7 +1349,6 @@ pub(crate) async fn admin_clear_token_stats() -> impl IntoResponse {
 }
 
 pub(crate) async fn admin_get_update_settings() -> impl IntoResponse {
-    // Load settings from true module
     match crate::modules::update_checker::load_update_settings() {
         Ok(s) => Json(serde_json::to_value(s).unwrap_or_default()),
         Err(_) => Json(serde_json::json!({
@@ -1390,7 +1359,8 @@ pub(crate) async fn admin_get_update_settings() -> impl IntoResponse {
     }
 }
 
-pub(crate) async fn admin_check_for_updates() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+pub(crate) async fn admin_check_for_updates(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let info = crate::modules::update_checker::check_for_updates()
         .await
         .map_err(|e| {
@@ -1413,7 +1383,9 @@ pub(crate) async fn admin_update_last_check_time(
     Ok(StatusCode::OK)
 }
 
-pub(crate) async fn admin_save_update_settings(Json(settings): Json<serde_json::Value>) -> impl IntoResponse {
+pub(crate) async fn admin_save_update_settings(
+    Json(settings): Json<serde_json::Value>,
+) -> impl IntoResponse {
     if let Ok(s) =
         serde_json::from_value::<crate::modules::update_checker::UpdateSettings>(settings)
     {
@@ -1423,8 +1395,6 @@ pub(crate) async fn admin_save_update_settings(Json(settings): Json<serde_json::
         StatusCode::BAD_REQUEST
     }
 }
-
-// [Integration Cleanup] Redundant imports removed
 
 #[derive(Deserialize)]
 pub(crate) struct BulkDeleteRequest {
@@ -1460,8 +1430,6 @@ pub(crate) async fn admin_reorder_accounts(
             Json(ErrorResponse { error: e }),
         )
     })?;
-
-    // Reload TokenManager immediately after order change
     if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
             "[API] Failed to reload accounts after reorder: {}",
@@ -1526,14 +1494,10 @@ pub(crate) async fn admin_toggle_proxy_status(
             Json(ErrorResponse { error: e }),
         )
     })?;
-
-    // Sync to the running proxy service
     let _ = state.core.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)
 }
-
-// --- Supplementary Account Handlers ---
 
 pub(crate) async fn admin_get_device_profiles(
     State(_state): State<AppState>,
@@ -1575,8 +1539,6 @@ pub(crate) struct BindDeviceProfileWrapper {
     #[serde(alias = "profile")]
     profile_wrapper: DeviceProfileApiWrapper,
 }
-
-// DeviceProfile wrapper for API, supports camelCase input
 #[derive(Deserialize)]
 pub(crate) struct DeviceProfileApiWrapper {
     #[serde(alias = "machineId")]
@@ -1605,17 +1567,16 @@ pub(crate) async fn admin_bind_device_profile_with_profile(
     Path(account_id): Path<String>,
     Json(payload): Json<BindDeviceProfileWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // Prioritize account_id in the payload (sent by frontend); if none, use path parameter
     let target_account_id = if !payload.account_id.is_empty() {
         &payload.account_id
     } else {
         &account_id
     };
-    
+
     let profile: crate::models::account::DeviceProfile = payload.profile_wrapper.into();
-    
-    let result =
-        account::bind_device_profile_with_profile(target_account_id, profile, None).map_err(|e| {
+
+    let result = account::bind_device_profile_with_profile(target_account_id, profile, None)
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e }),
@@ -1661,8 +1622,8 @@ pub(crate) async fn admin_delete_device_version(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(crate) async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // Folder opening is disabled in headless deployments; keep endpoint behavior consistent.
+pub(crate) async fn admin_open_folder(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::commands::open_data_folder().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1671,8 +1632,6 @@ pub(crate) async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode
     })?;
     Ok(StatusCode::OK)
 }
-
-// --- Import Handlers ---
 
 pub(crate) async fn admin_import_v1_accounts(
     State(state): State<AppState>,
@@ -1683,8 +1642,6 @@ pub(crate) async fn admin_import_v1_accounts(
             Json(ErrorResponse { error: e }),
         )
     })?;
-
-    // Load immediately after import
     let _ = state.core.token_manager.load_accounts().await;
 
     let current_id = state.core.account_service.get_current_id().map_err(|e| {
@@ -1709,8 +1666,6 @@ pub(crate) async fn admin_import_from_db(
             Json(ErrorResponse { error: e }),
         )
     })?;
-
-    // Load immediately after import
     let _ = state.core.token_manager.load_accounts().await;
 
     let current_id = state.core.account_service.get_current_id().map_err(|e| {
@@ -1731,7 +1686,6 @@ pub(crate) async fn admin_import_custom_db(
     State(state): State<AppState>,
     Json(payload): Json<CustomDbRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // [SECURITY] Directory traversal forbidden
     if payload.path.contains("..") {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -1749,8 +1703,6 @@ pub(crate) async fn admin_import_custom_db(
                 Json(ErrorResponse { error: e }),
             )
         })?;
-
-    // Load immediately after import
     let _ = state.core.token_manager.load_accounts().await;
 
     let current_id = state.core.account_service.get_current_id().map_err(|e| {
@@ -1765,7 +1717,6 @@ pub(crate) async fn admin_import_custom_db(
 pub(crate) async fn admin_sync_account_from_db(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    // Logic referenced from sync_account_from_db command
     let db_refresh_token = match migration::get_refresh_token_from_db() {
         Ok(token) => token,
         Err(_e) => {
@@ -1791,8 +1742,6 @@ pub(crate) async fn admin_sync_account_from_db(
             Json(ErrorResponse { error: e }),
         )
     })?;
-
-    // Reload TokenManager immediately after sync
     let _ = state.core.token_manager.load_accounts().await;
 
     let current_id = state.core.account_service.get_current_id().map_err(|e| {
@@ -1803,8 +1752,6 @@ pub(crate) async fn admin_sync_account_from_db(
     })?;
     Ok(Json(Some(to_account_response(&account, &current_id))))
 }
-
-// --- CLI Sync Handlers ---
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1906,9 +1853,6 @@ pub(crate) async fn handle_oauth_callback(
 ) -> Result<Html<String>, StatusCode> {
     let code = params.code;
     let state_param = params.state;
-
-    // Validate CSRF state and submit code into the prepared flow.
-    // This avoids completing OAuth without verifying state and keeps the callback route unauthenticated.
     match crate::modules::oauth_server::submit_oauth_code(code, state_param).await {
         Ok(()) => Ok(Html(format!(
             r#"
@@ -1942,15 +1886,12 @@ pub(crate) async fn handle_oauth_callback(
                         </div>
                     </div>
                     <script>
-                        // 1. Notify opener if exists
                         if (window.opener) {{
                             window.opener.postMessage({{
                                 type: 'oauth-success',
                                 message: 'login success'
                             }}, '*');
                         }}
-
-                        // 2. Copy URL functionality
                         function copyUrl() {{
                             navigator.clipboard.writeText(window.location.href).then(() => {{
                                 const btn = document.getElementById('copyBtn');
@@ -1990,20 +1931,17 @@ pub(crate) async fn admin_prepare_oauth_url_web(
     let redirect_uri = get_oauth_redirect_uri(port, host, proto);
 
     let state_str = uuid::Uuid::new_v4().to_string();
-
-    // Initialize authorization flow status and background handler
-    let (auth_url, code_verifier, mut code_rx) = crate::modules::oauth_server::prepare_oauth_flow_manually(
-        redirect_uri.clone(),
-        state_str.clone(),
-    )
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
+    let (auth_url, code_verifier, mut code_rx) =
+        crate::modules::oauth_server::prepare_oauth_flow_manually(
+            redirect_uri.clone(),
+            state_str.clone(),
         )
-    })?;
-
-    // Start background task to handle callback/manual submission code
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     let token_manager = state.core.token_manager.clone();
     let redirect_uri_clone = redirect_uri.clone();
     let code_verifier_clone = code_verifier.clone();
@@ -2013,10 +1951,14 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                 crate::modules::logger::log_info(
                     "Consuming manually submitted OAuth code in background",
                 );
-                // Provide simplified backend processing for Web callbacks
-                match crate::modules::oauth::exchange_code(&code, &redirect_uri_clone, &code_verifier_clone).await {
+                match crate::modules::oauth::exchange_code(
+                    &code,
+                    &redirect_uri_clone,
+                    &code_verifier_clone,
+                )
+                .await
+                {
                     Ok(token_resp) => {
-                        // Success! Now add/upsert account
                         if let Some(refresh_token) = &token_resp.refresh_token {
                             match token_manager.get_user_info(refresh_token).await {
                                 Ok(user_info) => {
@@ -2070,23 +2012,14 @@ pub(crate) async fn admin_prepare_oauth_url_web(
         "state": state_str
     })))
 }
-
-// Helper function: Get OAuth redirect URI
-// Force use of localhost to bypass Google 2.0 policy restrictions on IP addresses and non-HTTPS environments.
-// External addresses are only used when ABV_PUBLIC_URL is explicitly set (e.g., if the user configured an HTTPS domain).
 fn get_oauth_redirect_uri(port: u16, _host: Option<&str>, _proto: Option<&str>) -> String {
     if let Ok(public_url) = std::env::var("ABV_PUBLIC_URL") {
         let base = public_url.trim_end_matches('/');
         format!("{}/auth/callback", base)
     } else {
-        // Force return of localhost. For remote deployments, users can complete authorization via the manual submission feature.
         format!("http://localhost:{}/auth/callback", port)
     }
 }
-
-// ============================================================================
-// Security / IP Management Handlers
-// ============================================================================
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2100,8 +2033,12 @@ pub(crate) struct IpAccessLogQuery {
     blocked_only: bool,
 }
 
-fn default_page() -> usize { 1 }
-fn default_page_size() -> usize { 50 }
+fn default_page() -> usize {
+    1
+}
+fn default_page_size() -> usize {
+    50
+}
 
 #[derive(Serialize)]
 pub(crate) struct IpAccessLogResponse {
@@ -2113,21 +2050,28 @@ pub(crate) async fn admin_get_ip_access_logs(
     Query(q): Query<IpAccessLogQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let offset = (q.page.max(1) - 1) * q.page_size;
-    let logs = security_db::get_ip_access_logs(
-        q.page_size,
-        offset,
-        q.search.as_deref(),
-        q.blocked_only,
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let logs =
+        security_db::get_ip_access_logs(q.page_size, offset, q.search.as_deref(), q.blocked_only)
+            .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
 
-    let total = logs.len(); // Simple total
-    
+    let total = logs.len();
+
     Ok(Json(IpAccessLogResponse { logs, total }))
 }
 
-pub(crate) async fn admin_clear_ip_access_logs() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    security_db::clear_ip_access_logs()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+pub(crate) async fn admin_clear_ip_access_logs(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    security_db::clear_ip_access_logs().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(StatusCode::OK)
 }
 
@@ -2139,11 +2083,20 @@ pub(crate) struct IpStatsResponse {
     top_ips: Vec<crate::modules::security_db::IpRanking>,
 }
 
-pub(crate) async fn admin_get_ip_stats() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let stats = security_db::get_ip_stats()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
-    let top_ips = security_db::get_top_ips(10, 24)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+pub(crate) async fn admin_get_ip_stats(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let stats = security_db::get_ip_stats().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let top_ips = security_db::get_top_ips(10, 24).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
 
     let response = IpStatsResponse {
         total_requests: stats.total_requests as usize,
@@ -2163,16 +2116,24 @@ pub(crate) struct IpTokenStatsQuery {
 pub(crate) async fn admin_get_ip_token_stats(
     Query(q): Query<IpTokenStatsQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let stats = proxy_db::get_token_usage_by_ip(
-        q.limit.unwrap_or(100),
-        q.hours.unwrap_or(720)
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let stats = proxy_db::get_token_usage_by_ip(q.limit.unwrap_or(100), q.hours.unwrap_or(720))
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     Ok(Json(stats))
 }
 
-pub(crate) async fn admin_get_ip_blacklist() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let list = security_db::get_blacklist()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+pub(crate) async fn admin_get_ip_blacklist(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let list = security_db::get_blacklist().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(Json(list))
 }
 
@@ -2191,7 +2152,13 @@ pub(crate) async fn admin_add_ip_to_blacklist(
         req.reason.as_deref(),
         req.expires_at,
         "manual",
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
 
     Ok(StatusCode::CREATED)
 }
@@ -2205,25 +2172,47 @@ pub(crate) struct RemoveIpRequest {
 pub(crate) async fn admin_remove_ip_from_blacklist(
     Query(q): Query<RemoveIpRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let entries = security_db::get_blacklist()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
-    
+    let entries = security_db::get_blacklist().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
     if let Some(entry) = entries.iter().find(|e| e.ip_pattern == q.ip_pattern) {
-        security_db::remove_from_blacklist(&entry.id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+        security_db::remove_from_blacklist(&entry.id).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     } else {
-        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("IP pattern {} not found", q.ip_pattern) })));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("IP pattern {} not found", q.ip_pattern),
+            }),
+        ));
     }
-    
+
     Ok(StatusCode::OK)
 }
 
-pub(crate) async fn admin_clear_ip_blacklist() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let entries = security_db::get_blacklist()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+pub(crate) async fn admin_clear_ip_blacklist(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let entries = security_db::get_blacklist().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     for entry in entries {
-        security_db::remove_from_blacklist(&entry.ip_pattern)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+        security_db::remove_from_blacklist(&entry.ip_pattern).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     }
     Ok(StatusCode::OK)
 }
@@ -2237,14 +2226,23 @@ pub(crate) struct CheckIpQuery {
 pub(crate) async fn admin_check_ip_in_blacklist(
     Query(q): Query<CheckIpQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let result = security_db::is_ip_in_blacklist(&q.ip)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let result = security_db::is_ip_in_blacklist(&q.ip).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(Json(serde_json::json!({ "result": result })))
 }
 
-pub(crate) async fn admin_get_ip_whitelist() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let list = security_db::get_whitelist()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+pub(crate) async fn admin_get_ip_whitelist(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let list = security_db::get_whitelist().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(Json(list))
 }
 
@@ -2257,34 +2255,58 @@ pub(crate) struct AddWhitelistRequest {
 pub(crate) async fn admin_add_ip_to_whitelist(
     Json(req): Json<AddWhitelistRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    security_db::add_to_whitelist(
-        &req.ip_pattern,
-        req.description.as_deref(),
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    security_db::add_to_whitelist(&req.ip_pattern, req.description.as_deref()).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(StatusCode::CREATED)
 }
 
 pub(crate) async fn admin_remove_ip_from_whitelist(
     Query(q): Query<RemoveIpRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let entries = security_db::get_whitelist()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
-    
+    let entries = security_db::get_whitelist().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
     if let Some(entry) = entries.iter().find(|e| e.ip_pattern == q.ip_pattern) {
-        security_db::remove_from_whitelist(&entry.id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+        security_db::remove_from_whitelist(&entry.id).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     } else {
-        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("IP pattern {} not found", q.ip_pattern) })));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("IP pattern {} not found", q.ip_pattern),
+            }),
+        ));
     }
     Ok(StatusCode::OK)
 }
 
-pub(crate) async fn admin_clear_ip_whitelist() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let entries = security_db::get_whitelist()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+pub(crate) async fn admin_clear_ip_whitelist(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let entries = security_db::get_whitelist().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     for entry in entries {
-        security_db::remove_from_whitelist(&entry.ip_pattern)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+        security_db::remove_from_whitelist(&entry.ip_pattern).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
     }
     Ok(StatusCode::OK)
 }
@@ -2292,17 +2314,27 @@ pub(crate) async fn admin_clear_ip_whitelist() -> Result<impl IntoResponse, (Sta
 pub(crate) async fn admin_check_ip_in_whitelist(
     Query(q): Query<CheckIpQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let result = security_db::is_ip_in_whitelist(&q.ip)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let result = security_db::is_ip_in_whitelist(&q.ip).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(Json(serde_json::json!({ "result": result })))
 }
 
 pub(crate) async fn admin_get_security_config(
     State(_state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let app_config = crate::modules::config::load_app_config()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
-    
+    let app_config = crate::modules::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
     Ok(Json(app_config.proxy.security_monitor))
 }
 
@@ -2316,13 +2348,25 @@ pub(crate) async fn admin_update_security_config(
     Json(payload): Json<UpdateSecurityConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = payload.config;
-    let mut app_config = crate::modules::config::load_app_config()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
-        
+    let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
     app_config.proxy.security_monitor = config.clone();
-    
-    crate::modules::config::save_app_config(&app_config)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    crate::modules::config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     {
         let mut sec = state.config.security.write().await;
@@ -2332,8 +2376,6 @@ pub(crate) async fn admin_update_security_config(
 
     Ok(StatusCode::OK)
 }
-
-// --- Debug Console Handlers ---
 
 pub(crate) async fn admin_enable_debug_console() -> impl IntoResponse {
     crate::modules::log_bridge::enable_log_bridge();
@@ -2429,19 +2471,23 @@ pub(crate) async fn admin_get_opencode_config_content(
     Json(payload): Json<GetOpencodeConfigRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let file_name = payload.file_name;
-    tokio::task::spawn_blocking(move || crate::proxy::opencode_sync::read_opencode_config_content(file_name))
-        .await
-        .map_err(|e| (
+    tokio::task::spawn_blocking(move || {
+        crate::proxy::opencode_sync::read_opencode_config_content(file_name)
+    })
+    .await
+    .map_err(|e| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e.to_string() }),
-        ))?
-        .map(Json)
-        .map_err(|e| (
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?
+    .map(Json)
+    .map_err(|e| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
-        ))
+        )
+    })
 }
-
-
-
-

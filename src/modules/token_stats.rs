@@ -1,18 +1,14 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-// Aggregated token statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenStatsAggregated {
-    pub period: String, // e.g., "2024-01-15 14:00" for hourly, "2024-01-15" for daily
+    pub period: String,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_tokens: u64,
     pub request_count: u64,
 }
-
-// Per-account token statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountTokenStats {
     pub account_email: String,
@@ -21,8 +17,6 @@ pub struct AccountTokenStats {
     pub total_tokens: u64,
     pub request_count: u64,
 }
-
-// Summary statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenStatsSummary {
     pub total_input_tokens: u64,
@@ -31,8 +25,6 @@ pub struct TokenStatsSummary {
     pub total_requests: u64,
     pub unique_accounts: u64,
 }
-
-// Per-model token statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelTokenStats {
     pub model: String,
@@ -47,8 +39,6 @@ pub struct ModelTrendPoint {
     pub period: String,
     pub model_data: std::collections::HashMap<String, u64>,
 }
-
-// Account trend data point (for stacked area chart)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountTrendPoint {
     pub period: String,
@@ -63,8 +53,6 @@ pub(crate) fn get_db_path() -> Result<PathBuf, String> {
 fn connect_db() -> Result<Connection, String> {
     let db_path = get_db_path()?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-
-    // Enable WAL mode for better concurrency
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| e.to_string())?;
     conn.pragma_update(None, "busy_timeout", 5000)
@@ -74,12 +62,8 @@ fn connect_db() -> Result<Connection, String> {
 
     Ok(conn)
 }
-
-// Initialize the token stats database
 pub fn init_db() -> Result<(), String> {
     let conn = connect_db()?;
-
-    // Create main usage table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS token_usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,8 +77,6 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // Create indexes for efficient queries
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_token_timestamp ON token_usage (timestamp DESC)",
         [],
@@ -106,8 +88,6 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
-
-    // Create hourly aggregation table for fast queries
     conn.execute(
         "CREATE TABLE IF NOT EXISTS token_stats_hourly (
             hour_bucket TEXT NOT NULL,
@@ -124,8 +104,6 @@ pub fn init_db() -> Result<(), String> {
 
     Ok(())
 }
-
-// Record token usage from a request
 pub fn record_usage(
     account_email: &str,
     model: &str,
@@ -135,8 +113,6 @@ pub fn record_usage(
     let conn = connect_db()?;
     let timestamp = chrono::Utc::now().timestamp();
     let total_tokens = input_tokens + output_tokens;
-
-    // Insert into raw usage table
     conn.execute(
         "INSERT INTO token_usage (timestamp, account_email, model, input_tokens, output_tokens, total_tokens)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -157,8 +133,6 @@ pub fn record_usage(
 
     Ok(())
 }
-
-// Get hourly aggregated stats for a time range
 pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
@@ -196,8 +170,6 @@ pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String>
     }
     Ok(result)
 }
-
-// Get daily aggregated stats for a time range
 pub fn get_daily_stats(days: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
@@ -235,8 +207,6 @@ pub fn get_daily_stats(days: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     }
     Ok(result)
 }
-
-// Get weekly aggregated stats
 pub fn get_weekly_stats(weeks: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::weeks(weeks);
@@ -274,8 +244,6 @@ pub fn get_weekly_stats(weeks: i64) -> Result<Vec<TokenStatsAggregated>, String>
     }
     Ok(result)
 }
-
-// Get per-account statistics for a time range
 pub fn get_account_stats(hours: i64) -> Result<Vec<AccountTokenStats>, String> {
     let conn = connect_db()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
@@ -313,8 +281,6 @@ pub fn get_account_stats(hours: i64) -> Result<Vec<AccountTokenStats>, String> {
     }
     Ok(result)
 }
-
-// Get summary statistics for a time range
 pub fn get_summary_stats(hours: i64) -> Result<TokenStatsSummary, String> {
     let conn = connect_db()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
@@ -557,8 +523,6 @@ pub fn get_account_trend_daily(days: i64) -> Result<Vec<AccountTrendPoint>, Stri
 mod tests {
     #[test]
     fn test_record_and_query() {
-        // This would need a test database setup
-        // For now, just verify the module compiles
         assert!(true);
     }
 }

@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use crate::proxy::token::types::ProxyToken;
 
@@ -9,9 +9,6 @@ pub(crate) enum OnDiskAccountState {
     Disabled,
     Unknown,
 }
-
-// Check whether an account is enabled/disabled on disk.
-// This is tolerant to transient read/parse failures and reports Unknown in that case.
 pub(crate) async fn get_account_state_on_disk(account_path: &PathBuf) -> OnDiskAccountState {
     const MAX_RETRIES: usize = 2;
     const RETRY_DELAY_MS: u64 = 5;
@@ -75,9 +72,6 @@ pub(crate) async fn get_account_state_on_disk(account_path: &PathBuf) -> OnDiskA
 
     OnDiskAccountState::Unknown
 }
-
-// Extract the earliest reset timestamp from account quota data.
-// Claude model reset times are preferred when present.
 pub(crate) fn extract_earliest_reset_time(account: &serde_json::Value) -> Option<i64> {
     let models = account
         .get("quota")
@@ -123,18 +117,15 @@ pub(crate) fn extract_earliest_reset_time(account: &serde_json::Value) -> Option
 
     earliest_ts
 }
-
-// Load and parse a single account file into a ProxyToken if it is currently usable.
 pub(crate) async fn load_single_account(
     path: &PathBuf,
     health_scores: &dashmap::DashMap<String, f32>,
 ) -> Result<Option<ProxyToken>, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let mut account: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-    // Check if account is manually disabled first (not due to quota protection)
     let is_proxy_disabled = account
         .get("proxy_disabled")
         .and_then(|v| v.as_bool())
@@ -157,8 +148,6 @@ pub(crate) async fn load_single_account(
         );
         return Ok(None);
     }
-
-    // Check for validation block (VALIDATION_REQUIRED temporary block)
     if account
         .get("validation_blocked")
         .and_then(|v| v.as_bool())
@@ -185,7 +174,6 @@ pub(crate) async fn load_single_account(
             );
             return Ok(None);
         } else {
-            // Block expired - clear it
             account["validation_blocked"] = serde_json::json!(false);
             account["validation_blocked_until"] = serde_json::json!(0);
             account["validation_blocked_reason"] = serde_json::Value::Null;
@@ -251,7 +239,10 @@ pub(crate) async fn load_single_account(
         return Ok(None);
     }
 
-    let account_id = account["id"].as_str().ok_or("Missing id field")?.to_string();
+    let account_id = account["id"]
+        .as_str()
+        .ok_or("Missing id field")?
+        .to_string();
     let email = account["email"]
         .as_str()
         .ok_or("Missing email field")?
@@ -271,7 +262,9 @@ pub(crate) async fn load_single_account(
     let refresh_token = crate::utils::crypto::decrypt_secret_or_plaintext(refresh_token_raw)
         .unwrap_or_else(|_| refresh_token_raw.to_string());
 
-    let expires_in = token_obj["expires_in"].as_i64().ok_or("Missing expires_in")?;
+    let expires_in = token_obj["expires_in"]
+        .as_i64()
+        .ok_or("Missing expires_in")?;
     let timestamp = token_obj["expiry_timestamp"]
         .as_i64()
         .ok_or("Missing expiry_timestamp")?;
@@ -316,8 +309,9 @@ pub(crate) async fn load_single_account(
                 model.get("name").and_then(|v| v.as_str()),
                 model.get("percentage").and_then(|v| v.as_i64()),
             ) {
-                let standard_id = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
-                    .unwrap_or_else(|| name.to_string());
+                let standard_id =
+                    crate::proxy::common::model_mapping::normalize_to_standard_id(name)
+                        .unwrap_or_else(|| name.to_string());
                 model_quotas.insert(standard_id, pct as i32);
             }
         }

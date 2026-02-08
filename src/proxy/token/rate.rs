@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use dashmap::DashMap;
+use std::path::PathBuf;
 
 use crate::proxy::token::types::ProxyToken;
 
@@ -92,7 +92,9 @@ pub(crate) fn set_precise_lockout(
     reason: crate::proxy::rate_limit::RateLimitReason,
     model: Option<String>,
 ) -> bool {
-    if let Some(reset_time_str) = crate::proxy::token::persistence::get_quota_reset_time(data_dir, account_id) {
+    if let Some(reset_time_str) =
+        crate::proxy::token::persistence::get_quota_reset_time(data_dir, account_id)
+    {
         tracing::info!(
             "Found quota reset time for account {}: {}",
             account_id,
@@ -250,7 +252,10 @@ pub(crate) async fn mark_rate_limited_async(
     )
     .await
     {
-        tracing::info!("Account {} has been locked with real-time quota precision", email);
+        tracing::info!(
+            "Account {} has been locked with real-time quota precision",
+            email
+        );
         return;
     }
 
@@ -261,7 +266,10 @@ pub(crate) async fn mark_rate_limited_async(
         reason,
         model.map(|s| s.to_string()),
     ) {
-        tracing::info!("Account {} has been locked with locally cached quota", account_id);
+        tracing::info!(
+            "Account {} has been locked with locally cached quota",
+            account_id
+        );
         return;
     }
 

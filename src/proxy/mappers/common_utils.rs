@@ -1,25 +1,13 @@
-// Common utilities for request mapping across all protocols
-// Provides unified grounding/networking logic
-
-use serde_json::{json, Value};
 use crate::proxy::common::model_mapping::{
-    is_high_quality_grounding_candidate,
-    is_image_generation_model,
-    normalize_preview_alias,
-    web_search_fallback_model,
-    MODEL_GEMINI_3_PRO_IMAGE,
+    is_high_quality_grounding_candidate, is_image_generation_model, normalize_preview_alias,
+    web_search_fallback_model, MODEL_GEMINI_3_PRO_IMAGE,
 };
-
-// Request configuration after grounding resolution
+use serde_json::{json, Value};
 #[derive(Debug, Clone)]
 pub struct RequestConfig {
-    // The request type: "agent", "web_search", or "image_gen"
     pub request_type: String,
-    // Whether to inject the googleSearch tool
     pub inject_google_search: bool,
-    // The final model name (with suffixes stripped)
     pub final_model: String,
-    // Image generation configuration (if request_type is image_gen)
     pub image_config: Option<Value>,
 }
 
@@ -27,13 +15,11 @@ pub fn resolve_request_config(
     original_model: &str,
     mapped_model: &str,
     tools: &Option<Vec<Value>>,
-    size: Option<&str>,    //  Image size parameter
-    quality: Option<&str>, //  Image quality parameter
-    body: Option<&Value>,  //  Request body for Gemini native imageConfig
+    size: Option<&str>,
+    quality: Option<&str>,
+    body: Option<&Value>,
 ) -> RequestConfig {
-    // 1. Image Generation Check (Priority)
     if is_image_generation_model(mapped_model) {
-        //  Priority 1: Parse imageConfig from Gemini request body (generationConfig.imageConfig)
         if let Some(body_val) = body {
             if let Some(gen_config) = body_val.get("generationConfig") {
                 if let Some(image_config) = gen_config.get("imageConfig") {
@@ -41,10 +27,8 @@ pub fn resolve_request_config(
                         "[Common-Utils] Parsed imageConfig from Gemini request body: {:?}",
                         image_config
                     );
-                    
-                    // Extract base model without suffix (always gemini-3-pro-image for image gen)
                     let parsed_base_model = MODEL_GEMINI_3_PRO_IMAGE.to_string();
-                    
+
                     return RequestConfig {
                         request_type: "image_gen".to_string(),
                         inject_google_search: false,
@@ -54,8 +38,6 @@ pub fn resolve_request_config(
                 }
             }
         }
-
-        // [FALLBACK] Priority 2: Parse from model name suffix or OpenAI parameters
         let (image_config, parsed_base_model) =
             parse_image_config_with_params(original_model, size, quality);
 
@@ -66,34 +48,15 @@ pub fn resolve_request_config(
             image_config: Some(image_config),
         };
     }
-
-    // Detect if a networking tool is defined (internal function call)
     let has_networking_tool = detects_networking_tool(tools);
-    // Detect if it contains non-networking tools (e.g., MCP local tools)
     let _has_non_networking = contains_non_networking_tool(tools);
-
-    // Strip -online suffix from original model if present (to detect networking intent)
     let is_online_suffix = original_model.ends_with("-online");
-
-    // High-quality grounding allowlist (kept for future policy use)
     let _is_high_quality_model = is_high_quality_grounding_candidate(mapped_model);
-
-    // Determine if we should enable networking
-    //  Disable model-based auto-networking logic to prevent image requests being overwritten by web search results.
-    // Enable networking only when explicitly requested by the user: 1) -online suffix 2) includes a networking tool definition
     let enable_networking = is_online_suffix || has_networking_tool;
-
-    // The final model to send upstream should be the MAPPED model,
-    // but if searching, we MUST ensure the model name is one the backend associates with search.
-    // Force a stable search model for search requests.
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
-
-    //  Map logic aliases back to physical model names for upstream compatibility
     final_model = normalize_preview_alias(&final_model);
 
     if enable_networking {
-        //  Only the configured fallback model supports googleSearch tool
-        // All other models (including Gemini 3 Pro, thinking models, Claude aliases) must downgrade
         if final_model != web_search_fallback_model() {
             tracing::info!(
                 "[Common-Utils] Downgrading {} to {} for web search",
@@ -115,38 +78,19 @@ pub fn resolve_request_config(
         image_config: None,
     }
 }
-
-// Legacy wrapper for backward compatibility and simple usage
 #[allow(dead_code)]
 pub fn parse_image_config(model_name: &str) -> (Value, String) {
     parse_image_config_with_params(model_name, None, None)
 }
-
-// Extended version that accepts OpenAI size and quality parameters
-//
-// This function supports parsing image configuration from:
-// 1. OpenAI API parameters (size, quality) - takes priority
-// 2. Model name suffixes (e.g., -16x9, -4k) - fallback for backward compatibility
-//
-// # Arguments
-// * `model_name` - The model name (may contain suffixes like -16x9-4k)
-// * `size` - Optional OpenAI size parameter (e.g., "1280x720", "1792x1024")
-// * `quality` - Optional OpenAI quality parameter ("standard", "hd", "medium")
-//
-// # Returns
-// (image_config, clean_model_name) where image_config contains aspectRatio and optionally imageSize
 pub fn parse_image_config_with_params(
     model_name: &str,
     size: Option<&str>,
     quality: Option<&str>,
 ) -> (Value, String) {
     let mut aspect_ratio = "1:1";
-
-    // 1. Prioritize parsing aspect ratio from the size parameter
     if let Some(s) = size {
         aspect_ratio = calculate_aspect_ratio_from_size(s);
     } else {
-        // 2. Fallback to model suffix parsing (for backward compatibility)
         if model_name.contains("-21x9") || model_name.contains("-21-9") {
             aspect_ratio = "21:9";
         } else if model_name.contains("-16x9") || model_name.contains("-16-9") {
@@ -172,8 +116,6 @@ pub fn parse_image_config_with_params(
 
     let mut config = serde_json::Map::new();
     config.insert("aspectRatio".to_string(), json!(aspect_ratio));
-
-    // 3. Prioritize parsing resolution from the quality parameter
     if let Some(q) = quality {
         match q.to_lowercase().as_str() {
             "hd" | "4k" => {
@@ -185,10 +127,9 @@ pub fn parse_image_config_with_params(
             "standard" | "1k" => {
                 config.insert("imageSize".to_string(), json!("1K"));
             }
-            _ => {} // Other values are not set, using default
+            _ => {}
         }
     } else {
-        // 4. Fallback to model suffix parsing (for backward compatibility)
         let is_hd = model_name.contains("-4k") || model_name.contains("-hd");
         let is_2k = model_name.contains("-2k");
 
@@ -198,26 +139,12 @@ pub fn parse_image_config_with_params(
             config.insert("imageSize".to_string(), json!("2K"));
         }
     }
-
-    // The upstream model must be exactly the canonical image model.
     (
         serde_json::Value::Object(config),
         MODEL_GEMINI_3_PRO_IMAGE.to_string(),
     )
 }
-
-// Dynamically calculate aspect ratio (solves hardcoding issues)
-//
-// Parse and calculate aspect ratio from a "WIDTHxHEIGHT" formatted string,
-// Use tolerance matching for common standard ratios.
-//
-// # Arguments
-// * `size` - Size string, format: "WIDTHxHEIGHT" (e.g., "1280x720", "1792x1024")
-//
-// # Returns
-// Standard aspect ratio strings ("1:1", "16:9", "9:16", "4:3", "3:4", "21:9")
 fn calculate_aspect_ratio_from_size(size: &str) -> &'static str {
-    // 0. Explicitly check known aspect ratios first
     match size {
         "21:9" => return "21:9",
         "16:9" => return "16:9",
@@ -236,8 +163,6 @@ fn calculate_aspect_ratio_from_size(size: &str) -> &'static str {
         if let (Ok(width), Ok(height)) = (w_str.parse::<f64>(), h_str.parse::<f64>()) {
             if width > 0.0 && height > 0.0 {
                 let ratio = width / height;
-
-                // Tolerance matching for common ratios (tolerance 0.05, avoids overlap between 3:4 and 2:3)
                 if (ratio - 21.0 / 9.0).abs() < 0.05 {
                     return "21:9";
                 }
@@ -272,16 +197,12 @@ fn calculate_aspect_ratio_from_size(size: &str) -> &'static str {
         }
     }
 
-    "1:1" // Default fallback
+    "1:1"
 }
-
-// Inject current googleSearch tool and ensure no duplicate legacy search tools
 pub fn inject_google_search_tool(body: &mut Value) {
     if let Some(obj) = body.as_object_mut() {
         let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
         if let Some(tools_arr) = tools_entry.as_array_mut() {
-            // [Security Check] If functionDeclarations already exist in the array, do not inject googleSearch
-            // Because Gemini v1internal doesn't support mixing search and functions in one request
             let has_functions = tools_arr.iter().any(|t| {
                 t.as_object()
                     .map_or(false, |o| o.contains_key("functionDeclarations"))
@@ -293,8 +214,6 @@ pub fn inject_google_search_tool(body: &mut Value) {
                 );
                 return;
             }
-
-            // First clean up existing googleSearch or googleSearchRetrieval to prevent conflict from duplicates
             tools_arr.retain(|t| {
                 if let Some(o) = t.as_object() {
                     !(o.contains_key("googleSearch") || o.contains_key("googleSearchRetrieval"))
@@ -302,20 +221,15 @@ pub fn inject_google_search_tool(body: &mut Value) {
                     true
                 }
             });
-
-            // Inject unified googleSearch (v1internal spec)
             tools_arr.push(json!({
                 "googleSearch": {}
             }));
         }
     }
 }
-
-// Deeply clean "[undefined]" dirty strings sent by clients to prevent Gemini interface validation failure
 pub fn deep_clean_undefined(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            // Remove keys with value "[undefined]"
             map.retain(|_, v| {
                 if let Some(s) = v.as_str() {
                     s != "[undefined]"
@@ -323,7 +237,6 @@ pub fn deep_clean_undefined(value: &mut Value) {
                     true
                 }
             });
-            // Recursively process nesting
             for v in map.values_mut() {
                 deep_clean_undefined(v);
             }
@@ -336,13 +249,9 @@ pub fn deep_clean_undefined(value: &mut Value) {
         _ => {}
     }
 }
-
-// Detects if the tool list contains a request for networking/web search.
-// Supported keywords: "web_search", "google_search", "web_search_20250305"
 pub fn detects_networking_tool(tools: &Option<Vec<Value>>) -> bool {
     if let Some(list) = tools {
         for tool in list {
-            // 1. Direct style (Claude/Simple OpenAI/Anthropic Builtin/Vertex): { "name": "..." } or { "type": "..." }
             if let Some(n) = tool.get("name").and_then(|v| v.as_str()) {
                 if n == "web_search"
                     || n == "google_search"
@@ -362,8 +271,6 @@ pub fn detects_networking_tool(tools: &Option<Vec<Value>>) -> bool {
                     return true;
                 }
             }
-
-            // 2. OpenAI nested style: { "type": "function", "function": { "name": "..." } }
             if let Some(func) = tool.get("function") {
                 if let Some(n) = func.get("name").and_then(|v| v.as_str()) {
                     let keywords = [
@@ -377,8 +284,6 @@ pub fn detects_networking_tool(tools: &Option<Vec<Value>>) -> bool {
                     }
                 }
             }
-
-            // 3. Gemini native style: { "functionDeclarations": [ { "name": "..." } ] }
             if let Some(decls) = tool.get("functionDeclarations").and_then(|v| v.as_array()) {
                 for decl in decls {
                     if let Some(n) = decl.get("name").and_then(|v| v.as_str()) {
@@ -391,8 +296,6 @@ pub fn detects_networking_tool(tools: &Option<Vec<Value>>) -> bool {
                     }
                 }
             }
-
-            // 4. Gemini googleSearch declaration (including googleSearchRetrieval variants)
             if tool.get("googleSearch").is_some() || tool.get("googleSearchRetrieval").is_some() {
                 return true;
             }
@@ -400,14 +303,10 @@ pub fn detects_networking_tool(tools: &Option<Vec<Value>>) -> bool {
     }
     false
 }
-
-// Detect if it contains non-networking local function tools
 pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
     if let Some(list) = tools {
         for tool in list {
             let mut is_networking = false;
-
-            // Simple logic: if it's a function declaration and the name is not a networking keyword, treat it as a non-networking tool
             if let Some(n) = tool.get("name").and_then(|v| v.as_str()) {
                 let keywords = [
                     "web_search",
@@ -435,19 +334,18 @@ pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
             {
                 is_networking = true;
             } else if tool.get("functionDeclarations").is_some() {
-                // If it's a Gemini-style functionDeclarations, take a look inside
                 if let Some(decls) = tool.get("functionDeclarations").and_then(|v| v.as_array()) {
                     for decl in decls {
                         if let Some(n) = decl.get("name").and_then(|v| v.as_str()) {
                             let keywords =
                                 ["web_search", "google_search", "google_search_retrieval"];
                             if !keywords.contains(&n) {
-                                return true; // Found local function
+                                return true;
                             }
                         }
                     }
                 }
-                is_networking = true; // Even if all are networking, the outer layer is marked as networking
+                is_networking = true;
             }
 
             if !is_networking {
@@ -462,15 +360,20 @@ pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
 mod tests {
     use super::*;
     use crate::proxy::common::model_mapping::{
-        MODEL_CLAUDE_SONNET_ALIAS, MODEL_GEMINI_3_FLASH, MODEL_GEMINI_3_PRO_IMAGE,
-        MODEL_GPT_53_CODEX, web_search_fallback_model,
+        web_search_fallback_model, MODEL_CLAUDE_SONNET_ALIAS, MODEL_GEMINI_3_FLASH,
+        MODEL_GEMINI_3_PRO_IMAGE, MODEL_GPT_53_CODEX,
     };
 
     #[test]
     fn test_high_quality_model_auto_grounding() {
-        // Auto-grounding is currently disabled by default due to conflict with image gen
-        let config =
-            resolve_request_config(MODEL_GPT_53_CODEX, MODEL_GEMINI_3_FLASH, &None, None, None, None);
+        let config = resolve_request_config(
+            MODEL_GPT_53_CODEX,
+            MODEL_GEMINI_3_FLASH,
+            &None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -530,21 +433,14 @@ mod tests {
 
     #[test]
     fn test_image_2k_and_ultrawide_config() {
-        // Test 2K
         let (config_2k, _) = parse_image_config(&format!("{}-2k", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_2k["imageSize"], "2K");
-
-        // Test 21:9
         let (config_21x9, _) = parse_image_config(&format!("{}-21x9", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_21x9["aspectRatio"], "21:9");
-
-        // Test Combined (if logic allows, though suffix parsing is greedy)
         let (config_combined, _) =
             parse_image_config(&format!("{}-2k-21x9", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_combined["imageSize"], "2K");
         assert_eq!(config_combined["aspectRatio"], "21:9");
-
-        // Test 4K + 21:9
         let (config_4k_wide, _) =
             parse_image_config(&format!("{}-4k-21x9", MODEL_GEMINI_3_PRO_IMAGE));
         assert_eq!(config_4k_wide["imageSize"], "4K");
@@ -553,26 +449,18 @@ mod tests {
 
     #[test]
     fn test_parse_image_config_with_openai_params() {
-        // Test quality parameter mapping
-        let (config_hd, _) = parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, None, Some("hd"));
+        let (config_hd, _) =
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, None, Some("hd"));
         assert_eq!(config_hd["imageSize"], "4K");
         assert_eq!(config_hd["aspectRatio"], "1:1");
 
-        let (config_medium, _) = parse_image_config_with_params(
-            MODEL_GEMINI_3_PRO_IMAGE,
-            None,
-            Some("medium"),
-        );
+        let (config_medium, _) =
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, None, Some("medium"));
         assert_eq!(config_medium["imageSize"], "2K");
 
-        let (config_standard, _) = parse_image_config_with_params(
-            MODEL_GEMINI_3_PRO_IMAGE,
-            None,
-            Some("standard"),
-        );
+        let (config_standard, _) =
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, None, Some("standard"));
         assert_eq!(config_standard["imageSize"], "1K");
-
-        // Test size parameter mapping with dynamic calculation
         let (config_16_9, _) =
             parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, Some("1280x720"), None);
         assert_eq!(config_16_9["aspectRatio"], "16:9");
@@ -584,17 +472,10 @@ mod tests {
         let (config_4_3, _) =
             parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, Some("800x600"), None);
         assert_eq!(config_4_3["aspectRatio"], "4:3");
-
-        // Test combined size + quality
-        let (config_combined, _) = parse_image_config_with_params(
-            MODEL_GEMINI_3_PRO_IMAGE,
-            Some("1920x1080"),
-            Some("hd"),
-        );
+        let (config_combined, _) =
+            parse_image_config_with_params(MODEL_GEMINI_3_PRO_IMAGE, Some("1920x1080"), Some("hd"));
         assert_eq!(config_combined["aspectRatio"], "16:9");
         assert_eq!(config_combined["imageSize"], "4K");
-
-        // Test backward compatibility: model suffix takes precedence when no params
         let (config_compat, _) = parse_image_config_with_params(
             &format!("{}-16x9-4k", MODEL_GEMINI_3_PRO_IMAGE),
             None,
@@ -602,20 +483,17 @@ mod tests {
         );
         assert_eq!(config_compat["aspectRatio"], "16:9");
         assert_eq!(config_compat["imageSize"], "4K");
-
-        // Test parameter priority: params override model suffix
         let (config_override, _) = parse_image_config_with_params(
             &format!("{}-1x1-2k", MODEL_GEMINI_3_PRO_IMAGE),
             Some("1280x720"),
             Some("hd"),
         );
-        assert_eq!(config_override["aspectRatio"], "16:9"); // from size param, not model suffix
-        assert_eq!(config_override["imageSize"], "4K"); // from quality param, not model suffix
+        assert_eq!(config_override["aspectRatio"], "16:9");
+        assert_eq!(config_override["imageSize"], "4K");
     }
 
     #[test]
     fn test_calculate_aspect_ratio_from_size() {
-        // Test standard OpenAI sizes
         assert_eq!(calculate_aspect_ratio_from_size("1280x720"), "16:9");
         assert_eq!(calculate_aspect_ratio_from_size("1920x1080"), "16:9");
         assert_eq!(calculate_aspect_ratio_from_size("720x1280"), "9:16");
@@ -624,19 +502,13 @@ mod tests {
         assert_eq!(calculate_aspect_ratio_from_size("800x600"), "4:3");
         assert_eq!(calculate_aspect_ratio_from_size("600x800"), "3:4");
         assert_eq!(calculate_aspect_ratio_from_size("2560x1080"), "21:9");
-
-        //  Test new aspect ratios
         assert_eq!(calculate_aspect_ratio_from_size("1500x1000"), "3:2");
         assert_eq!(calculate_aspect_ratio_from_size("1000x1500"), "2:3");
         assert_eq!(calculate_aspect_ratio_from_size("1250x1000"), "5:4");
         assert_eq!(calculate_aspect_ratio_from_size("1000x1250"), "4:5");
-
-        //  Test direct aspect ratio strings
         assert_eq!(calculate_aspect_ratio_from_size("21:9"), "21:9");
         assert_eq!(calculate_aspect_ratio_from_size("16:9"), "16:9");
         assert_eq!(calculate_aspect_ratio_from_size("1:1"), "1:1");
-
-        // Test edge cases
         assert_eq!(calculate_aspect_ratio_from_size("invalid"), "1:1");
         assert_eq!(calculate_aspect_ratio_from_size("1920x0"), "1:1");
         assert_eq!(calculate_aspect_ratio_from_size("0x1080"), "1:1");

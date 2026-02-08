@@ -1,14 +1,7 @@
-// 429 retry strategy
-// Duration parsing
-
-use regex::Regex;
 use once_cell::sync::Lazy;
+use regex::Regex;
 
-static DURATION_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"([\d.]+)\s*(ms|s|m|h)").unwrap()
-});
-
-// Parse Duration string (e.g., "1.5s", "200ms", "1h16m0.667s")
+static DURATION_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"([\d.]+)\s*(ms|s|m|h)").unwrap());
 pub fn parse_duration_ms(duration_str: &str) -> Option<u64> {
     let mut total_ms: f64 = 0.0;
     let mut matched = false;
@@ -33,15 +26,11 @@ pub fn parse_duration_ms(duration_str: &str) -> Option<u64> {
 
     Some(total_ms.round() as u64)
 }
-
-// Extract retry delay from 429 error
 pub fn parse_retry_delay(error_text: &str) -> Option<u64> {
     use serde_json::Value;
 
     let json: Value = serde_json::from_str(error_text).ok()?;
     let details = json.get("error")?.get("details")?.as_array()?;
-
-    // Method 1: RetryInfo.retryDelay
     for detail in details {
         if let Some(type_str) = detail.get("@type").and_then(|v| v.as_str()) {
             if type_str.contains("RetryInfo") {
@@ -51,8 +40,6 @@ pub fn parse_retry_delay(error_text: &str) -> Option<u64> {
             }
         }
     }
-
-    // Method 2: metadata.quotaResetDelay
     for detail in details {
         if let Some(quota_delay) = detail
             .get("metadata")

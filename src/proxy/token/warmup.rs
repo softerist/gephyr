@@ -79,6 +79,9 @@ pub(crate) async fn get_token_by_email(
                 0,
             ))
         }
-        Err(e) => Err(format!("[Warmup] Token refresh failed for {}: {}", email, e)),
+        Err(e) => Err(format!(
+            "[Warmup] Token refresh failed for {}: {}",
+            email, e
+        )),
     }
 }

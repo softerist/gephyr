@@ -1,5 +1,3 @@
-// Minimal protobuf utilities used by migration flow.
-
 pub fn read_varint(data: &[u8], offset: usize) -> Result<(u64, usize), String> {
     let mut result = 0u64;
     let mut shift = 0;
@@ -51,7 +49,9 @@ pub fn find_field(data: &[u8], target_field: u32) -> Result<Option<Vec<u8>>, Str
 
         if field_num == target_field && wire_type == 2 {
             let (length, content_offset) = read_varint(data, new_offset)?;
-            return Ok(Some(data[content_offset..content_offset + length as usize].to_vec()));
+            return Ok(Some(
+                data[content_offset..content_offset + length as usize].to_vec(),
+            ));
         }
 
         offset = skip_field(data, new_offset, wire_type)?;

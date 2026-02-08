@@ -1,39 +1,21 @@
-//! Antigravity cache clearing module
-//!
-//! Provides functionality to clear Antigravity application cache directories
-//! to resolve login failures, version validation errors, and OAuth issues.
-
 use crate::modules::logger;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-
-// Result of cache clearing operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClearResult {
-    // Paths that were successfully cleared
     pub cleared_paths: Vec<String>,
-    // Total size freed in bytes
     pub total_size_freed: u64,
-    // Errors encountered during clearing
     pub errors: Vec<String>,
 }
-
-// Get all known Antigravity cache paths for the current platform
 pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     #[cfg(target_os = "macos")]
     {
         if let Some(home) = dirs::home_dir() {
-            // Primary cache location - HTTP storage (contains User-Agent cache)
-            // This is the main cause of "version no longer supported" errors
             paths.push(home.join("Library/HTTPStorages/com.google.antigravity"));
-
-            // Application caches
             paths.push(home.join("Library/Caches/com.google.antigravity"));
-
-            // Alternative cache locations that may exist
             paths.push(home.join(".antigravity"));
             paths.push(home.join(".config/antigravity"));
         }
@@ -41,14 +23,11 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
 
     #[cfg(target_os = "windows")]
     {
-        // LocalAppData cache
         if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
             let local_path = PathBuf::from(&local_app_data);
             paths.push(local_path.join("Google\\Antigravity"));
             paths.push(local_path.join("Antigravity\\Cache"));
         }
-
-        // AppData cache
         if let Ok(app_data) = std::env::var("APPDATA") {
             let app_path = PathBuf::from(&app_data);
             paths.push(app_path.join("Antigravity\\Cache"));
@@ -58,15 +37,10 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         if let Some(home) = dirs::home_dir() {
-            // XDG cache directory
             paths.push(home.join(".cache/Antigravity"));
             paths.push(home.join(".cache/google-antigravity"));
-
-            // Alternative locations
             paths.push(home.join(".antigravity"));
         }
-
-        // XDG_CACHE_HOME if set
         if let Ok(xdg_cache) = std::env::var("XDG_CACHE_HOME") {
             let cache_path = PathBuf::from(&xdg_cache);
             paths.push(cache_path.join("Antigravity"));
@@ -76,16 +50,12 @@ pub fn get_antigravity_cache_paths() -> Vec<PathBuf> {
 
     paths
 }
-
-// Get only existing cache paths
 pub fn get_existing_cache_paths() -> Vec<PathBuf> {
     get_antigravity_cache_paths()
         .into_iter()
         .filter(|p| p.exists())
         .collect()
 }
-
-// Calculate directory size recursively
 fn get_dir_size(path: &PathBuf) -> u64 {
     let mut size = 0u64;
 
@@ -111,28 +81,16 @@ fn get_dir_size(path: &PathBuf) -> u64 {
 
     size
 }
-
-// Clear a single directory and return size freed
 fn clear_directory(path: &PathBuf) -> Result<u64, String> {
     if !path.exists() {
         return Ok(0);
     }
 
     let size = get_dir_size(path);
-
-    // Remove directory contents
     fs::remove_dir_all(path).map_err(|e| format!("Failed to remove {}: {}", path.display(), e))?;
 
     Ok(size)
 }
-
-// Clear Antigravity application cache
-//
-// # Arguments
-// * `custom_paths` - Optional custom paths to clear. If None, uses default platform paths.
-//
-// # Returns
-// * `ClearResult` containing cleared paths, total size freed, and any errors
 pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<ClearResult, String> {
     let paths: Vec<PathBuf> = match custom_paths {
         Some(custom) => custom.into_iter().map(PathBuf::from).collect(),
@@ -152,7 +110,10 @@ pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<Clea
 
     for path in paths {
         if !path.exists() {
-            logger::log_info(&format!("Cache path does not exist, skipping: {}", path.display()));
+            logger::log_info(&format!(
+                "Cache path does not exist, skipping: {}",
+                path.display()
+            ));
             continue;
         }
 
@@ -160,7 +121,9 @@ pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<Clea
 
         match clear_directory(&path) {
             Ok(size) => {
-                result.cleared_paths.push(path.to_string_lossy().to_string());
+                result
+                    .cleared_paths
+                    .push(path.to_string_lossy().to_string());
                 result.total_size_freed += size;
                 logger::log_info(&format!(
                     "Cleared {}: {:.2} MB freed",

@@ -9,14 +9,14 @@ pub struct ProxyToken {
     pub expires_in: i64,
     pub timestamp: i64,
     pub email: String,
-    pub account_path: PathBuf, // Account file path, used for updates
+    pub account_path: PathBuf,
     pub project_id: Option<String>,
-    pub subscription_tier: Option<String>, // "FREE" | "PRO" | "ULTRA"
-    pub remaining_quota: Option<i32>, // Remaining quota for priority sorting
+    pub subscription_tier: Option<String>,
+    pub remaining_quota: Option<i32>,
     pub protected_models: HashSet<String>,
-    pub health_score: f32, // Health score (0.0 - 1.0)
-    pub reset_time: Option<i64>, // Quota reset timestamp (for sorting optimization)
-    pub validation_blocked: bool, // Check for validation block (VALIDATION_REQUIRED temporary block)
-    pub validation_blocked_until: i64, // Timestamp until which the account is blocked
-    pub model_quotas: HashMap<String, i32>, // In-memory cache for model-specific quotas
+    pub health_score: f32,
+    pub reset_time: Option<i64>,
+    pub validation_blocked: bool,
+    pub validation_blocked_until: i64,
+    pub model_quotas: HashMap<String, i32>,
 }

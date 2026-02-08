@@ -1,6 +1,5 @@
-// Model name mapping
-use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 
 pub const MODEL_GEMINI_3_FLASH: &str = "gemini-3-flash";
 pub const MODEL_GEMINI_3_FLASH_PREVIEW: &str = "gemini-3-flash-preview";
@@ -104,7 +103,9 @@ pub fn is_claude_model(model: &str) -> bool {
 }
 
 pub fn is_image_generation_model(model: &str) -> bool {
-    model.to_ascii_lowercase().starts_with(MODEL_GEMINI_3_PRO_IMAGE)
+    model
+        .to_ascii_lowercase()
+        .starts_with(MODEL_GEMINI_3_PRO_IMAGE)
 }
 
 pub fn normalize_preview_alias(model: &str) -> String {
@@ -176,16 +177,12 @@ pub fn is_signature_family_compatible(cached: &str, target: &str) -> bool {
     if c == t {
         return true;
     }
-
-    // Claude families are permissive inside the same major line.
     if c.contains("claude-sonnet-4-") && t.contains("claude-sonnet-4-") {
         return true;
     }
     if c.contains("claude-opus-4-") && t.contains("claude-opus-4-") {
         return true;
     }
-
-    // Gemini families are strict.
     if c.contains("gemini-3-pro") && t.contains("gemini-3-pro") {
         return true;
     }
@@ -204,79 +201,65 @@ pub fn is_signature_family_compatible(cached: &str, target: &str) -> bool {
 
 static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
-
-    // ============================================================================
-    // ANTHROPIC CLAUDE MODELS (Expanded)
-    // ============================================================================
-
-    // --- Claude 4.6 Opus (Flagship - Feb 2026) ---
     m.insert(MODEL_CLAUDE_OPUS_46, MODEL_CLAUDE_OPUS_46_THINKING);
-    m.insert("claude-4-6-opus-latest", MODEL_CLAUDE_OPUS_46_THINKING); // Standard alias
+    m.insert("claude-4-6-opus-latest", MODEL_CLAUDE_OPUS_46_THINKING);
     m.insert("claude-opus-4-6-20260201", MODEL_CLAUDE_OPUS_46_THINKING);
-    m.insert(MODEL_CLAUDE_OPUS_46_THINKING, MODEL_CLAUDE_OPUS_46_THINKING); // Extended reasoning mode
-    
-    // AWS Bedrock & Vertex AI Aliases for 4.6
-    m.insert("anthropic.claude-4-6-opus-20260201-v1:0", MODEL_CLAUDE_OPUS_46_THINKING);
+    m.insert(MODEL_CLAUDE_OPUS_46_THINKING, MODEL_CLAUDE_OPUS_46_THINKING);
+    m.insert(
+        "anthropic.claude-4-6-opus-20260201-v1:0",
+        MODEL_CLAUDE_OPUS_46_THINKING,
+    );
     m.insert("claude-4-6-opus@20260201", MODEL_CLAUDE_OPUS_46_THINKING);
-
-    // --- Claude 4.6 Sonnet (Efficiency/Dev Standard) ---
     m.insert(MODEL_CLAUDE_SONNET_46, MODEL_CLAUDE_SONNET_46_THINKING);
-    m.insert("claude-sonnet-4-6-20260115", MODEL_CLAUDE_SONNET_46_THINKING);
-    m.insert(MODEL_CLAUDE_SONNET_46_THINKING, MODEL_CLAUDE_SONNET_46_THINKING); // "Thinking Sonnet"
-    m.insert("anthropic.claude-4-6-sonnet-20260115-v1:0", MODEL_CLAUDE_SONNET_46_THINKING);
-
-    // --- Claude 4.5 Opus (Late 2025 Legacy) ---
+    m.insert(
+        "claude-sonnet-4-6-20260115",
+        MODEL_CLAUDE_SONNET_46_THINKING,
+    );
+    m.insert(
+        MODEL_CLAUDE_SONNET_46_THINKING,
+        MODEL_CLAUDE_SONNET_46_THINKING,
+    );
+    m.insert(
+        "anthropic.claude-4-6-sonnet-20260115-v1:0",
+        MODEL_CLAUDE_SONNET_46_THINKING,
+    );
     m.insert(MODEL_CLAUDE_OPUS_45, MODEL_CLAUDE_OPUS_45_THINKING);
     m.insert("claude-opus-4-5-20251101", MODEL_CLAUDE_OPUS_45_THINKING);
     m.insert(MODEL_CLAUDE_OPUS_45_THINKING, MODEL_CLAUDE_OPUS_45_THINKING);
-    m.insert("anthropic.claude-4-5-opus-20251101-v1:0", MODEL_CLAUDE_OPUS_45_THINKING);
-
-    // --- Claude 4.5 Sonnet & Haiku ---
+    m.insert(
+        "anthropic.claude-4-5-opus-20251101-v1:0",
+        MODEL_CLAUDE_OPUS_45_THINKING,
+    );
     m.insert(MODEL_CLAUDE_SONNET_45, MODEL_CLAUDE_SONNET_45_THINKING);
-    m.insert("claude-sonnet-4-5-20250929", MODEL_CLAUDE_SONNET_45_THINKING);
+    m.insert(
+        "claude-sonnet-4-5-20250929",
+        MODEL_CLAUDE_SONNET_45_THINKING,
+    );
     m.insert(MODEL_CLAUDE_HAIKU_45, MODEL_CLAUDE_HAIKU_45);
     m.insert("claude-haiku-4-5-20251001", MODEL_CLAUDE_HAIKU_45);
-    // ============================================================================
-    // OPENAI MODELS (Expanded with GPT-5.x, Codex, and o-series)
-    // ============================================================================
-    // --- GPT-5.3 Series (Feb 2026 "Garlic" Release) ---
-    // The newest flagship generation
-    m.insert("gpt-5.3", MODEL_GEMINI_30_FLASH);              // Standard "High" model
-    m.insert("gpt-5.3-chat-latest", MODEL_GEMINI_30_FLASH);  // Always points to newest 5.3 weight
+    m.insert("gpt-5.3", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-chat-latest", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.3-preview", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-thinking", MODEL_GEMINI_30_FLASH);     // Integrated reasoning (System 2)
-    m.insert("gpt-5.3-agent", MODEL_GEMINI_30_FLASH);        // Autonomous agent specialized
-    m.insert("gpt-5.3-mini", MODEL_GEMINI_30_FLASH);         // Cost-efficient general purpose
-    m.insert("gpt-5.3-nano", MODEL_GEMINI_30_FLASH);         // Ultra-low latency / On-device target
-
-    // --- GPT-5.3 Codex Tiers (Coding Specialized) ---
-    // Mapped to capability levels: Low, Medium, High, Ultra
-    m.insert("gpt-5.3-codex-nano", MODEL_GEMINI_30_FLASH);   // "Low" (Autocomplete/Super-fast)
-    m.insert("gpt-5.3-codex-mini", MODEL_GEMINI_30_FLASH);   // "Medium" (Daily Driver/Functions)
-    m.insert(MODEL_GPT_53_CODEX, MODEL_GEMINI_30_FLASH);     // "High" (Complex Logic/Standard)
-    m.insert("gpt-5.3-codex-pro", MODEL_GEMINI_30_FLASH);    // "Ultra" (Architecture/Refactoring)
-    m.insert("gpt-5.3-codex-edit", MODEL_GEMINI_30_FLASH);   // Strict diff/patch generation
-
-    // --- GPT-5.2 Series (Dec 2025 Production Standard) ---
+    m.insert("gpt-5.3-thinking", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-agent", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-mini", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-nano", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-codex-nano", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-codex-mini", MODEL_GEMINI_30_FLASH);
+    m.insert(MODEL_GPT_53_CODEX, MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-codex-pro", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt-5.3-codex-edit", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.2", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.2-chat-latest", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2-pro", MODEL_GEMINI_30_FLASH);          // High-compute context window
+    m.insert("gpt-5.2-pro", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.2-thinking", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2-codex", MODEL_GEMINI_30_FLASH);        // Previous IDE Standard
-
-    // --- GPT-5.1 & Base GPT-5 Series (Legacy 2025) ---
+    m.insert("gpt-5.2-codex", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.1", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.1-codex", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5.1-codex-max", MODEL_GEMINI_30_FLASH);
     m.insert(MODEL_GPT_5, MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5-mini", MODEL_GEMINI_30_FLASH);
     m.insert("gpt-5-nano", MODEL_GEMINI_30_FLASH);
-
-    // ============================================================================
-    // GOOGLE GEMINI MODELS (Expanded)
-    // ============================================================================
-
-    // --- Gemini 3 Series ---
     m.insert(MODEL_GEMINI_3_PRO_PREVIEW, MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO, MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO_LOW, MODEL_GEMINI_3_PRO_PREVIEW);
@@ -285,27 +268,30 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert(MODEL_GEMINI_3_FLASH, MODEL_GEMINI_3_FLASH);
     m.insert(MODEL_GEMINI_3_FLASH_PREVIEW, MODEL_GEMINI_3_FLASH);
     m.insert(MODEL_GEMINI_3_FLASH_THINKING, MODEL_GEMINI_3_FLASH_THINKING);
-    m.insert(MODEL_GEMINI_3_PRO_HIGH_THINKING, MODEL_GEMINI_3_PRO_HIGH_THINKING);
-    // --- Gemini 3.0 Flash Thinking ---
-    m.insert(MODEL_GEMINI_30_FLASH_THINKING, MODEL_GEMINI_30_FLASH_THINKING);
-    m.insert("gemini-3.0-flash-thinking-exp", MODEL_GEMINI_30_FLASH_THINKING);
-    m.insert("gemini-3.0-flash-thinking-0121", MODEL_GEMINI_30_FLASH_THINKING);
-    // --- Gemini 3.0 Pro Thinking ---
+    m.insert(
+        MODEL_GEMINI_3_PRO_HIGH_THINKING,
+        MODEL_GEMINI_3_PRO_HIGH_THINKING,
+    );
+    m.insert(
+        MODEL_GEMINI_30_FLASH_THINKING,
+        MODEL_GEMINI_30_FLASH_THINKING,
+    );
+    m.insert(
+        "gemini-3.0-flash-thinking-exp",
+        MODEL_GEMINI_30_FLASH_THINKING,
+    );
+    m.insert(
+        "gemini-3.0-flash-thinking-0121",
+        MODEL_GEMINI_30_FLASH_THINKING,
+    );
     m.insert(MODEL_GEMINI_30_PRO_THINKING, MODEL_GEMINI_30_PRO_THINKING);
     m.insert("gemini-3.0-pro-thinking-exp", MODEL_GEMINI_30_PRO_THINKING);
-    // --- Gemini 3.0 Standard ---
     m.insert(MODEL_GEMINI_30_PRO, MODEL_GEMINI_30_PRO);
     m.insert("gemini-3.0-pro-001", MODEL_GEMINI_30_PRO);
     m.insert(MODEL_GEMINI_30_FLASH, MODEL_GEMINI_30_FLASH);
     m.insert("gemini-3.0-flash-001", MODEL_GEMINI_30_FLASH);
     m.insert(MODEL_GEMINI_30_ULTRA, MODEL_GEMINI_30_ULTRA);
     m.insert("gemini-3.0-pro-search", MODEL_GEMINI_30_PRO);
-
-    // ============================================================================
-    // INTERNAL & ALIAS MAPPINGS
-    // ============================================================================
-
-    // Generic Aliases
     m.insert("claude", MODEL_CLAUDE_SONNET_45);
     m.insert(MODEL_CLAUDE_SONNET_ALIAS, MODEL_CLAUDE_SONNET_45);
     m.insert("gpt", MODEL_GEMINI_30_FLASH);
@@ -316,91 +302,40 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
 
     m
 });
-
-
-// Map Claude model names to Gemini model names
-// 
-// # Mapping Strategy
-// 1. **Exact Match**: Check the CLAUDE_TO_GEMINI mapping table
-// 2. **OpenAI Alias Prefix**: Any gpt-* model maps to gemini-3.0-flash
-// 3. **Known Prefix Pass-through**: gemini-* and *-thinking models are passed through directly
-// 4. ** Direct Pass-through**: Unknown model IDs are passed directly to the Google API (supporting trial of unreleased models)
-// 
-// # Parameters
-// - `input`: Original model name
-// 
-// # Returns
-// Mapped target model name
-// 
-// # Examples
-// ```
-// // Exact match
-// assert_eq!(map_claude_model_to_gemini("claude-opus-4-6"), "claude-opus-4-6-thinking");
-// 
-// // Gemini model pass-through
-// assert_eq!(map_claude_model_to_gemini("gemini-3.0-flash"), "gemini-3.0-flash");
-// 
-// // Direct pass-through for unknown models (NEW!)
-// assert_eq!(map_claude_model_to_gemini("claude-opus-4-6"), "claude-opus-4-6");
-// assert_eq!(map_claude_model_to_gemini("claude-sonnet-5"), "claude-sonnet-5");
-// ```
 pub fn map_claude_model_to_gemini(input: &str) -> String {
-    // 1. Check exact match in map
     if let Some(mapped) = CLAUDE_TO_GEMINI.get(input) {
         return mapped.to_string();
     }
-
-    // 2. Built-in wildcard alias for OpenAI-style model IDs.
-    // Keeps compatibility for current/future GPT variants without constant table updates.
     if is_openai_gpt_model(input) {
         return MODEL_GEMINI_30_FLASH.to_string();
     }
-
-    // 3. Pass-through known prefixes (gemini-, -thinking) to support dynamic suffixes
     if is_gemini_model(input) || input.contains("thinking") {
         return input.to_string();
     }
-
-
-    // 4. [ENHANCED] Pass through unknown model IDs directly instead of forcing fallback
-    // This allows users to experience unreleased models (e.g., claude-opus-4-6) via custom mapping
-    // The Google API will automatically handle invalid models and return errors; users can adjust mapping based on the errors
     input.to_string()
 }
-
-// Get all built-in supported model list keywords
 pub fn get_supported_models() -> Vec<String> {
     CLAUDE_TO_GEMINI.keys().map(|s| s.to_string()).collect()
 }
-
-// Dynamically get listing of all available models (including built-in and user-custom)
 pub async fn get_all_dynamic_models(
     custom_mapping: &tokio::sync::RwLock<std::collections::HashMap<String, String>>,
 ) -> Vec<String> {
     use std::collections::HashSet;
     let mut model_ids = HashSet::new();
-
-    // 1. Get all built-in mapped models
     for m in get_supported_models() {
         model_ids.insert(m);
     }
-
-    // 2. Get all custom mapped models (Custom)
     {
         let mapping = custom_mapping.read().await;
         for key in mapping.keys() {
             model_ids.insert(key.clone());
         }
     }
-
-    // 5. Ensure common Gemini/drawing model IDs are included
     model_ids.insert(MODEL_GEMINI_3_PRO_LOW.to_string());
-    
-    // Dynamically generate all Image Gen Combinations
     let base = MODEL_GEMINI_3_PRO_IMAGE;
     let resolutions = vec!["", "-2k", "-4k"];
     let ratios = vec!["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
-    
+
     for res in resolutions {
         for ratio in ratios.iter() {
             let mut id = base.to_string();
@@ -419,25 +354,12 @@ pub async fn get_all_dynamic_models(
     model_ids.insert(MODEL_GEMINI_3_PRO_HIGH.to_string());
     model_ids.insert(MODEL_GEMINI_3_PRO_LOW.to_string());
 
-
     let mut sorted_ids: Vec<_> = model_ids.into_iter().collect();
     sorted_ids.sort();
     sorted_ids
 }
-
-// Wildcard matching - supports multiple wildcards
-//
-// **Note**: Matching is **case-sensitive**. Pattern `GPT-5*` will NOT match `gpt-5.2`.
-//
-// Examples:
-// - `gpt-5*` matches `gpt-5`, `gpt-5.2-chat-latest` ✓
-// - `claude-*-sonnet-*` matches `claude-sonnet-4-6-20260115` ✓
-// - `*-thinking` matches `claude-opus-4-5-thinking` ✓
-// - `a*b*c` matches `a123b456c` ✓
 fn wildcard_match(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
-
-    // No wildcard - exact match
     if parts.len() == 1 {
         return pattern == text;
     }
@@ -446,20 +368,17 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 
     for (i, part) in parts.iter().enumerate() {
         if part.is_empty() {
-            continue; // Skip empty segments from consecutive wildcards
+            continue;
         }
 
         if i == 0 {
-            // First segment must match start
             if !text[text_pos..].starts_with(part) {
                 return false;
             }
             text_pos += part.len();
         } else if i == parts.len() - 1 {
-            // Last segment must match end
             return text[text_pos..].ends_with(part);
         } else {
-            // Middle segments - find next occurrence
             if let Some(pos) = text[text_pos..].find(part) {
                 text_pos += pos + part.len();
             } else {
@@ -470,30 +389,17 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 
     true
 }
-
-// Core model routing resolution engine
-// Priority: Exact match > Wildcard match > System default mapping
-// 
-// # Parameters
-// - `original_model`: Original model name
-// - `custom_mapping`: User-defined mapping table
-// 
-// # Returns
-// Mapped target model name
 pub fn resolve_model_route(
     original_model: &str,
     custom_mapping: &std::collections::HashMap<String, String>,
 ) -> String {
-    // 1. Exact match (highest priority)
     if let Some(target) = custom_mapping.get(original_model) {
-        crate::modules::logger::log_info(&format!("[Router] Exact mapping: {} -> {}", original_model, target));
+        crate::modules::logger::log_info(&format!(
+            "[Router] Exact mapping: {} -> {}",
+            original_model, target
+        ));
         return target.clone();
     }
-    
-    // 2. Wildcard match - most specific (highest non-wildcard chars) wins
-    // Note: When multiple patterns have the SAME specificity, HashMap iteration order
-    // determines the result (non-deterministic). Users can avoid this by making patterns
-    // more specific. Future improvement: use IndexMap + frontend sorting for full control.
     let mut best_match: Option<(&str, &str, usize)> = None;
 
     for (pattern, target) in custom_mapping.iter() {
@@ -512,43 +418,28 @@ pub fn resolve_model_route(
         ));
         return target.to_string();
     }
-    
-    // 3. System default mapping
     let result = map_claude_model_to_gemini(original_model);
     if result != original_model {
-        crate::modules::logger::log_info(&format!("[Router] System default mapping: {} -> {}", original_model, result));
+        crate::modules::logger::log_info(&format!(
+            "[Router] System default mapping: {} -> {}",
+            original_model, result
+        ));
     }
     result
 }
-
-// Normalize any physical model name to one of the 3 standard protection IDs.
-// This ensures quota protection works consistently regardless of API versioning or request variations.
-// 
-// Standard IDs:
-// - `gemini-3-flash`: All Flash variants (3-flash, etc.)
-// - `gemini-3-pro-high`: All Pro variants (3-pro, etc.)
-// - `claude-sonnet-4-5`: All Claude 4.5/4.6 and Opus/Haiku variants
-// 
-// Returns `None` if the model doesn't match any of the 3 protected categories.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
-    //  Strict matching based on user-defined groups (Case Insensitive)
     let lower = model_name.to_lowercase();
     match lower.as_str() {
-        // Gemini 3 Flash Group
         MODEL_GEMINI_3_FLASH
         | MODEL_GEMINI_3_FLASH_THINKING
         | MODEL_GEMINI_30_FLASH
         | MODEL_GEMINI_30_FLASH_THINKING => Some(MODEL_GEMINI_3_FLASH.to_string()),
-
-        // Gemini 3 Pro High Group
         MODEL_GEMINI_3_PRO
         | MODEL_GEMINI_3_PRO_PREVIEW
         | MODEL_GEMINI_3_PRO_HIGH
         | MODEL_GEMINI_3_PRO_LOW
         | MODEL_GEMINI_30_PRO
         | MODEL_GEMINI_30_PRO_THINKING => Some(MODEL_GEMINI_3_PRO_HIGH.to_string()),
-
-        // Claude 4.5/4.6 Group (includes Sonnet/Opus/Haiku)
         MODEL_CLAUDE_SONNET_45
         | MODEL_CLAUDE_SONNET_45_THINKING
         | MODEL_CLAUDE_SONNET_46
@@ -559,7 +450,7 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         | MODEL_CLAUDE_OPUS_46_THINKING
         | MODEL_CLAUDE_HAIKU_45 => Some(MODEL_CLAUDE_SONNET_45.to_string()),
 
-        _ => None
+        _ => None,
     }
 }
 
@@ -581,14 +472,8 @@ mod tests {
             map_claude_model_to_gemini("gemini-3-flash-mini-test"),
             "gemini-3-flash-mini-test"
         );
-        assert_eq!(
-            map_claude_model_to_gemini("unknown-model"),
-            "unknown-model"
-        );
-        assert_eq!(
-            map_claude_model_to_gemini("gpt-5"),
-            "gemini-3.0-flash"
-        );
+        assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
+        assert_eq!(map_claude_model_to_gemini("gpt-5"), "gemini-3.0-flash");
         assert_eq!(
             map_claude_model_to_gemini("GPT-5.3-CODEX-PRO"),
             "gemini-3.0-flash"
@@ -601,24 +486,31 @@ mod tests {
         custom.insert("gpt*".to_string(), "fallback".to_string());
         custom.insert("gpt-5*".to_string(), "specific".to_string());
         custom.insert("claude-opus-*".to_string(), "opus-default".to_string());
-        custom.insert("claude-opus*thinking".to_string(), "opus-thinking".to_string());
-
-        // More specific pattern wins
+        custom.insert(
+            "claude-opus*thinking".to_string(),
+            "opus-thinking".to_string(),
+        );
         assert_eq!(resolve_model_route("gpt-5.3-codex", &custom), "specific");
         assert_eq!(resolve_model_route("gpt-legacy", &custom), "fallback");
-        // Suffix constraint is more specific than prefix-only
-        assert_eq!(resolve_model_route("claude-opus-4-6-thinking", &custom), "opus-thinking");
-        assert_eq!(resolve_model_route("claude-opus-4-6", &custom), "opus-default");
+        assert_eq!(
+            resolve_model_route("claude-opus-4-6-thinking", &custom),
+            "opus-thinking"
+        );
+        assert_eq!(
+            resolve_model_route("claude-opus-4-6", &custom),
+            "opus-default"
+        );
     }
 
     #[test]
     fn test_multi_wildcard_support() {
         let mut custom = HashMap::new();
-        custom.insert("claude*sonnet-*".to_string(), "sonnet-versioned".to_string());
+        custom.insert(
+            "claude*sonnet-*".to_string(),
+            "sonnet-versioned".to_string(),
+        );
         custom.insert("gpt-*-*".to_string(), "gpt-multi".to_string());
         custom.insert("*thinking*".to_string(), "has-thinking".to_string());
-
-        // Multi-wildcard patterns should work
         assert_eq!(
             resolve_model_route("claude-sonnet-4-6-20260115", &custom),
             "sonnet-versioned"
@@ -631,11 +523,9 @@ mod tests {
             resolve_model_route("claude-thinking-extended", &custom),
             "has-thinking"
         );
-
-        // Negative case: *thinking* should NOT match models without "thinking"
         assert_eq!(
             resolve_model_route("random-model-name", &custom),
-            "random-model-name"  // Falls back to system default (pass-through)
+            "random-model-name"
         );
     }
 
@@ -645,12 +535,11 @@ mod tests {
         custom.insert("prefix*".to_string(), "prefix-match".to_string());
         custom.insert("*".to_string(), "catch-all".to_string());
         custom.insert("a*b*c".to_string(), "multi-wild".to_string());
-
-        // Specificity: "prefix*" (6) > "*" (0)
-        assert_eq!(resolve_model_route("prefix-anything", &custom), "prefix-match");
-        // Catch-all has lowest specificity
+        assert_eq!(
+            resolve_model_route("prefix-anything", &custom),
+            "prefix-match"
+        );
         assert_eq!(resolve_model_route("random-model", &custom), "catch-all");
-        // Multi-wildcard: "a*b*c" (3)
         assert_eq!(resolve_model_route("a-test-b-foo-c", &custom), "multi-wild");
     }
 }

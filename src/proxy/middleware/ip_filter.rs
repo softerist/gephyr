@@ -1,37 +1,29 @@
+use crate::modules::security_db;
+use crate::proxy::ProxySecurityConfig;
 use axum::{
     extract::{Request, State},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
-    http::StatusCode,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::modules::security_db;
-use crate::proxy::ProxySecurityConfig;
-
-// IP Blacklist/Whitelist Filter Middleware
 pub async fn ip_filter_middleware(
     State(state): State<Arc<RwLock<ProxySecurityConfig>>>,
     request: Request,
     next: Next,
 ) -> Response {
-    // Extract client IP
     let client_ip = extract_client_ip(&request);
-    
+
     if let Some(ip) = &client_ip {
-        // Read security config
         let security_config = state.read().await;
-        
-        // 1. Check whitelist (if enabled, only allow whitelisted IPs)
         if security_config.security_monitor.whitelist.enabled {
             match security_db::is_ip_in_whitelist(ip) {
                 Ok(true) => {
-                    // In whitelist, allow access
                     tracing::debug!("[IP Filter] IP {} is in whitelist, allowing", ip);
                     return next.run(request).await;
                 }
                 Ok(false) => {
-                    // Not in whitelist and whitelist mode enabled, block access
                     tracing::warn!("[IP Filter] IP {} not in whitelist, blocking", ip);
                     return create_blocked_response(
                         ip,
@@ -43,46 +35,49 @@ pub async fn ip_filter_middleware(
                 }
             }
         } else {
-            // Whitelist priority mode: if in whitelist, skip blacklist check
-            if security_config.security_monitor.whitelist.whitelist_priority {
+            if security_config
+                .security_monitor
+                .whitelist
+                .whitelist_priority
+            {
                 match security_db::is_ip_in_whitelist(ip) {
                     Ok(true) => {
                         tracing::debug!("[IP Filter] IP {} is in whitelist (priority mode), skipping blacklist check", ip);
                         return next.run(request).await;
                     }
-                    Ok(false) => {
-                        // Continue to check blacklist
-                    }
+                    Ok(false) => {}
                     Err(e) => {
                         tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
                     }
                 }
             }
         }
-
-        // 2. Check blacklist
         if security_config.security_monitor.blacklist.enabled {
             match security_db::get_blacklist_entry_for_ip(ip) {
                 Ok(Some(entry)) => {
                     tracing::warn!("[IP Filter] IP {} is in blacklist, blocking", ip);
-                    
-                    // Build detailed block message
-                    let reason = entry.reason.as_deref().unwrap_or("Malicious activity detected");
+                    let reason = entry
+                        .reason
+                        .as_deref()
+                        .unwrap_or("Malicious activity detected");
                     let ban_type = if let Some(expires_at) = entry.expires_at {
                         let now = chrono::Utc::now().timestamp();
                         let remaining_seconds = expires_at - now;
-                        
+
                         if remaining_seconds > 0 {
                             let hours = remaining_seconds / 3600;
                             let minutes = (remaining_seconds % 3600) / 60;
-                            
+
                             if hours > 24 {
                                 let days = hours / 24;
                                 format!("Temporary ban. Please try again after {} day(s).", days)
                             } else if hours > 0 {
                                 format!("Temporary ban. Please try again after {} hour(s) and {} minute(s).", hours, minutes)
                             } else {
-                                format!("Temporary ban. Please try again after {} minute(s).", minutes)
+                                format!(
+                                    "Temporary ban. Please try again after {} minute(s).",
+                                    minutes
+                                )
                             }
                         } else {
                             "Temporary ban (expired, will be removed soon).".to_string()
@@ -90,14 +85,9 @@ pub async fn ip_filter_middleware(
                     } else {
                         "Permanent ban.".to_string()
                     };
-                    
-                    let detailed_message = format!(
-                        "Access denied. Reason: {}. {}",
-                        reason,
-                        ban_type
-                    );
-                    
-                    // Record blocked access log
+
+                    let detailed_message =
+                        format!("Access denied. Reason: {}. {}", reason, ban_type);
                     let log = security_db::IpAccessLog {
                         id: uuid::Uuid::new_v4().to_string(),
                         client_ip: ip.clone(),
@@ -116,20 +106,16 @@ pub async fn ip_filter_middleware(
                         block_reason: Some(format!("IP in blacklist: {}", reason)),
                         username: None,
                     };
-                    
+
                     tokio::spawn(async move {
                         if let Err(e) = security_db::save_ip_access_log(&log) {
                             tracing::error!("[IP Filter] Failed to save blocked access log: {}", e);
                         }
                     });
-                    
-                    return create_blocked_response(
-                        ip,
-                        &detailed_message,
-                    );
+
+                    return create_blocked_response(ip, &detailed_message);
                 }
                 Ok(None) => {
-                    // Not in blacklist, allow access
                     tracing::debug!("[IP Filter] IP {} not in blacklist, allowing", ip);
                 }
                 Err(e) => {
@@ -140,21 +126,15 @@ pub async fn ip_filter_middleware(
     } else {
         tracing::warn!("[IP Filter] Unable to extract client IP from request");
     }
-
-    // Allow request
     next.run(request).await
 }
-
-// Extract client IP from request
 fn extract_client_ip(request: &Request) -> Option<String> {
-    // 1. Prefer X-Forwarded-For (take the first IP)
     request
         .headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
         .or_else(|| {
-            // 2. Fallback to X-Real-IP
             request
                 .headers()
                 .get("x-real-ip")
@@ -162,16 +142,12 @@ fn extract_client_ip(request: &Request) -> Option<String> {
                 .map(|s| s.to_string())
         })
         .or_else(|| {
-            // 3. Finally try to get from ConnectInfo (TCP connection IP)
-            // This can solve the issue of failing to get IP during local development/testing when there is no proxy header.
             request
                 .extensions()
                 .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
                 .map(|info| info.0.ip().to_string())
         })
 }
-
-// Create blocked response
 fn create_blocked_response(ip: &str, message: &str) -> Response {
     let body = serde_json::json!({
         "error": {
@@ -181,7 +157,7 @@ fn create_blocked_response(ip: &str, message: &str) -> Response {
             "ip": ip,
         }
     });
-    
+
     (
         StatusCode::FORBIDDEN,
         [(axum::http::header::CONTENT_TYPE, "application/json")],

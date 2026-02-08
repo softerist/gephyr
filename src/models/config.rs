@@ -1,41 +1,34 @@
-use serde::{Deserialize, Serialize};
 use crate::proxy::ProxyConfig;
-
-// Application configuration
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub language: String,
     pub theme: String,
     pub auto_refresh: bool,
-    pub refresh_interval: i32,  // minutes
+    pub refresh_interval: i32,
     pub auto_sync: bool,
-    pub sync_interval: i32,  // minutes
+    pub sync_interval: i32,
     pub default_export_path: Option<String>,
     #[serde(default)]
     pub proxy: ProxyConfig,
-    pub antigravity_executable: Option<String>, //  Manually specified Antigravity executable path
-    pub antigravity_args: Option<Vec<String>>, //  Antigravity startup arguments
+    pub antigravity_executable: Option<String>,
+    pub antigravity_args: Option<Vec<String>>,
     #[serde(default)]
-    pub auto_launch: bool,  // Launch on startup
+    pub auto_launch: bool,
     #[serde(default)]
-    pub scheduled_warmup: ScheduledWarmupConfig, //  Scheduled warmup configuration
+    pub scheduled_warmup: ScheduledWarmupConfig,
     #[serde(default)]
-    pub quota_protection: QuotaProtectionConfig, //  Quota protection configuration
+    pub quota_protection: QuotaProtectionConfig,
     #[serde(default)]
-    pub pinned_quota_models: PinnedQuotaModelsConfig, //  Pinned quota models list
+    pub pinned_quota_models: PinnedQuotaModelsConfig,
     #[serde(default)]
-    pub circuit_breaker: CircuitBreakerConfig, //  Circuit breaker configuration
+    pub circuit_breaker: CircuitBreakerConfig,
     #[serde(default)]
-    pub hidden_menu_items: Vec<String>, // Hidden menu item path list
+    pub hidden_menu_items: Vec<String>,
 }
-
-// Scheduled warmup configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledWarmupConfig {
-    // Whether smart warmup is enabled
     pub enabled: bool,
-
-    // List of models to warmup
     #[serde(default = "default_warmup_models")]
     pub monitored_models: Vec<String>,
 }
@@ -58,17 +51,10 @@ impl Default for ScheduledWarmupConfig {
         Self::new()
     }
 }
-
-// Quota protection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuotaProtectionConfig {
-    // Whether quota protection is enabled
     pub enabled: bool,
-    
-    // Reserved quota percentage (1-99)
     pub threshold_percentage: u32,
-
-    // List of monitored models (e.g. gemini-3-flash, gemini-3-pro-high, claude-sonnet-4-5)
     #[serde(default = "default_monitored_models")]
     pub monitored_models: Vec<String>,
 }
@@ -81,7 +67,7 @@ impl QuotaProtectionConfig {
     pub fn new() -> Self {
         Self {
             enabled: false,
-            threshold_percentage: 10, // Default 10% reserve
+            threshold_percentage: 10,
             monitored_models: default_monitored_models(),
         }
     }
@@ -92,11 +78,8 @@ impl Default for QuotaProtectionConfig {
         Self::new()
     }
 }
-
-// Pinned quota models configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PinnedQuotaModelsConfig {
-    // List of pinned models (displayed outside the account list)
     #[serde(default = "default_pinned_models")]
     pub models: Vec<String>,
 }
@@ -118,15 +101,9 @@ impl Default for PinnedQuotaModelsConfig {
         Self::new()
     }
 }
-
-// Circuit breaker configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBreakerConfig {
-    // Whether circuit breaker is enabled
     pub enabled: bool,
-
-    // Unified backoff steps (seconds)
-    // Default: [60, 300, 1800, 7200]
     #[serde(default = "default_backoff_steps")]
     pub backoff_steps: Vec<u64>,
 }
