@@ -14,6 +14,8 @@ pub type BytesResultStream = Pin<Box<dyn Stream<Item = Result<Bytes, String>> + 
 pub struct StreamPeekOptions<'a> {
     pub timeout: Duration,
     pub context: &'a str,
+    pub fail_on_empty_chunk: bool,
+    pub empty_chunk_message: &'a str,
     pub skip_data_colon_heartbeat: bool,
     pub detect_error_events: bool,
     pub error_event_message: &'a str,
@@ -30,6 +32,13 @@ pub async fn peek_first_data_chunk(
         match tokio::time::timeout(options.timeout, stream.next()).await {
             Ok(Some(Ok(bytes))) => {
                 if bytes.is_empty() {
+                    if options.fail_on_empty_chunk {
+                        tracing::warn!(
+                            "[{}] Empty chunk during peek (configured as failure)",
+                            options.context
+                        );
+                        return Err(options.empty_chunk_message.to_string());
+                    }
                     continue;
                 }
 

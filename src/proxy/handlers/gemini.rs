@@ -204,57 +204,48 @@ pub async fn handle_generate(
                     "attempt": attempt,
                     "status": status.as_u16(),
                 });
-                let mut response_stream = debug_logger::wrap_reqwest_stream_with_debug(
-                    Box::pin(response.bytes_stream()),
-                    debug_cfg.clone(),
-                    trace_id.clone(),
-                    "upstream_response",
-                    meta,
-                );
+                let mut response_stream: crate::proxy::handlers::streaming::BytesResultStream =
+                    Box::pin(
+                        debug_logger::wrap_reqwest_stream_with_debug(
+                            Box::pin(response.bytes_stream()),
+                            debug_cfg.clone(),
+                            trace_id.clone(),
+                            "upstream_response",
+                            meta,
+                        )
+                        .map(|r| r.map_err(|e| e.to_string())),
+                    );
                 let mut buffer = BytesMut::new();
                 let s_id = session_id.clone();
-                let mut first_chunk = None;
-                let mut retry_gemini = false;
-
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    response_stream.next(),
-                )
-                .await
-                {
-                    Ok(Some(Ok(bytes))) => {
-                        if bytes.is_empty() {
-                            tracing::warn!("[Gemini] Empty first chunk received, retrying...");
-                            retry_gemini = true;
-                        } else {
-                            first_chunk = Some(bytes);
+                let first_chunk =
+                    match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                        &mut response_stream,
+                        &crate::proxy::handlers::streaming::StreamPeekOptions {
+                            timeout: std::time::Duration::from_secs(30),
+                            context: "Gemini:stream",
+                            fail_on_empty_chunk: true,
+                            empty_chunk_message: "Empty first chunk received",
+                            skip_data_colon_heartbeat: false,
+                            detect_error_events: false,
+                            error_event_message: "Error event during peek",
+                            stream_error_prefix: "Stream error",
+                            empty_stream_message: "Empty response",
+                            timeout_message: "Timeout",
+                        },
+                    )
+                    .await
+                    {
+                        Ok(chunk) => chunk,
+                        Err(err) => {
+                            last_error = err;
+                            continue;
                         }
-                    }
-                    Ok(Some(Err(e))) => {
-                        tracing::warn!("[Gemini] Stream error during peek: {}, retrying...", e);
-                        last_error = format!("Stream error: {}", e);
-                        retry_gemini = true;
-                    }
-                    Ok(None) => {
-                        tracing::warn!("[Gemini] Stream ended immediately, retrying...");
-                        last_error = "Empty response".to_string();
-                        retry_gemini = true;
-                    }
-                    Err(_) => {
-                        tracing::warn!("[Gemini] Timeout waiting for first chunk, retrying...");
-                        last_error = "Timeout".to_string();
-                        retry_gemini = true;
-                    }
-                }
-
-                if retry_gemini {
-                    continue;
-                }
+                    };
 
                 let s_id_for_stream = s_id.clone();
                 let model_name_for_stream = mapped_model.clone();
                 let stream = async_stream::stream! {
-                    let mut first_data = first_chunk;
+                    let mut first_data = Some(first_chunk);
                     loop {
                         let item = if let Some(fd) = first_data.take() {
                             Some(Ok(fd))

@@ -272,6 +272,8 @@ pub async fn handle_chat_completions(
                     &crate::proxy::handlers::streaming::StreamPeekOptions {
                         timeout: Duration::from_secs(60),
                         context: "OpenAI:chat",
+                        fail_on_empty_chunk: false,
+                        empty_chunk_message: "Empty response stream during peek",
                         skip_data_colon_heartbeat: true,
                         detect_error_events: true,
                         error_event_message: "Error event during peek",
@@ -977,6 +979,8 @@ pub async fn handle_completions(
                         &crate::proxy::handlers::streaming::StreamPeekOptions {
                             timeout: Duration::from_secs(60),
                             context: "OpenAI:legacy",
+                            fail_on_empty_chunk: false,
+                            empty_chunk_message: "Empty response stream",
                             skip_data_colon_heartbeat: true,
                             detect_error_events: true,
                             error_event_message: "Error event during peek",
@@ -1018,6 +1022,8 @@ pub async fn handle_completions(
                         &crate::proxy::handlers::streaming::StreamPeekOptions {
                             timeout: Duration::from_secs(60),
                             context: "OpenAI:internal",
+                            fail_on_empty_chunk: false,
+                            empty_chunk_message: "Empty internal stream",
                             skip_data_colon_heartbeat: true,
                             detect_error_events: true,
                             error_event_message: "Error event in internal stream",

@@ -727,6 +727,8 @@ pub async fn handle_messages(
                     &crate::proxy::handlers::streaming::StreamPeekOptions {
                         timeout: Duration::from_secs(60),
                         context: "Claude:stream",
+                        fail_on_empty_chunk: false,
+                        empty_chunk_message: "Empty response stream during peek",
                         skip_data_colon_heartbeat: false,
                         detect_error_events: false,
                         error_event_message: "Error event during peek",
