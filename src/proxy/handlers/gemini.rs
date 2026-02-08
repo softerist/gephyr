@@ -352,15 +352,16 @@ pub async fn handle_generate(
                                 session_id
                             );
                             let unwrapped = unwrap_response(&gemini_resp);
-                            return Ok((
-                                StatusCode::OK,
-                                [
-                                    ("X-Account-Email", email.as_str()),
-                                    ("X-Mapped-Model", mapped_model.as_str()),
-                                ],
-                                Json(unwrapped),
-                            )
-                                .into_response());
+                            return Ok(
+                                crate::proxy::handlers::streaming::build_json_response_with_headers(
+                                    StatusCode::OK,
+                                    &unwrapped,
+                                    Some(&email),
+                                    Some(&mapped_model),
+                                    &[],
+                                )
+                                .into_response(),
+                            );
                         }
                         Err(e) => {
                             error!("Stream collection error: {}", e);
@@ -412,15 +413,16 @@ pub async fn handle_generate(
             }
 
             let unwrapped = unwrap_response(&gemini_resp);
-            return Ok((
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(unwrapped),
-            )
-                .into_response());
+            return Ok(
+                crate::proxy::handlers::streaming::build_json_response_with_headers(
+                    StatusCode::OK,
+                    &unwrapped,
+                    Some(&email),
+                    Some(&mapped_model),
+                    &[],
+                )
+                .into_response(),
+            );
         }
         let status_code = status.as_u16();
         let error_text = response
@@ -497,21 +499,12 @@ pub async fn handle_generate(
             "Gemini Upstream non-retryable error {}: {}",
             status_code, error_text
         );
-        return Ok((
+        return Ok(crate::proxy::handlers::errors::gemini_upstream_error_response(
             status,
-            [
-                ("X-Account-Email", email.as_str()),
-                ("X-Mapped-Model", mapped_model.as_str()),
-            ],
-            Json(json!({
-                "error": {
-                    "code": status_code,
-                    "message": error_text,
-                    "status": "UPSTREAM_ERROR"
-                }
-            })),
-        )
-            .into_response());
+            &error_text,
+            Some(&email),
+            Some(&mapped_model),
+        ));
     }
 
     Ok(crate::proxy::handlers::errors::accounts_exhausted_text_response(

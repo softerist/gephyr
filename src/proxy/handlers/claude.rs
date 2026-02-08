@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Json, State},
-    http::{header, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
@@ -811,26 +811,21 @@ pub async fn handle_messages(
                                         "[{}] ✓ Stream collected and converted to JSON",
                                         trace_id
                                     );
-                                    return Response::builder()
-                                        .status(StatusCode::OK)
-                                        .header(header::CONTENT_TYPE, "application/json")
-                                        .header("X-Account-Email", &email)
-                                        .header("X-Mapped-Model", &request_with_mapped.model)
-                                        .header(
+                                    return crate::proxy::handlers::streaming::build_json_response_with_headers(
+                                        StatusCode::OK,
+                                        &full_response,
+                                        Some(&email),
+                                        Some(&request_with_mapped.model),
+                                        &[(
                                             "X-Context-Purified",
                                             if is_purified { "true" } else { "false" },
-                                        )
-                                        .body(Body::from(
-                                            serde_json::to_string(&full_response).unwrap(),
-                                        ))
-                                        .unwrap();
+                                        )],
+                                    );
                                 }
                                 Err(e) => {
-                                    return (
-                                        StatusCode::INTERNAL_SERVER_ERROR,
-                                        format!("Stream collection error: {}", e),
-                                    )
-                                        .into_response();
+                                    return crate::proxy::handlers::errors::stream_collection_error_response(
+                                        &e.to_string(),
+                                    );
                                 }
                             }
                         }
@@ -863,8 +858,10 @@ pub async fn handle_messages(
                 let gemini_resp: Value = match serde_json::from_slice(&bytes) {
                     Ok(v) => v,
                     Err(e) => {
-                        return (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e))
-                            .into_response()
+                        return crate::proxy::handlers::errors::parse_error_response(
+                            &e.to_string(),
+                            None,
+                        )
                     }
                 };
                 let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);

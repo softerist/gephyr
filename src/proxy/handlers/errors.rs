@@ -141,3 +141,67 @@ pub fn parse_error_response(error: &str, mapped_model: Option<&str>) -> Response
     )
         .into_response()
 }
+
+pub fn openai_upstream_error_response(
+    status: StatusCode,
+    error_text: &str,
+    account_email: Option<&str>,
+    mapped_model: Option<&str>,
+) -> Response {
+    let mut headers = HeaderMap::new();
+    if let Some(email) = account_email {
+        if let Ok(v) = HeaderValue::from_str(email) {
+            headers.insert("X-Account-Email", v);
+        }
+    }
+    if let Some(model) = mapped_model {
+        if let Ok(v) = HeaderValue::from_str(model) {
+            headers.insert("X-Mapped-Model", v);
+        }
+    }
+
+    (
+        status,
+        headers,
+        Json(json!({
+            "error": {
+                "message": error_text,
+                "type": "upstream_error",
+                "code": status.as_u16()
+            }
+        })),
+    )
+        .into_response()
+}
+
+pub fn gemini_upstream_error_response(
+    status: StatusCode,
+    error_text: &str,
+    account_email: Option<&str>,
+    mapped_model: Option<&str>,
+) -> Response {
+    let mut headers = HeaderMap::new();
+    if let Some(email) = account_email {
+        if let Ok(v) = HeaderValue::from_str(email) {
+            headers.insert("X-Account-Email", v);
+        }
+    }
+    if let Some(model) = mapped_model {
+        if let Ok(v) = HeaderValue::from_str(model) {
+            headers.insert("X-Mapped-Model", v);
+        }
+    }
+
+    (
+        status,
+        headers,
+        Json(json!({
+            "error": {
+                "code": status.as_u16(),
+                "message": error_text,
+                "status": "UPSTREAM_ERROR"
+            }
+        })),
+    )
+        .into_response()
+}

@@ -346,15 +346,16 @@ pub async fn handle_chat_completions(
                     match collect_stream_to_json(Box::pin(combined_stream)).await {
                         Ok(full_response) => {
                             info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
-                            return Ok((
-                                StatusCode::OK,
-                                [
-                                    ("X-Account-Email", email.as_str()),
-                                    ("X-Mapped-Model", mapped_model.as_str()),
-                                ],
-                                Json(full_response),
-                            )
-                                .into_response());
+                            return Ok(
+                                crate::proxy::handlers::streaming::build_json_response_with_headers(
+                                    StatusCode::OK,
+                                    &full_response,
+                                    Some(&email),
+                                    Some(&mapped_model),
+                                    &[],
+                                )
+                                .into_response(),
+                            );
                         }
                         Err(e) => {
                             error!("[{}] Stream collection error: {}", trace_id, e);
@@ -373,15 +374,16 @@ pub async fn handle_chat_completions(
 
             let openai_response =
                 transform_openai_response(&gemini_resp, Some(&session_id), message_count);
-            return Ok((
-                StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(openai_response),
-            )
-                .into_response());
+            return Ok(
+                crate::proxy::handlers::streaming::build_json_response_with_headers(
+                    StatusCode::OK,
+                    &openai_response,
+                    Some(&email),
+                    Some(&mapped_model),
+                    &[],
+                )
+                .into_response(),
+            );
         }
         let status_code = status.as_u16();
         let _retry_after = response
@@ -544,21 +546,12 @@ pub async fn handle_chat_completions(
             "OpenAI Upstream non-retryable error {} on account {}: {}",
             status_code, email, error_text
         );
-        return Ok((
+        return Ok(crate::proxy::handlers::errors::openai_upstream_error_response(
             status,
-            [
-                ("X-Account-Email", email.as_str()),
-                ("X-Mapped-Model", mapped_model.as_str()),
-            ],
-            Json(json!({
-                "error": {
-                    "message": error_text,
-                    "type": "upstream_error",
-                    "code": status_code
-                }
-            })),
-        )
-            .into_response());
+            &error_text,
+            Some(&email),
+            Some(&mapped_model),
+        ));
     }
     Ok(crate::proxy::handlers::errors::accounts_exhausted_text_response(
         &last_error,
