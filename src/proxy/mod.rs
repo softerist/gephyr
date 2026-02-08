@@ -5,6 +5,7 @@ pub mod config;
 pub mod project_resolver;
 pub mod security;
 pub mod server;
+pub mod state;
 pub mod token_manager;
 
 // New Architecture Modules
@@ -17,6 +18,7 @@ pub mod mappers; // Protocol Mappers
 pub mod middleware; // Axum Middleware
 pub mod monitor; // Monitoring
 pub mod providers; // Extra upstream providers (z.ai, etc.)
+pub mod routes; // Route builders
 pub mod rate_limit; // Rate limit tracking
 pub mod session_manager; // Session fingerprint management
 pub mod signature_cache; // Signature Cache (v3.3.16)

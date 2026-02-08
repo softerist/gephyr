@@ -1,0 +1,62 @@
+mod admin;
+
+use axum::{
+    routing::{get, post},
+    Router,
+};
+
+use crate::proxy::handlers;
+use crate::proxy::middleware::{auth_middleware, ip_filter_middleware, monitor_middleware};
+use crate::proxy::state::AppState;
+
+pub use admin::build_admin_routes;
+
+pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/health", get(crate::proxy::server::health_check_handler))
+        .route("/healthz", get(crate::proxy::server::health_check_handler))
+        // OpenAI Protocol
+        .route("/v1/models", get(handlers::openai::handle_list_models))
+        .route(
+            "/v1/chat/completions",
+            post(handlers::openai::handle_chat_completions),
+        )
+        .route("/v1/completions", post(handlers::openai::handle_completions))
+        .route("/v1/responses", post(handlers::openai::handle_completions)) // Compatible with Codex CLI
+        // Claude Protocol
+        .route("/v1/messages", post(handlers::claude::handle_messages))
+        .route(
+            "/v1/messages/count_tokens",
+            post(handlers::claude::handle_count_tokens),
+        )
+        .route("/v1/models/claude", get(handlers::claude::handle_list_models))
+        // Gemini Protocol (Native)
+        .route("/v1beta/models", get(handlers::gemini::handle_list_models))
+        // Handle both GET (get info) and POST (generateContent with colon) at the same route
+        .route(
+            "/v1beta/models/:model",
+            get(handlers::gemini::handle_get_model).post(handlers::gemini::handle_generate),
+        )
+        .route(
+            "/v1beta/models/:model/countTokens",
+            post(handlers::gemini::handle_count_tokens),
+        ) // Specific route priority
+        .route("/v1/models/detect", post(handlers::common::handle_detect_model))
+        // Apply AI service specific layers
+        // Note: Axum layer execution order is bottom-up (onion model)
+        // Request: ip_filter -> auth -> monitor -> handler
+        // Response: handler -> monitor -> auth -> ip_filter
+        // monitor needs to execute after auth to obtain UserTokenIdentity
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            monitor_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            ip_filter_middleware,
+        ))
+}

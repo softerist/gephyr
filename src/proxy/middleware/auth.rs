@@ -235,7 +235,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_auth_with_password() {
-        let security = Arc::new(RwLock::new(ProxySecurityConfig {
+        let _security = Arc::new(RwLock::new(ProxySecurityConfig {
             auth_mode: ProxyAuthMode::Strict,
             api_key: "sk-api".to_string(),
             admin_password: Some("admin123".to_string()),
@@ -245,7 +245,7 @@ mod tests {
         }));
 
         // Mock request - admin interface using correct admin password
-        let req = Request::builder()
+        let _req = Request::builder()
             .header("Authorization", "Bearer admin123")
             .uri("/admin/stats")
             .body(axum::body::Body::empty())
