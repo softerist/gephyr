@@ -1,4 +1,4 @@
-use super::*;
+use super::TokenManager;
 
 impl TokenManager {
     pub fn len(&self) -> usize {

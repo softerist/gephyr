@@ -1,4 +1,10 @@
-use super::*;
+use crate::proxy::admin::ErrorResponse;
+use axum::{
+    extract::Json,
+    http::StatusCode,
+    response::IntoResponse,
+};
+use serde::Deserialize;
 
 pub(crate) async fn admin_enable_debug_console() -> impl IntoResponse {
     crate::modules::system::log_bridge::enable_log_bridge();

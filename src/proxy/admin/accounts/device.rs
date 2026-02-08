@@ -1,4 +1,12 @@
-use super::*;
+use crate::modules::auth::account;
+use crate::proxy::admin::ErrorResponse;
+use crate::proxy::state::AdminState;
+use axum::{
+    extract::{Json, Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub(crate) struct BindDeviceRequest {
