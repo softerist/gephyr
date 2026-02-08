@@ -115,14 +115,16 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `API_KEY` | ✅ | — | API authentication token |
-| `AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
-| `ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
+| `GEPHYR_API_KEY` | ✅ (for scripts) | — | API key used by `console.ps1`; passed to container as `API_KEY` |
+| `API_KEY` / `ABV_API_KEY` | ✅ (runtime) | — | Runtime API authentication token |
+| `AUTH_MODE` / `ABV_AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
+| `ALLOW_LAN_ACCESS` / `ABV_ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
 | `ABV_ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
-| `GEPHYR_GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
-| `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
+| `GEPHYR_GOOGLE_OAUTH_CLIENT_ID` / `ABV_GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
+| `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` / `ABV_GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
 | `ABV_DATA_DIR` | — | `~/.gephyr` | Data directory path |
 | `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
+| `ABV_MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
 
 ### Console Commands
 
