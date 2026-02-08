@@ -33,6 +33,7 @@ DISABLE_ADMIN_AFTER=false
 IMAGE="gephyr:latest"
 MODEL="gpt-5.3-codex"
 PROMPT="hello from gephyr"
+PORT="${PORT:-8045}"
 
 print_help() {
   cat <<'EOF'
@@ -47,12 +48,14 @@ Options:
   --run-api-test         Run api-test after accounts check
   --disable-admin-after  Restart with admin API disabled at the end
   --image <image>        Docker image tag (default gephyr:latest)
+  --port <port>          Host port (default 8045)
   --model <name>         Model used by --run-api-test
   --prompt <text>        Prompt used by --run-api-test
   -h, --help             Show help
 
 Examples:
   ./test-clean.sh
+  ./test-clean.sh --port 8045
   ./test-clean.sh --run-api-test --model gpt-5.2-chat-latest
   ./test-clean.sh --skip-login --cache-build
 EOF
@@ -64,6 +67,64 @@ step() {
   echo "==> $name"
   "$@"
   echo
+}
+
+wait_oauth_account_link() {
+  local timeout_sec="${1:-180}"
+  local poll_sec="${2:-2}"
+  local elapsed=0
+  local next_progress=10
+  local api_key="${GEPHYR_API_KEY:-}"
+
+  if [[ -z "$api_key" && -f "$SCRIPT_DIR/.env.local" ]]; then
+    api_key="$(grep -E '^GEPHYR_API_KEY=' "$SCRIPT_DIR/.env.local" | tail -n 1 | cut -d '=' -f2- | tr -d '\r' | sed -E "s/^['\"]|['\"]$//g")"
+  fi
+
+  if [[ -z "$api_key" ]]; then
+    echo "Warning: skipping OAuth wait because GEPHYR_API_KEY is missing (env and .env.local)."
+    return 1
+  fi
+
+  echo "Waiting for OAuth callback/account link (timeout: ${timeout_sec}s)..."
+  echo "Complete login in your browser; script continues automatically after account is linked."
+
+  while (( elapsed < timeout_sec )); do
+    local payload
+    payload="$(curl -sS -H "Authorization: Bearer ${api_key}" "http://127.0.0.1:${PORT}/api/accounts" || true)"
+    local count="0"
+
+    if command -v python3 >/dev/null 2>&1; then
+      count="$(python3 - <<'PY' "$payload"
+import json,sys
+raw = sys.argv[1] if len(sys.argv) > 1 else "{}"
+try:
+    data = json.loads(raw or "{}")
+except Exception:
+    print(0)
+    raise SystemExit(0)
+arr = data.get("accounts", [])
+print(len(arr) if isinstance(arr, list) else 0)
+PY
+)"
+    else
+      count="$(printf '%s' "$payload" | grep -o '"id"' | wc -l | tr -d ' ')"
+    fi
+
+    if [[ "${count}" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+      echo "OAuth account linked (${count} account(s) found)."
+      return 0
+    fi
+
+    sleep "$poll_sec"
+    elapsed=$((elapsed + poll_sec))
+    if (( elapsed >= next_progress )); then
+      echo "Still waiting for OAuth linkage... ${elapsed}s elapsed."
+      next_progress=$((next_progress + 10))
+    fi
+  done
+
+  echo "Warning: timed out waiting for OAuth account linkage. Finish OAuth and run ./console.sh accounts."
+  return 1
 }
 
 if [[ ! -f "$CONSOLE_SCRIPT" ]]; then
@@ -80,6 +141,7 @@ while [[ $# -gt 0 ]]; do
     --run-api-test) RUN_API_TEST=true; shift ;;
     --disable-admin-after) DISABLE_ADMIN_AFTER=true; shift ;;
     --image) IMAGE="$2"; shift 2 ;;
+    --port) PORT="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --prompt) PROMPT="$2"; shift 2 ;;
     -h|--help|-?|\?|/help) print_help; exit 0 ;;
@@ -99,25 +161,26 @@ if [[ "$SKIP_BUILD" != "true" ]]; then
   fi
 fi
 
-step "Restarting container with admin API enabled" bash "$CONSOLE_SCRIPT" restart --admin-api --image "$IMAGE"
-step "Health check" bash "$CONSOLE_SCRIPT" health
+step "Restarting container with admin API enabled" bash "$CONSOLE_SCRIPT" restart --admin-api --image "$IMAGE" --port "$PORT"
+step "Health check" bash "$CONSOLE_SCRIPT" health --port "$PORT"
 
 if [[ "$SKIP_LOGIN" != "true" ]]; then
   if [[ "$NO_BROWSER" == "true" ]]; then
-    step "Starting OAuth login flow" bash "$CONSOLE_SCRIPT" login --no-browser --image "$IMAGE"
+    step "Starting OAuth login flow" bash "$CONSOLE_SCRIPT" login --no-browser --image "$IMAGE" --port "$PORT"
   else
-    step "Starting OAuth login flow" bash "$CONSOLE_SCRIPT" login --image "$IMAGE"
+    step "Starting OAuth login flow" bash "$CONSOLE_SCRIPT" login --image "$IMAGE" --port "$PORT"
   fi
+  step "Waiting for OAuth account linkage" wait_oauth_account_link 180 2 || true
 fi
 
-step "List accounts" bash "$CONSOLE_SCRIPT" accounts
+step "List accounts" bash "$CONSOLE_SCRIPT" accounts --port "$PORT"
 
 if [[ "$RUN_API_TEST" == "true" ]]; then
-  step "Run API test" bash "$CONSOLE_SCRIPT" api-test --model "$MODEL" --prompt "$PROMPT"
+  step "Run API test" bash "$CONSOLE_SCRIPT" api-test --model "$MODEL" --prompt "$PROMPT" --port "$PORT"
 fi
 
 if [[ "$DISABLE_ADMIN_AFTER" == "true" ]]; then
-  step "Restarting with admin API disabled" bash "$CONSOLE_SCRIPT" restart --image "$IMAGE"
+  step "Restarting with admin API disabled" bash "$CONSOLE_SCRIPT" restart --image "$IMAGE" --port "$PORT"
 fi
 
 echo "test-clean completed."

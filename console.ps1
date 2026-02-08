@@ -299,7 +299,27 @@ function Show-Health {
 
 function Show-Accounts {
     $headers = Get-AuthHeaders
-    Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
+    $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
+    $accounts = @()
+    if ($resp -and $resp.accounts) {
+        $accounts = @($resp.accounts)
+    }
+
+    if ($accounts.Count -eq 0) {
+        [PSCustomObject]@{
+            status = "No linked accounts"
+            current_account_id = $resp.current_account_id
+        } | Format-Table -AutoSize
+        return
+    }
+
+    $accounts |
+        Select-Object id, email, name, is_current, disabled, proxy_disabled, last_used |
+        Format-Table -AutoSize
+
+    if ($resp.current_account_id) {
+        Write-Host "Current account id: $($resp.current_account_id)"
+    }
 }
 
 function Logout-Accounts {

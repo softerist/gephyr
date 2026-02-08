@@ -184,8 +184,87 @@ show_health() {
 
 show_accounts() {
   ensure_api_key
-  curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/accounts"
+  local payload
+  payload="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/accounts")"
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY' "$payload"
+import json,sys
+raw = sys.argv[1] if len(sys.argv) > 1 else "{}"
+try:
+    data = json.loads(raw or "{}")
+except Exception:
+    print(raw)
+    raise SystemExit(0)
+
+accounts = data.get("accounts", [])
+current = data.get("current_account_id")
+
+if not isinstance(accounts, list) or len(accounts) == 0:
+    print("No linked accounts.")
+    if current:
+        print(f"current_account_id: {current}")
+    raise SystemExit(0)
+
+print("id\temail\tname\tis_current\tdisabled\tproxy_disabled\tlast_used")
+for a in accounts:
+    print(
+        f"{a.get('id','')}\t{a.get('email','')}\t{a.get('name','') or ''}\t"
+        f"{a.get('is_current', False)}\t{a.get('disabled', False)}\t"
+        f"{a.get('proxy_disabled', False)}\t{a.get('last_used','')}"
+    )
+if current:
+    print(f"\ncurrent_account_id: {current}")
+PY
+  else
+    echo "$payload"
+  fi
   echo
+}
+
+wait_oauth_account_link() {
+  local timeout_sec="${1:-180}"
+  local poll_sec="${2:-2}"
+  local elapsed=0
+
+  ensure_api_key
+
+  echo "Waiting for OAuth callback/account link (timeout: ${timeout_sec}s)..."
+  echo "Complete login in your browser; script continues automatically after account is linked."
+
+  while (( elapsed < timeout_sec )); do
+    local payload
+    payload="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/accounts" || true)"
+    local count="0"
+
+    if command -v python3 >/dev/null 2>&1; then
+      count="$(python3 - <<'PY' "$payload"
+import json,sys
+raw = sys.argv[1] if len(sys.argv) > 1 else "{}"
+try:
+    data = json.loads(raw or "{}")
+except Exception:
+    print(0)
+    raise SystemExit(0)
+arr = data.get("accounts", [])
+print(len(arr) if isinstance(arr, list) else 0)
+PY
+)"
+    else
+      count="$(printf '%s' "$payload" | grep -o '"id"' | wc -l | tr -d ' ')"
+    fi
+
+    if [[ "${count}" =~ ^[0-9]+$ ]] && (( count > 0 )); then
+      echo "OAuth account linked (${count} account(s) found)."
+      return 0
+    fi
+
+    sleep "$poll_sec"
+    elapsed=$((elapsed + poll_sec))
+  done
+
+  echo "Warning: timed out waiting for OAuth account linkage. Run ./console.sh accounts after completing OAuth."
+  return 1
 }
 
 logout_accounts() {
@@ -300,6 +379,7 @@ oauth_flow() {
   echo "OAuth URL:"
   echo "$oauth_url"
   open_url "$oauth_url"
+  wait_oauth_account_link 180 2 || true
 }
 
 generate_key() {
