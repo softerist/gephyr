@@ -81,7 +81,7 @@ impl AccountService {
     // Delete account logic
     pub fn delete_account(&self, account_id: &str) -> Result<(), String> {
         modules::delete_account(account_id)?;
-        self.integration.update_tray();
+        self.integration.refresh_runtime_state();
         Ok(())
     }
 
@@ -159,8 +159,8 @@ impl AccountService {
             token_data,
         )?;
 
-        // Send UI update notification (via integration)
-        self.integration.update_tray();
+        // Notify runtime state update via integration adapter.
+        self.integration.refresh_runtime_state();
 
         Ok(account)
     }

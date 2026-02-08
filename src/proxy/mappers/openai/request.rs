@@ -857,6 +857,7 @@ mod tests {
     
     #[test]
     fn test_gemini_pro_thinking_injection() {
+        let _budget_guard = crate::proxy::config::lock_thinking_budget_for_test();
         let req = OpenAIRequest {
             model: MODEL_GEMINI_3_PRO_PREVIEW.to_string(),
             messages: vec![OpenAIMessage {

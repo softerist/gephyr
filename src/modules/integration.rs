@@ -2,7 +2,7 @@ use crate::models::Account;
 
 pub trait SystemIntegration: Send + Sync {
     async fn on_account_switch(&self, account: &Account) -> Result<(), String>;
-    fn update_tray(&self);
+    fn refresh_runtime_state(&self);
     fn show_notification(&self, title: &str, body: &str);
 }
 
@@ -17,7 +17,7 @@ impl SystemIntegration for HeadlessIntegration {
         Ok(())
     }
 
-    fn update_tray(&self) {
+    fn refresh_runtime_state(&self) {
         // No-op in headless mode.
     }
 
@@ -37,9 +37,9 @@ impl SystemManager {
         integration.on_account_switch(account).await
     }
 
-    pub fn update_tray(&self) {
+    pub fn refresh_runtime_state(&self) {
         let integration = HeadlessIntegration;
-        integration.update_tray();
+        integration.refresh_runtime_state();
     }
 
     pub fn show_notification(&self, title: &str, body: &str) {
@@ -53,8 +53,8 @@ impl SystemIntegration for SystemManager {
         self.on_account_switch(account).await
     }
 
-    fn update_tray(&self) {
-        self.update_tray();
+    fn refresh_runtime_state(&self) {
+        self.refresh_runtime_state();
     }
 
     fn show_notification(&self, title: &str, body: &str) {
