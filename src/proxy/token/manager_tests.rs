@@ -1,6 +1,7 @@
-use super::*;
+use super::{ProxyToken, TokenManager};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 #[tokio::test]
 async fn test_reload_account_purges_cache_when_account_becomes_proxy_disabled() {

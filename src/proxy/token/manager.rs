@@ -1,9 +1,7 @@
 use crate::proxy::rate_limit::RateLimitTracker;
 use crate::proxy::sticky_config::StickySessionConfig;
-use crate::proxy::token::loader::OnDiskAccountState;
 pub use crate::proxy::token::types::ProxyToken;
 use dashmap::DashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;

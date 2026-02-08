@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProxyToken, TokenManager};
 
 impl TokenManager {
     pub(super) fn apply_refreshed_token(

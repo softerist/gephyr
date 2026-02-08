@@ -1,4 +1,5 @@
-use super::*;
+use super::{ProxyToken, TokenManager};
+use crate::proxy::token::loader::OnDiskAccountState;
 
 impl TokenManager {
     pub(super) async fn try_preferred_account_for_request(

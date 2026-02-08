@@ -1,4 +1,4 @@
-use super::*;
+use super::{ProxyToken, TokenManager};
 impl TokenManager {
     pub async fn get_token(
         &self,
