@@ -13,8 +13,8 @@ pub use admin::build_admin_routes;
 
 pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/health", get(crate::proxy::server::health_check_handler))
-        .route("/healthz", get(crate::proxy::server::health_check_handler))
+        .route("/health", get(crate::proxy::health::health_check_handler))
+        .route("/healthz", get(crate::proxy::health::health_check_handler))
         // OpenAI Protocol
         .route("/v1/models", get(handlers::openai::handle_list_models))
         .route(
@@ -60,3 +60,4 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
             ip_filter_middleware,
         ))
 }
+

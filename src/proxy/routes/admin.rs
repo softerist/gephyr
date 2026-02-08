@@ -7,346 +7,347 @@ use crate::proxy::state::AppState;
 
 pub fn build_admin_routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/health", get(crate::proxy::server::health_check_handler))
+        .route("/health", get(crate::proxy::health::health_check_handler))
         .route(
             "/accounts",
-            get(crate::proxy::server::admin_list_accounts)
-                .post(crate::proxy::server::admin_add_account),
+            get(crate::proxy::admin::admin_list_accounts)
+                .post(crate::proxy::admin::admin_add_account),
         )
         .route(
             "/accounts/current",
-            get(crate::proxy::server::admin_get_current_account),
+            get(crate::proxy::admin::admin_get_current_account),
         )
-        .route("/accounts/switch", post(crate::proxy::server::admin_switch_account))
+        .route("/accounts/switch", post(crate::proxy::admin::admin_switch_account))
         .route(
             "/accounts/refresh",
-            post(crate::proxy::server::admin_refresh_all_quotas),
+            post(crate::proxy::admin::admin_refresh_all_quotas),
         )
         .route(
             "/accounts/:accountId",
-            delete(crate::proxy::server::admin_delete_account),
+            delete(crate::proxy::admin::admin_delete_account),
         )
         .route(
             "/accounts/:accountId/bind-device",
-            post(crate::proxy::server::admin_bind_device),
+            post(crate::proxy::admin::admin_bind_device),
         )
         .route(
             "/accounts/:accountId/device-profiles",
-            get(crate::proxy::server::admin_get_device_profiles),
+            get(crate::proxy::admin::admin_get_device_profiles),
         )
         .route(
             "/accounts/:accountId/device-versions",
-            get(crate::proxy::server::admin_list_device_versions),
+            get(crate::proxy::admin::admin_list_device_versions),
         )
         .route(
             "/accounts/device-preview",
-            post(crate::proxy::server::admin_preview_generate_profile),
+            post(crate::proxy::admin::admin_preview_generate_profile),
         )
         .route(
             "/accounts/:accountId/bind-device-profile",
-            post(crate::proxy::server::admin_bind_device_profile_with_profile),
+            post(crate::proxy::admin::admin_bind_device_profile_with_profile),
         )
         .route(
             "/accounts/restore-original",
-            post(crate::proxy::server::admin_restore_original_device),
+            post(crate::proxy::admin::admin_restore_original_device),
         )
         .route(
             "/accounts/:accountId/device-versions/:versionId/restore",
-            post(crate::proxy::server::admin_restore_device_version),
+            post(crate::proxy::admin::admin_restore_device_version),
         )
         .route(
             "/accounts/:accountId/device-versions/:versionId",
-            delete(crate::proxy::server::admin_delete_device_version),
+            delete(crate::proxy::admin::admin_delete_device_version),
         )
-        .route("/accounts/import/v1", post(crate::proxy::server::admin_import_v1_accounts))
-        .route("/accounts/import/db", post(crate::proxy::server::admin_import_from_db))
+        .route("/accounts/import/v1", post(crate::proxy::admin::admin_import_v1_accounts))
+        .route("/accounts/import/db", post(crate::proxy::admin::admin_import_from_db))
         .route(
             "/accounts/import/db-custom",
-            post(crate::proxy::server::admin_import_custom_db),
+            post(crate::proxy::admin::admin_import_custom_db),
         )
-        .route("/accounts/sync/db", post(crate::proxy::server::admin_sync_account_from_db))
-        .route("/stats/summary", get(crate::proxy::server::admin_get_token_stats_summary))
-        .route("/stats/hourly", get(crate::proxy::server::admin_get_token_stats_hourly))
-        .route("/stats/daily", get(crate::proxy::server::admin_get_token_stats_daily))
-        .route("/stats/weekly", get(crate::proxy::server::admin_get_token_stats_weekly))
+        .route("/accounts/sync/db", post(crate::proxy::admin::admin_sync_account_from_db))
+        .route("/stats/summary", get(crate::proxy::admin::admin_get_token_stats_summary))
+        .route("/stats/hourly", get(crate::proxy::admin::admin_get_token_stats_hourly))
+        .route("/stats/daily", get(crate::proxy::admin::admin_get_token_stats_daily))
+        .route("/stats/weekly", get(crate::proxy::admin::admin_get_token_stats_weekly))
         .route(
             "/stats/accounts",
-            get(crate::proxy::server::admin_get_token_stats_by_account),
+            get(crate::proxy::admin::admin_get_token_stats_by_account),
         )
-        .route("/stats/models", get(crate::proxy::server::admin_get_token_stats_by_model))
+        .route("/stats/models", get(crate::proxy::admin::admin_get_token_stats_by_model))
         .route(
             "/config",
-            get(crate::proxy::server::admin_get_config).post(crate::proxy::server::admin_save_config),
+            get(crate::proxy::admin::admin_get_config).post(crate::proxy::admin::admin_save_config),
         )
-        .route("/proxy/cli/status", post(crate::proxy::server::admin_get_cli_sync_status))
-        .route("/proxy/cli/sync", post(crate::proxy::server::admin_execute_cli_sync))
+        .route("/proxy/cli/status", post(crate::proxy::admin::admin_get_cli_sync_status))
+        .route("/proxy/cli/sync", post(crate::proxy::admin::admin_execute_cli_sync))
         .route(
             "/proxy/cli/restore",
-            post(crate::proxy::server::admin_execute_cli_restore),
+            post(crate::proxy::admin::admin_execute_cli_restore),
         )
         .route(
             "/proxy/cli/config",
-            post(crate::proxy::server::admin_get_cli_config_content),
+            post(crate::proxy::admin::admin_get_cli_config_content),
         )
         .route(
             "/proxy/opencode/status",
-            post(crate::proxy::server::admin_get_opencode_sync_status),
+            post(crate::proxy::admin::admin_get_opencode_sync_status),
         )
         .route(
             "/proxy/opencode/sync",
-            post(crate::proxy::server::admin_execute_opencode_sync),
+            post(crate::proxy::admin::admin_execute_opencode_sync),
         )
         .route(
             "/proxy/opencode/restore",
-            post(crate::proxy::server::admin_execute_opencode_restore),
+            post(crate::proxy::admin::admin_execute_opencode_restore),
         )
         .route(
             "/proxy/opencode/config",
-            post(crate::proxy::server::admin_get_opencode_config_content),
+            post(crate::proxy::admin::admin_get_opencode_config_content),
         )
-        .route("/proxy/status", get(crate::proxy::server::admin_get_proxy_status))
-        .route("/proxy/pool/config", get(crate::proxy::server::admin_get_proxy_pool_config))
+        .route("/proxy/status", get(crate::proxy::admin::admin_get_proxy_status))
+        .route("/proxy/pool/config", get(crate::proxy::admin::admin_get_proxy_pool_config))
         .route(
             "/proxy/pool/bindings",
-            get(crate::proxy::server::admin_get_all_account_bindings),
+            get(crate::proxy::admin::admin_get_all_account_bindings),
         )
-        .route("/proxy/pool/bind", post(crate::proxy::server::admin_bind_account_proxy))
+        .route("/proxy/pool/bind", post(crate::proxy::admin::admin_bind_account_proxy))
         .route(
             "/proxy/pool/unbind",
-            post(crate::proxy::server::admin_unbind_account_proxy),
+            post(crate::proxy::admin::admin_unbind_account_proxy),
         )
         .route(
             "/proxy/pool/binding/:accountId",
-            get(crate::proxy::server::admin_get_account_proxy_binding),
+            get(crate::proxy::admin::admin_get_account_proxy_binding),
         )
         .route(
             "/proxy/health-check/trigger",
-            post(crate::proxy::server::admin_trigger_proxy_health_check),
+            post(crate::proxy::admin::admin_trigger_proxy_health_check),
         )
-        .route("/proxy/start", post(crate::proxy::server::admin_start_proxy_service))
-        .route("/proxy/stop", post(crate::proxy::server::admin_stop_proxy_service))
-        .route("/proxy/mapping", post(crate::proxy::server::admin_update_model_mapping))
+        .route("/proxy/start", post(crate::proxy::admin::admin_start_proxy_service))
+        .route("/proxy/stop", post(crate::proxy::admin::admin_stop_proxy_service))
+        .route("/proxy/mapping", post(crate::proxy::admin::admin_update_model_mapping))
         .route(
             "/proxy/api-key/generate",
-            post(crate::proxy::server::admin_generate_api_key),
+            post(crate::proxy::admin::admin_generate_api_key),
         )
         .route(
             "/proxy/session-bindings/clear",
-            post(crate::proxy::server::admin_clear_proxy_session_bindings),
+            post(crate::proxy::admin::admin_clear_proxy_session_bindings),
         )
-        .route("/proxy/rate-limits", delete(crate::proxy::server::admin_clear_all_rate_limits))
+        .route("/proxy/rate-limits", delete(crate::proxy::admin::admin_clear_all_rate_limits))
         .route(
             "/proxy/rate-limits/:accountId",
-            delete(crate::proxy::server::admin_clear_rate_limit),
+            delete(crate::proxy::admin::admin_clear_rate_limit),
         )
         .route(
             "/proxy/preferred-account",
-            get(crate::proxy::server::admin_get_preferred_account)
-                .post(crate::proxy::server::admin_set_preferred_account),
+            get(crate::proxy::admin::admin_get_preferred_account)
+                .post(crate::proxy::admin::admin_set_preferred_account),
         )
-        .route("/accounts/oauth/prepare", post(crate::proxy::server::admin_prepare_oauth_url))
-        .route("/accounts/oauth/start", post(crate::proxy::server::admin_start_oauth_login))
+        .route("/accounts/oauth/prepare", post(crate::proxy::admin::admin_prepare_oauth_url))
+        .route("/accounts/oauth/start", post(crate::proxy::admin::admin_start_oauth_login))
         .route(
             "/accounts/oauth/complete",
-            post(crate::proxy::server::admin_complete_oauth_login),
+            post(crate::proxy::admin::admin_complete_oauth_login),
         )
-        .route("/accounts/oauth/cancel", post(crate::proxy::server::admin_cancel_oauth_login))
+        .route("/accounts/oauth/cancel", post(crate::proxy::admin::admin_cancel_oauth_login))
         .route(
             "/accounts/oauth/submit-code",
-            post(crate::proxy::server::admin_submit_oauth_code),
+            post(crate::proxy::admin::admin_submit_oauth_code),
         )
-        .route("/zai/models/fetch", post(crate::proxy::server::admin_fetch_zai_models))
+        .route("/zai/models/fetch", post(crate::proxy::admin::admin_fetch_zai_models))
         .route(
             "/proxy/monitor/toggle",
-            post(crate::proxy::server::admin_set_proxy_monitor_enabled),
+            post(crate::proxy::admin::admin_set_proxy_monitor_enabled),
         )
-        .route("/system/open-folder", post(crate::proxy::server::admin_open_folder))
-        .route("/proxy/stats", get(crate::proxy::server::admin_get_proxy_stats))
-        .route("/logs", get(crate::proxy::server::admin_get_proxy_logs_filtered))
+        .route("/system/open-folder", post(crate::proxy::admin::admin_open_folder))
+        .route("/proxy/stats", get(crate::proxy::admin::admin_get_proxy_stats))
+        .route("/logs", get(crate::proxy::admin::admin_get_proxy_logs_filtered))
         .route(
             "/logs/count",
-            get(crate::proxy::server::admin_get_proxy_logs_count_filtered),
+            get(crate::proxy::admin::admin_get_proxy_logs_count_filtered),
         )
-        .route("/logs/clear", post(crate::proxy::server::admin_clear_proxy_logs))
-        .route("/logs/:logId", get(crate::proxy::server::admin_get_proxy_log_detail))
+        .route("/logs/clear", post(crate::proxy::admin::admin_clear_proxy_logs))
+        .route("/logs/:logId", get(crate::proxy::admin::admin_get_proxy_log_detail))
         // Debug Console (Log Bridge)
-        .route("/debug/enable", post(crate::proxy::server::admin_enable_debug_console))
-        .route("/debug/disable", post(crate::proxy::server::admin_disable_debug_console))
-        .route("/debug/enabled", get(crate::proxy::server::admin_is_debug_console_enabled))
-        .route("/debug/logs", get(crate::proxy::server::admin_get_debug_console_logs))
+        .route("/debug/enable", post(crate::proxy::admin::admin_enable_debug_console))
+        .route("/debug/disable", post(crate::proxy::admin::admin_disable_debug_console))
+        .route("/debug/enabled", get(crate::proxy::admin::admin_is_debug_console_enabled))
+        .route("/debug/logs", get(crate::proxy::admin::admin_get_debug_console_logs))
         .route(
             "/debug/logs/clear",
-            post(crate::proxy::server::admin_clear_debug_console_logs),
+            post(crate::proxy::admin::admin_clear_debug_console_logs),
         )
-        .route("/stats/token/clear", post(crate::proxy::server::admin_clear_token_stats))
+        .route("/stats/token/clear", post(crate::proxy::admin::admin_clear_token_stats))
         .route(
             "/stats/token/hourly",
-            get(crate::proxy::server::admin_get_token_stats_hourly),
+            get(crate::proxy::admin::admin_get_token_stats_hourly),
         )
         .route(
             "/stats/token/daily",
-            get(crate::proxy::server::admin_get_token_stats_daily),
+            get(crate::proxy::admin::admin_get_token_stats_daily),
         )
         .route(
             "/stats/token/weekly",
-            get(crate::proxy::server::admin_get_token_stats_weekly),
+            get(crate::proxy::admin::admin_get_token_stats_weekly),
         )
         .route(
             "/stats/token/by-account",
-            get(crate::proxy::server::admin_get_token_stats_by_account),
+            get(crate::proxy::admin::admin_get_token_stats_by_account),
         )
         .route(
             "/stats/token/summary",
-            get(crate::proxy::server::admin_get_token_stats_summary),
+            get(crate::proxy::admin::admin_get_token_stats_summary),
         )
         .route(
             "/stats/token/by-model",
-            get(crate::proxy::server::admin_get_token_stats_by_model),
+            get(crate::proxy::admin::admin_get_token_stats_by_model),
         )
         .route(
             "/stats/token/model-trend/hourly",
-            get(crate::proxy::server::admin_get_token_stats_model_trend_hourly),
+            get(crate::proxy::admin::admin_get_token_stats_model_trend_hourly),
         )
         .route(
             "/stats/token/model-trend/daily",
-            get(crate::proxy::server::admin_get_token_stats_model_trend_daily),
+            get(crate::proxy::admin::admin_get_token_stats_model_trend_daily),
         )
         .route(
             "/stats/token/account-trend/hourly",
-            get(crate::proxy::server::admin_get_token_stats_account_trend_hourly),
+            get(crate::proxy::admin::admin_get_token_stats_account_trend_hourly),
         )
         .route(
             "/stats/token/account-trend/daily",
-            get(crate::proxy::server::admin_get_token_stats_account_trend_daily),
+            get(crate::proxy::admin::admin_get_token_stats_account_trend_daily),
         )
-        .route("/accounts/bulk-delete", post(crate::proxy::server::admin_delete_accounts))
-        .route("/accounts/export", post(crate::proxy::server::admin_export_accounts))
-        .route("/accounts/reorder", post(crate::proxy::server::admin_reorder_accounts))
+        .route("/accounts/bulk-delete", post(crate::proxy::admin::admin_delete_accounts))
+        .route("/accounts/export", post(crate::proxy::admin::admin_export_accounts))
+        .route("/accounts/reorder", post(crate::proxy::admin::admin_reorder_accounts))
         .route(
             "/accounts/:accountId/quota",
-            get(crate::proxy::server::admin_fetch_account_quota),
+            get(crate::proxy::admin::admin_fetch_account_quota),
         )
         .route(
             "/accounts/:accountId/toggle-proxy",
-            post(crate::proxy::server::admin_toggle_proxy_status),
+            post(crate::proxy::admin::admin_toggle_proxy_status),
         )
-        .route("/system/data-dir", get(crate::proxy::server::admin_get_data_dir_path))
+        .route("/system/data-dir", get(crate::proxy::admin::admin_get_data_dir_path))
         .route(
             "/system/updates/settings",
-            get(crate::proxy::server::admin_get_update_settings),
+            get(crate::proxy::admin::admin_get_update_settings),
         )
         .route(
             "/system/updates/check-status",
-            get(crate::proxy::server::admin_should_check_updates),
+            get(crate::proxy::admin::admin_should_check_updates),
         )
         .route(
             "/system/updates/check",
-            post(crate::proxy::server::admin_check_for_updates),
+            post(crate::proxy::admin::admin_check_for_updates),
         )
         .route(
             "/system/updates/touch",
-            post(crate::proxy::server::admin_update_last_check_time),
+            post(crate::proxy::admin::admin_update_last_check_time),
         )
         .route(
             "/system/updates/save",
-            post(crate::proxy::server::admin_save_update_settings),
+            post(crate::proxy::admin::admin_save_update_settings),
         )
         .route(
             "/system/gephyr/path",
-            get(crate::proxy::server::admin_get_antigravity_path),
+            get(crate::proxy::admin::admin_get_antigravity_path),
         )
         .route(
             "/system/gephyr/args",
-            get(crate::proxy::server::admin_get_antigravity_args),
+            get(crate::proxy::admin::admin_get_antigravity_args),
         )
         // Legacy aliases for backward compatibility
         .route(
             "/system/antigravity/path",
-            get(crate::proxy::server::admin_get_antigravity_path),
+            get(crate::proxy::admin::admin_get_antigravity_path),
         )
         .route(
             "/system/antigravity/args",
-            get(crate::proxy::server::admin_get_antigravity_args),
+            get(crate::proxy::admin::admin_get_antigravity_args),
         )
         .route(
             "/system/cache/clear",
-            post(crate::proxy::server::admin_clear_antigravity_cache),
+            post(crate::proxy::admin::admin_clear_antigravity_cache),
         )
         .route(
             "/system/cache/paths",
-            get(crate::proxy::server::admin_get_antigravity_cache_paths),
+            get(crate::proxy::admin::admin_get_antigravity_cache_paths),
         )
-        .route("/system/logs/clear-cache", post(crate::proxy::server::admin_clear_log_cache))
+        .route("/system/logs/clear-cache", post(crate::proxy::admin::admin_clear_log_cache))
         // Security / IP Monitoring
-        .route("/security/logs", get(crate::proxy::server::admin_get_ip_access_logs))
+        .route("/security/logs", get(crate::proxy::admin::admin_get_ip_access_logs))
         .route(
             "/security/logs/clear",
-            post(crate::proxy::server::admin_clear_ip_access_logs),
+            post(crate::proxy::admin::admin_clear_ip_access_logs),
         )
-        .route("/security/stats", get(crate::proxy::server::admin_get_ip_stats))
+        .route("/security/stats", get(crate::proxy::admin::admin_get_ip_stats))
         .route(
             "/security/token-stats",
-            get(crate::proxy::server::admin_get_ip_token_stats),
+            get(crate::proxy::admin::admin_get_ip_token_stats),
         ) // For IP Token usage
         .route(
             "/security/blacklist",
-            get(crate::proxy::server::admin_get_ip_blacklist)
-                .post(crate::proxy::server::admin_add_ip_to_blacklist)
-                .delete(crate::proxy::server::admin_remove_ip_from_blacklist),
+            get(crate::proxy::admin::admin_get_ip_blacklist)
+                .post(crate::proxy::admin::admin_add_ip_to_blacklist)
+                .delete(crate::proxy::admin::admin_remove_ip_from_blacklist),
         )
         .route(
             "/security/blacklist/clear",
-            post(crate::proxy::server::admin_clear_ip_blacklist),
+            post(crate::proxy::admin::admin_clear_ip_blacklist),
         )
         .route(
             "/security/blacklist/check",
-            get(crate::proxy::server::admin_check_ip_in_blacklist),
+            get(crate::proxy::admin::admin_check_ip_in_blacklist),
         )
         .route(
             "/security/whitelist",
-            get(crate::proxy::server::admin_get_ip_whitelist)
-                .post(crate::proxy::server::admin_add_ip_to_whitelist)
-                .delete(crate::proxy::server::admin_remove_ip_from_whitelist),
+            get(crate::proxy::admin::admin_get_ip_whitelist)
+                .post(crate::proxy::admin::admin_add_ip_to_whitelist)
+                .delete(crate::proxy::admin::admin_remove_ip_from_whitelist),
         )
         .route(
             "/security/whitelist/clear",
-            post(crate::proxy::server::admin_clear_ip_whitelist),
+            post(crate::proxy::admin::admin_clear_ip_whitelist),
         )
         .route(
             "/security/whitelist/check",
-            get(crate::proxy::server::admin_check_ip_in_whitelist),
+            get(crate::proxy::admin::admin_check_ip_in_whitelist),
         )
         .route(
             "/security/config",
-            get(crate::proxy::server::admin_get_security_config)
-                .post(crate::proxy::server::admin_update_security_config),
+            get(crate::proxy::admin::admin_get_security_config)
+                .post(crate::proxy::admin::admin_update_security_config),
         )
         // User Tokens
         .route(
             "/user-tokens",
-            get(crate::proxy::server::admin_list_user_tokens)
-                .post(crate::proxy::server::admin_create_user_token),
+            get(crate::proxy::admin::admin_list_user_tokens)
+                .post(crate::proxy::admin::admin_create_user_token),
         )
         .route(
             "/user-tokens/summary",
-            get(crate::proxy::server::admin_get_user_token_summary),
+            get(crate::proxy::admin::admin_get_user_token_summary),
         )
         .route(
             "/user-tokens/:id/renew",
-            post(crate::proxy::server::admin_renew_user_token),
+            post(crate::proxy::admin::admin_renew_user_token),
         )
         .route(
             "/user-tokens/:id",
-            delete(crate::proxy::server::admin_delete_user_token)
-                .patch(crate::proxy::server::admin_update_user_token),
+            delete(crate::proxy::admin::admin_delete_user_token)
+                .patch(crate::proxy::admin::admin_update_user_token),
         )
         // OAuth (Web) - Admin endpoints
-        .route("/auth/url", get(crate::proxy::server::admin_prepare_oauth_url_web))
+        .route("/auth/url", get(crate::proxy::admin::admin_prepare_oauth_url_web))
         // App-management specific auth layer (strict validation)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::proxy::middleware::admin_auth_middleware,
         ))
 }
+
 
 

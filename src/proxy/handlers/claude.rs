@@ -18,7 +18,7 @@ use crate::proxy::mappers::claude::{
     clean_cache_control_from_messages, merge_consecutive_messages,
     models::{Message, MessageContent},
 };
-use crate::proxy::server::{AppState, ModelCatalogState};
+use crate::proxy::state::{AppState, ModelCatalogState};
 use crate::proxy::mappers::context_manager::ContextManager;
 use crate::proxy::mappers::estimation_calibrator::get_calibrator;
 use crate::proxy::debug_logger;
@@ -525,34 +525,35 @@ pub async fn handle_messages(
             // ===== Layer 1: Tool Message Trimming (L1 threshold) =====
             // Borrowed from Practical-Guide-to-Context-Engineering
             // Advantage: Completely cache-friendly (only removes messages, doesn't modify content)
-            if usage_ratio > threshold_l1 && !compression_applied {
-                if ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5) {
-                    info!(
-                        "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
-                        trace_id, usage_ratio * 100.0, threshold_l1 * 100.0
-                    );
-                    compression_applied = true;
-                    
-                    // Re-estimate after trimming (with calibration)
-                    let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
-                    let new_usage = calibrator.calibrate(new_raw);
-                    let new_ratio = new_usage as f32 / context_limit as f32;
-                    
-                    info!(
-                        "[{}] [Layer-1] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
-                        trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
-                    );
-                    
-                    // If compression is sufficient, skip further layers
-                    if new_ratio < 0.7 {
-                        estimated_usage = new_usage;
-                        usage_ratio = new_ratio;
-                        // Success, no need for Layer 2
-                    } else {
-                        // Still high pressure, update for Layer 2
-                        usage_ratio = new_ratio;
-                        compression_applied = false; // Allow Layer 2 to run
-                    }
+            if usage_ratio > threshold_l1
+                && !compression_applied
+                && ContextManager::trim_tool_messages(&mut request_with_mapped.messages, 5)
+            {
+                info!(
+                    "[{}] [Layer-1] Tool trimming triggered (usage: {:.1}%, threshold: {:.1}%)",
+                    trace_id, usage_ratio * 100.0, threshold_l1 * 100.0
+                );
+                compression_applied = true;
+
+                // Re-estimate after trimming (with calibration)
+                let new_raw = ContextManager::estimate_token_usage(&request_with_mapped);
+                let new_usage = calibrator.calibrate(new_raw);
+                let new_ratio = new_usage as f32 / context_limit as f32;
+
+                info!(
+                    "[{}] [Layer-1] Compression result: {:.1}% → {:.1}% (saved {} tokens)",
+                    trace_id, usage_ratio * 100.0, new_ratio * 100.0, estimated_usage - new_usage
+                );
+
+                // If compression is sufficient, skip further layers
+                if new_ratio < 0.7 {
+                    estimated_usage = new_usage;
+                    usage_ratio = new_ratio;
+                    // Success, no need for Layer 2
+                } else {
+                    // Still high pressure, update for Layer 2
+                    usage_ratio = new_ratio;
+                    compression_applied = false; // Allow Layer 2 to run
                 }
             }
 
@@ -1486,7 +1487,7 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
     
     if is_stream {
         // Streaming response: send standard SSE event sequence
-        let events = vec![
+        let events = [
             // message_start
             format!(
                 "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"{}\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"{}\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{{\"input_tokens\":1,\"output_tokens\":0}}}}}}\n\n",

@@ -10,7 +10,7 @@ use crate::proxy::mappers::openai::{
     transform_openai_request, transform_openai_response, OpenAIRequest,
 };
 // use crate::proxy::upstream::client::UpstreamClient; // Acquired through state
-use crate::proxy::server::{ModelCatalogState, OpenAIHandlerState};
+use crate::proxy::state::{ModelCatalogState, OpenAIHandlerState};
 use crate::proxy::debug_logger;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
@@ -33,7 +33,7 @@ pub async fn handle_chat_completions(
 
     //  Automatically detect and convert Responses format
     // If the request contains instructions or input but no messages, it is considered Responses format
-    let is_responses_format = !body.get("messages").is_some()
+    let is_responses_format = body.get("messages").is_none()
         && (body.get("instructions").is_some() || body.get("input").is_some());
 
     if is_responses_format {
@@ -48,7 +48,7 @@ pub async fn handle_chat_completions(
                 });
 
                 // Initialize messages array
-                if !body.get("messages").is_some() {
+                if body.get("messages").is_none() {
                     body["messages"] = json!([]);
                 }
 
@@ -145,7 +145,7 @@ pub async fn handle_chat_completions(
         let tools_val: Option<Vec<Value>> = openai_req
             .tools
             .as_ref()
-            .map(|list| list.iter().cloned().collect());
+            .map(|list| list.to_vec());
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -550,8 +550,8 @@ pub async fn handle_chat_completions(
         }
 
         // Only 403 (Permission/Region restriction) and 401 (Auth failed) trigger account rotation
-        if status_code == 403 || status_code == 401 {
-            if apply_retry_strategy(
+        if (status_code == 403 || status_code == 401)
+            && apply_retry_strategy(
                 RetryStrategy::FixedDelay(Duration::from_millis(200)),
                 attempt,
                 max_attempts,
@@ -559,9 +559,8 @@ pub async fn handle_chat_completions(
                 &trace_id,
             )
             .await
-            {
-                continue;
-            }
+        {
+            continue;
         }
 
         // Only 403 (Permission/Region restriction) and 401 (Auth failed) trigger account rotation
@@ -1048,7 +1047,7 @@ pub async fn handle_completions(
         let tools_val: Option<Vec<Value>> = openai_req
             .tools
             .as_ref()
-            .map(|list| list.iter().cloned().collect());
+            .map(|list| list.to_vec());
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,

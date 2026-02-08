@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
 use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
-use crate::proxy::server::{ModelCatalogState, OpenAIHandlerState};
+use crate::proxy::state::{ModelCatalogState, OpenAIHandlerState};
 use crate::proxy::session_manager::SessionManager;
 use crate::proxy::handlers::common::{determine_retry_strategy, apply_retry_strategy, should_rotate_account};
 use crate::proxy::debug_logger;

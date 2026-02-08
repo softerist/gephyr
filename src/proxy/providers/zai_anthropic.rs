@@ -8,7 +8,7 @@ use futures::StreamExt;
 use serde_json::Value;
 use tokio::time::Duration;
 
-use crate::proxy::server::AppState;
+use crate::proxy::state::AppState;
 
 fn map_model_for_zai(original: &str, state: &crate::proxy::ZaiConfig) -> String {
     let m = original.to_lowercase();

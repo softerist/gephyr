@@ -2,7 +2,7 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, extract::State};
 use serde_json::{json, Value};
-use crate::proxy::server::ModelCatalogState;
+use crate::proxy::state::ModelCatalogState;
 
 // ===== Unified Retry and Backoff Strategies =====
 

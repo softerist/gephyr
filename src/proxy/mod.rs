@@ -10,9 +10,11 @@ pub mod token_manager;
 
 // New Architecture Modules
 pub mod cli_sync; // CLI Config Sync (v3.3.35)
+pub mod admin; // Admin handlers extracted from server
 pub mod opencode_sync; // OpenCode Config Sync
 pub mod common; // Common utilities
 pub mod debug_logger;
+pub mod health; // Health handlers
 pub mod handlers; // API Endpoint Handlers
 pub mod mappers; // Protocol Mappers
 pub mod middleware; // Axum Middleware
