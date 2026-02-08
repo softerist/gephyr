@@ -2,6 +2,7 @@ use axum::{
     extract::Json, extract::State, http::StatusCode, response::IntoResponse, response::Response,
 };
 use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
@@ -20,6 +21,53 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use tokio::time::Duration;
+
+type OpenAiSseStream = std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>;
+
+async fn peek_first_data_chunk(
+    openai_stream: &mut OpenAiSseStream,
+    timeout: Duration,
+    error_event_message: &str,
+    stream_error_prefix: &str,
+    empty_stream_message: &str,
+    timeout_message: &str,
+    context: &str,
+) -> Result<Bytes, String> {
+    loop {
+        match tokio::time::timeout(timeout, openai_stream.next()).await {
+            Ok(Some(Ok(bytes))) => {
+                if bytes.is_empty() {
+                    continue;
+                }
+
+                let text = String::from_utf8_lossy(&bytes);
+                if text.trim().starts_with(":") || text.trim().starts_with("data: :") {
+                    tracing::debug!("[OpenAI:{}] Skipping peek heartbeat", context);
+                    continue;
+                }
+
+                if text.contains("\"error\"") {
+                    tracing::warn!("[OpenAI:{}] Error detected during peek", context);
+                    return Err(error_event_message.to_string());
+                }
+
+                return Ok(bytes);
+            }
+            Ok(Some(Err(e))) => {
+                tracing::warn!("[OpenAI:{}] Stream error during peek: {}", context, e);
+                return Err(format!("{}: {}", stream_error_prefix, e));
+            }
+            Ok(None) => {
+                tracing::warn!("[OpenAI:{}] Stream ended during peek", context);
+                return Err(empty_stream_message.to_string());
+            }
+            Err(_) => {
+                tracing::warn!("[OpenAI:{}] Timeout waiting for first data", context);
+                return Err(timeout_message.to_string());
+            }
+        }
+    }
+}
 
 pub async fn handle_chat_completions(
     State(state): State<OpenAIHandlerState>,
@@ -242,7 +290,6 @@ pub async fn handle_chat_completions(
         if status.is_success() {
             if actual_stream {
                 use axum::body::Body;
-                use futures::StreamExt;
 
                 let meta = json!({
                     "protocol": "openai",
@@ -267,68 +314,26 @@ pub async fn handle_chat_completions(
                     session_id,
                     message_count,
                 );
-
-                let mut first_data_chunk = None;
-                let mut retry_this_account = false;
-                loop {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(60),
-                        openai_stream.next(),
-                    )
-                    .await
-                    {
-                        Ok(Some(Ok(bytes))) => {
-                            if bytes.is_empty() {
-                                continue;
-                            }
-
-                            let text = String::from_utf8_lossy(&bytes);
-                            if text.trim().starts_with(":") || text.trim().starts_with("data: :") {
-                                tracing::debug!("[OpenAI] Skipping peek heartbeat");
-                                continue;
-                            }
-                            if text.contains("\"error\"") {
-                                tracing::warn!("[OpenAI] Error detected during peek, retrying...");
-                                last_error = "Error event during peek".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
-                            first_data_chunk = Some(bytes);
-                            break;
-                        }
-                        Ok(Some(Err(e))) => {
-                            tracing::warn!("[OpenAI] Stream error during peek: {}, retrying...", e);
-                            last_error = format!("Stream error during peek: {}", e);
-                            retry_this_account = true;
-                            break;
-                        }
-                        Ok(None) => {
-                            tracing::warn!(
-                                "[OpenAI] Stream ended during peek (Empty Response), retrying..."
-                            );
-                            last_error = "Empty response stream during peek".to_string();
-                            retry_this_account = true;
-                            break;
-                        }
-                        Err(_) => {
-                            tracing::warn!(
-                                "[OpenAI] Timeout waiting for first data (60s), retrying..."
-                            );
-                            last_error = "Timeout waiting for first data".to_string();
-                            retry_this_account = true;
-                            break;
-                        }
+                let first_data_chunk = match peek_first_data_chunk(
+                    &mut openai_stream,
+                    Duration::from_secs(60),
+                    "Error event during peek",
+                    "Stream error during peek",
+                    "Empty response stream during peek",
+                    "Timeout waiting for first data",
+                    "chat",
+                )
+                .await
+                {
+                    Ok(chunk) => chunk,
+                    Err(err) => {
+                        last_error = err;
+                        continue;
                     }
-                }
-
-                if retry_this_account {
-                    continue;
-                }
+                };
                 let combined_stream =
-                    futures::stream::once(
-                        async move { Ok::<Bytes, String>(first_data_chunk.unwrap()) },
-                    )
-                    .chain(openai_stream);
+                    futures::stream::once(async move { Ok::<Bytes, String>(first_data_chunk) })
+                        .chain(openai_stream);
 
                 if client_wants_stream {
                     let body = Body::from_stream(combined_stream);
@@ -990,7 +995,6 @@ pub async fn handle_completions(
 
             if list_response {
                 use axum::body::Body;
-                use futures::StreamExt;
 
                 let gemini_stream = response.bytes_stream();
 
@@ -1012,58 +1016,26 @@ pub async fn handle_completions(
                             message_count,
                         )
                     };
-                    let mut first_data_chunk = None;
-                    let mut retry_this_account = false;
-
-                    loop {
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(60),
-                            openai_stream.next(),
-                        )
-                        .await
-                        {
-                            Ok(Some(Ok(bytes))) => {
-                                if bytes.is_empty() {
-                                    continue;
-                                }
-                                let text = String::from_utf8_lossy(&bytes);
-                                if text.trim().starts_with(":")
-                                    || text.trim().starts_with("data: :")
-                                {
-                                    continue;
-                                }
-                                if text.contains("\"error\"") {
-                                    last_error = "Error event during peek".to_string();
-                                    retry_this_account = true;
-                                    break;
-                                }
-                                first_data_chunk = Some(bytes);
-                                break;
-                            }
-                            Ok(Some(Err(e))) => {
-                                last_error = format!("Stream error during peek: {}", e);
-                                retry_this_account = true;
-                                break;
-                            }
-                            Ok(None) => {
-                                last_error = "Empty response stream".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
-                            Err(_) => {
-                                last_error = "Timeout waiting for first data".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
+                    let first_data_chunk = match peek_first_data_chunk(
+                        &mut openai_stream,
+                        Duration::from_secs(60),
+                        "Error event during peek",
+                        "Stream error during peek",
+                        "Empty response stream",
+                        "Timeout waiting for first data",
+                        "legacy",
+                    )
+                    .await
+                    {
+                        Ok(chunk) => chunk,
+                        Err(err) => {
+                            last_error = err;
+                            continue;
                         }
-                    }
-
-                    if retry_this_account {
-                        continue;
-                    }
+                    };
 
                     let combined_stream = futures::stream::once(async move {
-                        Ok::<Bytes, String>(first_data_chunk.unwrap())
+                        Ok::<Bytes, String>(first_data_chunk)
                     })
                     .chain(openai_stream);
 
@@ -1082,56 +1054,26 @@ pub async fn handle_completions(
                         session_id,
                         message_count,
                     );
-                    let mut first_data_chunk = None;
-                    let mut retry_this_account = false;
-                    loop {
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(60),
-                            openai_stream.next(),
-                        )
-                        .await
-                        {
-                            Ok(Some(Ok(bytes))) => {
-                                if bytes.is_empty() {
-                                    continue;
-                                }
-                                let text = String::from_utf8_lossy(&bytes);
-                                if text.trim().starts_with(":")
-                                    || text.trim().starts_with("data: :")
-                                {
-                                    continue;
-                                }
-                                if text.contains("\"error\"") {
-                                    last_error = "Error event in internal stream".to_string();
-                                    retry_this_account = true;
-                                    break;
-                                }
-                                first_data_chunk = Some(bytes);
-                                break;
-                            }
-                            Ok(Some(Err(e))) => {
-                                last_error = format!("Internal stream error: {}", e);
-                                retry_this_account = true;
-                                break;
-                            }
-                            Ok(None) => {
-                                last_error = "Empty internal stream".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
-                            Err(_) => {
-                                last_error = "Timeout peek internal".to_string();
-                                retry_this_account = true;
-                                break;
-                            }
+                    let first_data_chunk = match peek_first_data_chunk(
+                        &mut openai_stream,
+                        Duration::from_secs(60),
+                        "Error event in internal stream",
+                        "Internal stream error",
+                        "Empty internal stream",
+                        "Timeout peek internal",
+                        "internal",
+                    )
+                    .await
+                    {
+                        Ok(chunk) => chunk,
+                        Err(err) => {
+                            last_error = err;
+                            continue;
                         }
-                    }
-                    if retry_this_account {
-                        continue;
-                    }
+                    };
 
                     let combined_stream = futures::stream::once(async move {
-                        Ok::<Bytes, String>(first_data_chunk.unwrap())
+                        Ok::<Bytes, String>(first_data_chunk)
                     })
                     .chain(openai_stream);
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
@@ -1185,7 +1127,8 @@ pub async fn handle_completions(
                 }
             };
 
-            let chat_resp = transform_openai_response(&gemini_resp, Some("session-123"), 1);
+            let chat_resp =
+                transform_openai_response(&gemini_resp, Some(&session_id), message_count);
             let choices = chat_resp.choices.iter().map(|c| {
                 json!({
                     "text": match &c.message.content {

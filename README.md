@@ -102,7 +102,7 @@ curl http://127.0.0.1:8045/v1/chat/completions \
   -H "Authorization: Bearer $GEPHYR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
+    "model": "gpt-5.3-codex",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
