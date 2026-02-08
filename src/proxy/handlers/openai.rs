@@ -12,9 +12,9 @@ use crate::proxy::mappers::openai::{
 use crate::proxy::state::{ModelCatalogState, OpenAIHandlerState};
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
-use super::common::{
-    apply_retry_strategy, build_models_list_response, determine_retry_strategy,
-    should_rotate_account, RetryStrategy,
+use super::common::build_models_list_response;
+use super::retry::{
+    apply_retry_strategy, determine_retry_strategy, should_rotate_account, RetryStrategy,
 };
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::session_manager::SessionManager;

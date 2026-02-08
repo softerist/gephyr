@@ -6,9 +6,6 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-pub use crate::proxy::handlers::retry::{
-    apply_retry_strategy, determine_retry_strategy, should_rotate_account, RetryStrategy,
-};
 pub async fn handle_detect_model(
     State(state): State<ModelCatalogState>,
     Json(body): Json<Value>,

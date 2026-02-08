@@ -83,9 +83,9 @@ The structure MUST be as follows:
 3. File paths must use absolute paths
 4. The thinking signature must be copied exactly, no modifications
 "#;
-use super::common::{
-    apply_retry_strategy, build_models_list_response, determine_retry_strategy,
-    should_rotate_account, RetryStrategy,
+use super::common::build_models_list_response;
+use super::retry::{
+    apply_retry_strategy, determine_retry_strategy, should_rotate_account, RetryStrategy,
 };
 pub async fn handle_messages(
     State(state): State<AppState>,
@@ -795,20 +795,13 @@ pub async fn handle_messages(
                                 }),
                             ));
                         if client_wants_stream {
-                            return Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "text/event-stream")
-                                .header(header::CACHE_CONTROL, "no-cache")
-                                .header(header::CONNECTION, "keep-alive")
-                                .header("X-Accel-Buffering", "no")
-                                .header("X-Account-Email", &email)
-                                .header("X-Mapped-Model", &request_with_mapped.model)
-                                .header(
-                                    "X-Context-Purified",
-                                    if is_purified { "true" } else { "false" },
-                                )
-                                .body(Body::from_stream(combined_stream))
-                                .unwrap();
+                            return crate::proxy::handlers::streaming::build_sse_response_with_headers(
+                                Body::from_stream(combined_stream),
+                                Some(&email),
+                                Some(&request_with_mapped.model),
+                                true,
+                                &[("X-Context-Purified", if is_purified { "true" } else { "false" })],
+                            );
                         } else {
                             use crate::proxy::mappers::claude::collect_stream_to_json;
 
@@ -1338,14 +1331,13 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
 
         let body = events.join("");
 
-        Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/event-stream")
-            .header(header::CACHE_CONTROL, "no-cache")
-            .header(header::CONNECTION, "keep-alive")
-            .header("X-Warmup-Intercepted", "true")
-            .body(Body::from(body))
-            .unwrap()
+        crate::proxy::handlers::streaming::build_sse_response_with_headers(
+            Body::from(body),
+            None,
+            None,
+            false,
+            &[("X-Warmup-Intercepted", "true")],
+        )
     } else {
         let response = json!({
             "id": message_id,

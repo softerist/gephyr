@@ -9,7 +9,7 @@ use tracing::{debug, error, info};
 
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::debug_logger;
-use crate::proxy::handlers::common::{
+use crate::proxy::handlers::retry::{
     apply_retry_strategy, determine_retry_strategy, should_rotate_account,
 };
 use crate::proxy::mappers::gemini::{unwrap_response, wrap_request};
