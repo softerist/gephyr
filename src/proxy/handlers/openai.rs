@@ -358,11 +358,9 @@ pub async fn handle_chat_completions(
                         }
                         Err(e) => {
                             error!("[{}] Stream collection error: {}", trace_id, e);
-                            return Ok((
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Stream collection error: {}", e),
-                            )
-                                .into_response());
+                            return Ok(crate::proxy::handlers::errors::stream_collection_error_response(
+                                &e.to_string(),
+                            ));
                         }
                     }
                 }
@@ -562,21 +560,11 @@ pub async fn handle_chat_completions(
         )
             .into_response());
     }
-    if let Some(email) = last_email {
-        Ok((
-            StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email), ("X-Mapped-Model", mapped_model)],
-            format!("All accounts exhausted. Last error: {}", last_error),
-        )
-            .into_response())
-    } else {
-        Ok((
-            StatusCode::TOO_MANY_REQUESTS,
-            [("X-Mapped-Model", mapped_model)],
-            format!("All accounts exhausted. Last error: {}", last_error),
-        )
-            .into_response())
-    }
+    Ok(crate::proxy::handlers::errors::accounts_exhausted_text_response(
+        &last_error,
+        last_email.as_deref(),
+        Some(&mapped_model),
+    ))
 }
 pub async fn handle_completions(
     State(state): State<OpenAIHandlerState>,
@@ -1189,11 +1177,9 @@ pub async fn handle_completions(
                                 .into_response();
                         }
                         Err(e) => {
-                            return (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Stream collection error: {}", e),
-                            )
-                                .into_response();
+                            return crate::proxy::handlers::errors::stream_collection_error_response(
+                                &e.to_string(),
+                            );
                         }
                     }
                 }
@@ -1202,12 +1188,10 @@ pub async fn handle_completions(
             let gemini_resp: Value = match response.json().await {
                 Ok(json) => json,
                 Err(e) => {
-                    return (
-                        StatusCode::BAD_GATEWAY,
-                        [("X-Mapped-Model", mapped_model.as_str())],
-                        format!("Parse error: {}", e),
-                    )
-                        .into_response();
+                    return crate::proxy::handlers::errors::parse_error_response(
+                        &e.to_string(),
+                        Some(mapped_model.as_str()),
+                    );
                 }
             };
 
@@ -1287,21 +1271,11 @@ pub async fn handle_completions(
                 .into_response();
         }
     }
-    if let Some(email) = last_email {
-        (
-            StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email), ("X-Mapped-Model", mapped_model)],
-            format!("All accounts exhausted. Last error: {}", last_error),
-        )
-            .into_response()
-    } else {
-        (
-            StatusCode::TOO_MANY_REQUESTS,
-            [("X-Mapped-Model", mapped_model)],
-            format!("All accounts exhausted. Last error: {}", last_error),
-        )
-            .into_response()
-    }
+    crate::proxy::handlers::errors::accounts_exhausted_text_response(
+        &last_error,
+        last_email.as_deref(),
+        Some(&mapped_model),
+    )
 }
 
 pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {

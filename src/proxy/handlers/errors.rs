@@ -93,3 +93,51 @@ pub fn claude_retry_exhausted_response(
     )
         .into_response()
 }
+
+pub fn accounts_exhausted_text_response(
+    last_error: &str,
+    last_email: Option<&str>,
+    mapped_model: Option<&str>,
+) -> Response {
+    let mut headers = HeaderMap::new();
+    if let Some(email) = last_email {
+        if let Ok(v) = HeaderValue::from_str(email) {
+            headers.insert("X-Account-Email", v);
+        }
+    }
+    if let Some(model) = mapped_model {
+        if let Ok(v) = HeaderValue::from_str(model) {
+            headers.insert("X-Mapped-Model", v);
+        }
+    }
+
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        headers,
+        format!("All accounts exhausted. Last error: {}", last_error),
+    )
+        .into_response()
+}
+
+pub fn stream_collection_error_response(error: &str) -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Stream collection error: {}", error),
+    )
+        .into_response()
+}
+
+pub fn parse_error_response(error: &str, mapped_model: Option<&str>) -> Response {
+    let mut headers = HeaderMap::new();
+    if let Some(model) = mapped_model {
+        if let Ok(v) = HeaderValue::from_str(model) {
+            headers.insert("X-Mapped-Model", v);
+        }
+    }
+    (
+        StatusCode::BAD_GATEWAY,
+        headers,
+        format!("Parse error: {}", error),
+    )
+        .into_response()
+}

@@ -364,11 +364,9 @@ pub async fn handle_generate(
                         }
                         Err(e) => {
                             error!("Stream collection error: {}", e);
-                            return Ok((
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Stream collection error: {}", e),
-                            )
-                                .into_response());
+                            return Ok(crate::proxy::handlers::errors::stream_collection_error_response(
+                                &e.to_string(),
+                            ));
                         }
                     }
                 }
@@ -516,20 +514,11 @@ pub async fn handle_generate(
             .into_response());
     }
 
-    if let Some(email) = last_email {
-        Ok((
-            StatusCode::TOO_MANY_REQUESTS,
-            [("X-Account-Email", email)],
-            format!("All accounts exhausted. Last error: {}", last_error),
-        )
-            .into_response())
-    } else {
-        Ok((
-            StatusCode::TOO_MANY_REQUESTS,
-            format!("All accounts exhausted. Last error: {}", last_error),
-        )
-            .into_response())
-    }
+    Ok(crate::proxy::handlers::errors::accounts_exhausted_text_response(
+        &last_error,
+        last_email.as_deref(),
+        None,
+    ))
 }
 
 pub async fn handle_list_models(
