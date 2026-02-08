@@ -43,15 +43,12 @@ hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
-eventsource-stream = "0.2"
 dashmap = "6.1"
-anyhow = "1.0"
 futures = "0.3"
 rand = "0.8"                        # Generate sessionId and mock project_id
 async-stream = "0.3.6"              # Simplify asynchronous stream generation
 regex = "1.12.2"                    # Duration parsing
 once_cell = "1.19"                  # Static initialization (model mapping table)
-pin-project = "1.1"                 # Pin projection helper
 bytes = "1.5"                       # SSE byte operations
 libc = "0.2"
 tracing-appender = "0.2.4"

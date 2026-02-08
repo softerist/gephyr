@@ -12,12 +12,7 @@ impl TokenManager {
         quota_protection_enabled: bool,
         use_sticky_mode: bool,
     ) -> Result<(String, String, String, String, u64), String> {
-        let last_used_account_id = if quota_group != "image_gen" {
-            let last_used = self.last_used_account.lock().await;
-            last_used.clone()
-        } else {
-            None
-        };
+        let last_used_account_id = self.snapshot_last_used_account(quota_group).await;
 
         let mut attempted: HashSet<String> = HashSet::new();
         let mut last_error: Option<String> = None;
@@ -28,58 +23,28 @@ impl TokenManager {
             let normalized_target =
                 crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
                     .unwrap_or_else(|| target_model.to_string());
-            let mut target_token = self
-                .try_mode_a_sticky(
+            let (target_token, mode_b_update_last_used) = self
+                .choose_target_token_for_attempt(
                     rotate,
+                    quota_group,
                     use_sticky_mode,
                     session_id,
+                    target_model,
                     tokens_snapshot,
                     &attempted,
                     &normalized_target,
                     quota_protection_enabled,
-                    target_model,
+                    total,
+                    &last_used_account_id,
                 )
                 .await;
-            if target_token.is_none() {
-                let (mode_b_token, mode_b_update_last_used) = self
-                    .try_mode_b_locked_or_p2c(
-                        rotate,
-                        quota_group,
-                        use_sticky_mode,
-                        &last_used_account_id,
-                        tokens_snapshot,
-                        &attempted,
-                        &normalized_target,
-                        quota_protection_enabled,
-                        session_id,
-                        target_model,
-                    )
-                    .await;
-                target_token = mode_b_token;
-                if mode_b_update_last_used.is_some() {
-                    need_update_last_used = mode_b_update_last_used;
-                }
-            }
-            if target_token.is_none() {
-                target_token = self
-                    .try_mode_c_p2c(
-                        tokens_snapshot,
-                        &attempted,
-                        &normalized_target,
-                        quota_protection_enabled,
-                        total,
-                        rotate,
-                    )
-                    .await;
+            if mode_b_update_last_used.is_some() {
+                need_update_last_used = mode_b_update_last_used;
             }
 
-            let mut token = match target_token {
-                Some(t) => t,
-                None => {
-                    self.select_via_rate_limited_fallback(tokens_snapshot, &attempted)
-                        .await?
-                }
-            };
+            let mut token = self
+                .resolve_candidate_token(target_token, tokens_snapshot, &attempted)
+                .await?;
             if self
                 .should_skip_selected_token(&token, &mut attempted)
                 .await
@@ -129,6 +94,97 @@ impl TokenManager {
         Err(last_error.unwrap_or_else(|| "All accounts failed".to_string()))
     }
 
+    async fn snapshot_last_used_account(
+        &self,
+        quota_group: &str,
+    ) -> Option<(String, std::time::Instant)> {
+        if quota_group == "image_gen" {
+            return None;
+        }
+        let last_used = self.last_used_account.lock().await;
+        last_used.clone()
+    }
+
+    async fn resolve_candidate_token(
+        &self,
+        target_token: Option<ProxyToken>,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+    ) -> Result<ProxyToken, String> {
+        match target_token {
+            Some(t) => Ok(t),
+            None => self
+                .select_via_rate_limited_fallback(tokens_snapshot, attempted)
+                .await,
+        }
+    }
+
+    async fn choose_target_token_for_attempt(
+        &self,
+        rotate: bool,
+        quota_group: &str,
+        use_sticky_mode: bool,
+        session_id: Option<&str>,
+        target_model: &str,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+        normalized_target: &str,
+        quota_protection_enabled: bool,
+        total: usize,
+        last_used_account_id: &Option<(String, std::time::Instant)>,
+    ) -> (Option<ProxyToken>, Option<(String, std::time::Instant)>) {
+        // Mode A: Sticky session processing (CacheFirst or Balance with session_id)
+        let mut target_token = self
+            .try_mode_a_sticky(
+                rotate,
+                use_sticky_mode,
+                session_id,
+                tokens_snapshot,
+                attempted,
+                normalized_target,
+                quota_protection_enabled,
+                target_model,
+            )
+            .await;
+        let mut mode_b_update_last_used: Option<(String, std::time::Instant)> = None;
+
+        // Mode B: Atomic 60s global lock + P2C fallback
+        if target_token.is_none() {
+            let (mode_b_token, mode_b_update) = self
+                .try_mode_b_locked_or_p2c(
+                    rotate,
+                    quota_group,
+                    use_sticky_mode,
+                    last_used_account_id,
+                    tokens_snapshot,
+                    attempted,
+                    normalized_target,
+                    quota_protection_enabled,
+                    session_id,
+                    target_model,
+                )
+                .await;
+            target_token = mode_b_token;
+            mode_b_update_last_used = mode_b_update;
+        }
+
+        // Mode C: P2C Selection (instead of pure round-robin)
+        if target_token.is_none() {
+            target_token = self
+                .try_mode_c_p2c(
+                    tokens_snapshot,
+                    attempted,
+                    normalized_target,
+                    quota_protection_enabled,
+                    total,
+                    rotate,
+                )
+                .await;
+        }
+
+        (target_token, mode_b_update_last_used)
+    }
+
     async fn select_via_rate_limited_fallback(
         &self,
         tokens_snapshot: &[ProxyToken],
@@ -138,50 +194,59 @@ impl TokenManager {
             .iter()
             .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
             .min();
-        if let Some(wait_sec) = min_wait {
-            if wait_sec <= 2 {
-                let wait_ms = (wait_sec as f64 * 1000.0) as u64;
-                tracing::warn!(
-                    "All accounts rate-limited but shortest wait is {}s. Applying {}ms buffer for state sync...",
-                    wait_sec, wait_ms
-                );
-                tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
-                let retry_token = tokens_snapshot.iter().find(|t| {
-                    !attempted.contains(&t.account_id)
-                        && !self.is_rate_limited_sync(&t.account_id, None)
-                });
-
-                if let Some(t) = retry_token {
-                    tracing::info!(
-                        "✅ Buffer delay successful! Found available account: {}",
-                        t.email
-                    );
-                    Ok(t.clone())
-                } else {
-                    tracing::warn!(
-                        "Buffer delay failed. Executing optimistic reset for all {} accounts...",
-                        tokens_snapshot.len()
-                    );
-                    self.rate_limit_tracker.clear_all();
-                    let final_token = tokens_snapshot
-                        .iter()
-                        .find(|t| !attempted.contains(&t.account_id));
-
-                    if let Some(t) = final_token {
-                        tracing::info!(
-                            "✅ Optimistic reset successful! Using account: {}",
-                            t.email
-                        );
-                        Ok(t.clone())
-                    } else {
-                        Err("All accounts failed after optimistic reset.".to_string())
-                    }
-                }
-            } else {
-                Err(format!("All accounts limited. Wait {}s.", wait_sec))
+        match min_wait {
+            Some(wait_sec) if wait_sec <= 2 => {
+                self.try_buffer_delay_pick(tokens_snapshot, attempted, wait_sec)
+                    .await
             }
+            Some(wait_sec) => Err(format!("All accounts limited. Wait {}s.", wait_sec)),
+            None => Err("All accounts failed or unhealthy.".to_string()),
+        }
+    }
+
+    async fn try_buffer_delay_pick(
+        &self,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+        wait_sec: u64,
+    ) -> Result<ProxyToken, String> {
+        let wait_ms = (wait_sec as f64 * 1000.0) as u64;
+        tracing::warn!(
+            "All accounts rate-limited but shortest wait is {}s. Applying {}ms buffer for state sync...",
+            wait_sec, wait_ms
+        );
+        tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
+        let retry_token = tokens_snapshot.iter().find(|t| {
+            !attempted.contains(&t.account_id) && !self.is_rate_limited_sync(&t.account_id, None)
+        });
+
+        if let Some(t) = retry_token {
+            tracing::info!("✅ Buffer delay successful! Found available account: {}", t.email);
+            Ok(t.clone())
         } else {
-            Err("All accounts failed or unhealthy.".to_string())
+            self.try_optimistic_reset_pick(tokens_snapshot, attempted)
+        }
+    }
+
+    fn try_optimistic_reset_pick(
+        &self,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+    ) -> Result<ProxyToken, String> {
+        tracing::warn!(
+            "Buffer delay failed. Executing optimistic reset for all {} accounts...",
+            tokens_snapshot.len()
+        );
+        self.rate_limit_tracker.clear_all();
+        let final_token = tokens_snapshot
+            .iter()
+            .find(|t| !attempted.contains(&t.account_id));
+
+        if let Some(t) = final_token {
+            tracing::info!("✅ Optimistic reset successful! Using account: {}", t.email);
+            Ok(t.clone())
+        } else {
+            Err("All accounts failed after optimistic reset.".to_string())
         }
     }
 
