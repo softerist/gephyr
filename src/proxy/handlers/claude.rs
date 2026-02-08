@@ -123,17 +123,10 @@ pub async fn handle_messages(
         match serde_json::from_value(body) {
             Ok(r) => r,
             Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "type": "error",
-                        "error": {
-                            "type": "invalid_request_error",
-                            "message": format!("Invalid request body: {}", e)
-                        }
-                    })),
-                )
-                    .into_response();
+                return crate::proxy::handlers::errors::claude_invalid_request_response(
+                    format!("Invalid request body: {}", e),
+                    None,
+                );
             }
         };
 
@@ -558,17 +551,10 @@ pub async fn handle_messages(
                             "[{}] [Layer-3] Fork+Summary failed: {}, falling back to error response",
                             trace_id, e
                         );
-                        return (
-                            StatusCode::BAD_REQUEST,
-                            Json(json!({
-                                "type": "error",
-                                "error": {
-                                    "type": "invalid_request_error",
-                                    "message": format!("Context too long and automatic compression failed: {}", e),
-                                    "suggestion": "Please use /compact or /clear command in Claude Code, or switch to a model with larger context window."
-                                }
-                            }))
-                        ).into_response();
+                        return crate::proxy::handlers::errors::claude_invalid_request_response(
+                            format!("Context too long and automatic compression failed: {}", e),
+                            Some("Please use /compact or /clear command in Claude Code, or switch to a model with larger context window.".to_string()),
+                        );
                     }
                 }
             }
@@ -1114,22 +1100,9 @@ pub async fn handle_messages(
                     || error_text.contains("exceeds")
                     || error_text.contains("limit"))
             {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    [("X-Account-Email", email.as_str())],
-                    Json(json!({
-                        "id": "err_prompt_too_long",
-                        "type": "error",
-                        "error": {
-                            "type": "invalid_request_error",
-                            "message": "Prompt is too long (server-side context limit reached).",
-                            "suggestion": format!(
-                                "Please: 1) Executive '/compact' in Claude Code 2) Reduce conversation history 3) Switch to {} (2M context limit)",
-                                crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO
-                            )
-                        }
-                    }))
-                ).into_response();
+                return crate::proxy::handlers::errors::claude_prompt_too_long_response(
+                    email.as_str(),
+                );
             }
             error!(
                 "[{}] Non-retryable error {}: {}",
@@ -1147,71 +1120,13 @@ pub async fn handle_messages(
         }
     }
 
-    if let Some(email) = last_email {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "X-Account-Email",
-            header::HeaderValue::from_str(&email).unwrap(),
-        );
-        if let Some(model) = last_mapped_model {
-            if let Ok(v) = header::HeaderValue::from_str(&model) {
-                headers.insert("X-Mapped-Model", v);
-            }
-        }
-
-        let error_type = match last_status.as_u16() {
-            400 => "invalid_request_error",
-            401 => "authentication_error",
-            403 => "permission_error",
-            429 => "rate_limit_error",
-            529 => "overloaded_error",
-            _ => "api_error",
-        };
-        let response_status = if last_status.as_u16() == 403 {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            last_status
-        };
-
-        (response_status, headers, Json(json!({
-            "type": "error",
-            "error": {
-                "id": "err_retry_exhausted",
-                "type": error_type,
-                "message": format!("All {} attempts failed. Last status: {}. Error: {}", max_attempts, last_status, last_error)
-            }
-        }))).into_response()
-    } else {
-        let mut headers = HeaderMap::new();
-        if let Some(model) = last_mapped_model {
-            if let Ok(v) = header::HeaderValue::from_str(&model) {
-                headers.insert("X-Mapped-Model", v);
-            }
-        }
-
-        let error_type = match last_status.as_u16() {
-            400 => "invalid_request_error",
-            401 => "authentication_error",
-            403 => "permission_error",
-            429 => "rate_limit_error",
-            529 => "overloaded_error",
-            _ => "api_error",
-        };
-        let response_status = if last_status.as_u16() == 403 {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            last_status
-        };
-
-        (response_status, headers, Json(json!({
-            "type": "error",
-            "error": {
-                "id": "err_retry_exhausted",
-                "type": error_type,
-                "message": format!("All {} attempts failed. Last status: {}. Error: {}", max_attempts, last_status, last_error)
-            }
-        }))).into_response()
-    }
+    crate::proxy::handlers::errors::claude_retry_exhausted_response(
+        max_attempts,
+        last_status,
+        &last_error,
+        last_email.as_deref(),
+        last_mapped_model.as_deref(),
+    )
 }
 pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
     build_models_list_response(&state).await
