@@ -9,7 +9,7 @@ mod tests {
 
     use crate::models::QuotaProtectionConfig;
     use crate::proxy::common::model_mapping::normalize_to_standard_id;
-    use crate::proxy::token_manager::ProxyToken;
+    use crate::proxy::token::ProxyToken;
 
     // ==================================================================================
     // Helper function: Create mock account
@@ -943,7 +943,7 @@ mod tests {
 
         // Test reading quota for claude-sonnet-4-5
         let sonnet_quota =
-            crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
+            crate::proxy::token::TokenManager::get_model_quota_from_json_for_test(
                 &account_path,
                 "claude-sonnet-4-5",
             );
@@ -955,7 +955,7 @@ mod tests {
 
         // Test reading quota for gemini-3-flash
         let gemini_quota =
-            crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
+            crate::proxy::token::TokenManager::get_model_quota_from_json_for_test(
                 &account_path,
                 "gemini-3-flash",
             );
@@ -963,7 +963,7 @@ mod tests {
 
         // Test reading a non-existent model
         let unknown_quota =
-            crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
+            crate::proxy::token::TokenManager::get_model_quota_from_json_for_test(
                 &account_path,
                 "unknown-model",
             );
@@ -1038,12 +1038,12 @@ mod tests {
 
         // Use the fixed sorting logic: read target model quota
         tokens.sort_by(|a, b| {
-            let quota_a = crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
+            let quota_a = crate::proxy::token::TokenManager::get_model_quota_from_json_for_test(
                 &a.account_path,
                 target_model,
             )
             .unwrap_or(0);
-            let quota_b = crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
+            let quota_b = crate::proxy::token::TokenManager::get_model_quota_from_json_for_test(
                 &b.account_path,
                 target_model,
             )
@@ -1099,7 +1099,7 @@ mod tests {
         assert_eq!(normalized, "claude-sonnet-4-5", "should normalize to claude-sonnet-4-5");
 
         // Read normalized model quota
-        let quota = crate::proxy::token_manager::TokenManager::get_model_quota_from_json_for_test(
+        let quota = crate::proxy::token::TokenManager::get_model_quota_from_json_for_test(
             &account_path,
             &normalized,
         );

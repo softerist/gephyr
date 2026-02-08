@@ -1,6 +1,6 @@
 // Remove redundant top-level imports, as these are handled by full paths or local imports in the code
 use dashmap::DashMap;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -8,32 +8,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::proxy::rate_limit::RateLimitTracker;
 use crate::proxy::sticky_config::StickySessionConfig;
+pub use crate::proxy::token::types::ProxyToken;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OnDiskAccountState {
     Enabled,
     Disabled,
     Unknown,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProxyToken {
-    pub account_id: String,
-    pub access_token: String,
-    pub refresh_token: String,
-    pub expires_in: i64,
-    pub timestamp: i64,
-    pub email: String,
-    pub account_path: PathBuf, // Account file path, used for updates
-    pub project_id: Option<String>,
-    pub subscription_tier: Option<String>, // "FREE" | "PRO" | "ULTRA"
-    pub remaining_quota: Option<i32>,      // Remaining quota for priority sorting
-    pub protected_models: HashSet<String>,
-    pub health_score: f32,                 //  Health score (0.0 - 1.0)
-    pub reset_time: Option<i64>,           //  Quota reset timestamp (for sorting optimization)
-    pub validation_blocked: bool,          //  Check for validation block (VALIDATION_REQUIRED temporary block)
-    pub validation_blocked_until: i64,     //  Timestamp until which the account is blocked
-    pub model_quotas: HashMap<String, i32>, // In-memory cache for model-specific quotas
 }
 
 pub struct TokenManager {
@@ -395,7 +376,7 @@ impl TokenManager {
 
         // Quota protection check - only handle quota protection logic
         // This allows automatic recovery of accounts whose quotas have been restored upon loading
-        if self.check_and_protect_quota(&mut account, path).await {
+        if crate::proxy::token::quota::check_and_protect_quota(&mut account, path).await {
             tracing::debug!(
                 "Account skipped due to quota protection: {:?} (email={})",
                 path,
@@ -469,7 +450,7 @@ impl TokenManager {
         // Extract max remaining quota percentage for priority sorting (Option<i32> now)
         let remaining_quota = account
             .get("quota")
-            .and_then(|q| self.calculate_quota_stats(q));
+            .and_then(crate::proxy::token::quota::calculate_quota_stats);
             // .filter(|&r| r > 0); // Remove >0 filter; 0% is still valid but lower priority
 
         // [NEW #621] Extract restricted models list
@@ -522,373 +503,218 @@ impl TokenManager {
         }))
     }
 
-    // Check if the account should be under quota protection
-    // If quota is below the threshold, automatically disable the account and return true
-    async fn check_and_protect_quota(
+    // Test helper function: Public access to get_model_quota_from_json
+    #[cfg(test)]
+    pub fn get_model_quota_from_json_for_test(account_path: &PathBuf, model_name: &str) -> Option<i32> {
+        crate::proxy::token::quota::get_model_quota_from_json(account_path, model_name)
+    }
+
+    async fn collect_non_limited_candidates(
         &self,
-        account_json: &mut serde_json::Value,
-        account_path: &PathBuf,
-    ) -> bool {
-        // 1. Load quota protection configuration
-        let config = match crate::modules::config::load_app_config() {
-            Ok(cfg) => cfg.quota_protection,
-            Err(_) => return false, // Config loading failed, skip protection
-        };
+        tokens_snapshot: &[ProxyToken],
+        normalized_target: &str,
+    ) -> Vec<ProxyToken> {
+        let mut non_limited: Vec<ProxyToken> = Vec::new();
+        for t in tokens_snapshot {
+            if !self
+                .is_rate_limited(&t.account_id, Some(normalized_target))
+                .await
+            {
+                non_limited.push(t.clone());
+            }
+        }
+        non_limited
+    }
 
-        if !config.enabled {
-            return false; // Quota protection not enabled
+    async fn try_mode_a_sticky(
+        &self,
+        rotate: bool,
+        use_sticky_mode: bool,
+        session_id: Option<&str>,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+        normalized_target: &str,
+        quota_protection_enabled: bool,
+        target_model: &str,
+    ) -> Option<ProxyToken> {
+        if rotate || !use_sticky_mode {
+            return None;
         }
 
-        // 2. Get quota information
-        // Clone quota data for iteration to avoid borrow conflicts; mutations still target account_json
-        let quota = match account_json.get("quota") {
-            Some(q) => q.clone(),
-            None => return false, // No quota info, skip
-        };
+        let sid = session_id?;
 
-        // 3. [Compatibility #621] Check if disabled by legacy account-level quota protection, try to restore and convert to model-level
-        let is_proxy_disabled = account_json
-            .get("proxy_disabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        // 1. Check if session is already bound to an account.
+        let bound_id = self.session_accounts.get(sid).map(|v| v.clone())?;
 
-        let reason = account_json.get("proxy_disabled_reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // 2. Convert email -> account_id to check if the bound account is rate-limited.
+        if let Some(bound_token) = tokens_snapshot.iter().find(|t| t.account_id == bound_id) {
+            let key = self
+                .email_to_account_id(&bound_token.email)
+                .unwrap_or_else(|| bound_token.account_id.clone());
 
-        if is_proxy_disabled && reason == "quota_protection" {
-            // If disabled by legacy account-level protection, try to restore and convert to model-level
-            return self
-                .check_and_restore_quota(account_json, account_path, &quota, &config)
-                .await;
-        }
-
-        // No longer handle other disable reasons, let caller handle manual disable checks
-
-        // 4. Get model list
-        let models = match quota.get("models").and_then(|m| m.as_array()) {
-            Some(m) => m,
-            None => return false,
-        };
-
-        // 5. Traverse monitored models, check for protection and restoration
-        let threshold = config.threshold_percentage as i32;
-
-        let mut changed = false;
-
-        for model in models {
-            let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            // Normalize model name first, then check if it's in the monitoring list
-            // This way, claude-opus-4-5-thinking is normalized to claude-sonnet-4-5 for matching
-            let standard_id = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
-                .unwrap_or_else(|| name.to_string());
-
-            if !config.monitored_models.iter().any(|m| m == &standard_id) {
-                continue;
+            // Pass None for specific model wait time if not applicable.
+            let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
+            if reset_sec > 0 {
+                // Unbind and switch account immediately; do not block.
+                tracing::debug!(
+                    "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
+                    bound_token.email,
+                    reset_sec
+                );
+                self.session_accounts.remove(sid);
+                return None;
             }
 
-            let percentage = model
-                .get("percentage")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
-            let account_id = account_json
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            if !attempted.contains(&bound_id)
+                && !crate::proxy::token::pool::is_quota_protected(
+                    bound_token,
+                    normalized_target,
+                    quota_protection_enabled,
+                )
+            {
+                tracing::debug!(
+                    "Sticky Session: Successfully reusing bound account {} for session {}",
+                    bound_token.email,
+                    sid
+                );
+                return Some(bound_token.clone());
+            }
 
-            if percentage <= threshold {
-                // Use normalized standard_id instead of original name
-                if self
-                    .trigger_quota_protection(
-                        account_json,
-                        &account_id,
-                        account_path,
-                        percentage,
-                        threshold,
-                        &standard_id,
-                    )
-                    .await
-                    .unwrap_or(false)
-                {
-                    changed = true;
-                }
-            } else {
-                // Try to restore (if previously restricted)
-                let protected_models = account_json
-                    .get("protected_models")
-                    .and_then(|v| v.as_array());
-                // Match using normalized standard_id
-                let is_protected = protected_models.map_or(false, |arr| {
-                    arr.iter().any(|m| m.as_str() == Some(&standard_id as &str))
-                });
+            if crate::proxy::token::pool::is_quota_protected(
+                bound_token,
+                normalized_target,
+                quota_protection_enabled,
+            ) {
+                tracing::debug!(
+                    "Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.",
+                    bound_token.email,
+                    normalized_target,
+                    target_model
+                );
+                self.session_accounts.remove(sid);
+            }
 
-                if is_protected {
-                    // Use normalized standard_id
-                    if self
-                        .restore_quota_protection(
-                            account_json,
-                            &account_id,
-                            account_path,
-                            &standard_id,
-                        )
+            return None;
+        }
+
+        // Bound account no longer exists (possibly deleted); unbind it.
+        tracing::debug!(
+            "Sticky Session: Bound account not found for session {}, unbinding",
+            sid
+        );
+        self.session_accounts.remove(sid);
+        None
+    }
+
+    async fn try_mode_b_locked_or_p2c(
+        &self,
+        rotate: bool,
+        quota_group: &str,
+        use_sticky_mode: bool,
+        last_used_account_id: &Option<(String, std::time::Instant)>,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+        normalized_target: &str,
+        quota_protection_enabled: bool,
+        session_id: Option<&str>,
+        target_model: &str,
+    ) -> (Option<ProxyToken>, Option<(String, std::time::Instant)>) {
+        if rotate || quota_group == "image_gen" || !use_sticky_mode {
+            return (None, None);
+        }
+
+        // Try recent-account lock first.
+        if let Some((account_id, last_time)) = last_used_account_id {
+            if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
+                if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
+                    if !self
+                        .is_rate_limited(&found.account_id, Some(normalized_target))
                         .await
-                        .unwrap_or(false)
+                        && !crate::proxy::token::pool::is_quota_protected(
+                            found,
+                            normalized_target,
+                            quota_protection_enabled,
+                        )
                     {
-                        changed = true;
+                        tracing::debug!("60s Window: Force reusing last account: {}", found.email);
+                        return (Some(found.clone()), None);
+                    }
+
+                    if self
+                        .is_rate_limited(&found.account_id, Some(normalized_target))
+                        .await
+                    {
+                        tracing::debug!(
+                            "60s Window: Last account {} is rate-limited, skipping",
+                            found.email
+                        );
+                    } else {
+                        tracing::debug!(
+                            "60s Window: Last account {} is quota-protected for model {} [{}], skipping",
+                            found.email,
+                            normalized_target,
+                            target_model
+                        );
                     }
                 }
             }
         }
 
-        let _ = changed; // Avoid unused warning, can be used if later logic needs it
+        // If no lock candidate, use P2C selection.
+        let non_limited = self
+            .collect_non_limited_candidates(tokens_snapshot, normalized_target)
+            .await;
+        if let Some(selected) = crate::proxy::token::pool::select_with_p2c(
+            &non_limited,
+            attempted,
+            normalized_target,
+            quota_protection_enabled,
+        ) {
+            let selected = selected.clone();
+            let update_last_used = Some((selected.account_id.clone(), std::time::Instant::now()));
 
-        // We no longer return true due to quota reasons (i.e., no longer skip accounts),
-        // but load them and filter during get_token instead.
-        false
-    }
-
-    // Calculate the maximum remaining quota percentage of the account (for sorting)
-    // Return value: Option<i32> (max_percentage)
-    fn calculate_quota_stats(&self, quota: &serde_json::Value) -> Option<i32> {
-        let models = match quota.get("models").and_then(|m| m.as_array()) {
-            Some(m) => m,
-            None => return None,
-        };
-
-        let mut max_percentage = 0;
-        let mut has_data = false;
-
-        for model in models {
-            if let Some(pct) = model.get("percentage").and_then(|v| v.as_i64()) {
-                let pct_i32 = pct as i32;
-                if pct_i32 > max_percentage {
-                    max_percentage = pct_i32;
-                }
-                has_data = true;
-            }
-        }
-
-        if has_data {
-            Some(max_percentage)
-        } else {
-            None
-        }
-    }
-
-    // Read quota percentage for a specific model from disk. Sorting uses the target model's quota instead of max
-    //
-    // # Parameters
-    // * `account_path` - Account JSON file path
-    // * `model_name` - Target model name (normalized)
-    #[cfg(test)]
-    fn get_model_quota_from_json(account_path: &PathBuf, model_name: &str) -> Option<i32> {
-        let content = std::fs::read_to_string(account_path).ok()?;
-        let account: serde_json::Value = serde_json::from_str(&content).ok()?;
-        let models = account.get("quota")?.get("models")?.as_array()?;
-
-        for model in models {
-            if let Some(name) = model.get("name").and_then(|v| v.as_str()) {
-                if crate::proxy::common::model_mapping::normalize_to_standard_id(name)
-                    .unwrap_or_else(|| name.to_string())
-                    == model_name
-                {
-                    return model
-                        .get("percentage")
-                        .and_then(|v| v.as_i64())
-                        .map(|p| p as i32);
-                }
-            }
-        }
-        None
-    }
-
-    // Test helper function: Public access to get_model_quota_from_json
-    #[cfg(test)]
-    pub fn get_model_quota_from_json_for_test(account_path: &PathBuf, model_name: &str) -> Option<i32> {
-        Self::get_model_quota_from_json(account_path, model_name)
-    }
-
-    // Returns true if changed
-    async fn trigger_quota_protection(
-        &self,
-        account_json: &mut serde_json::Value,
-        account_id: &str,
-        account_path: &PathBuf,
-        current_val: i32,
-        threshold: i32,
-        model_name: &str,
-    ) -> Result<bool, String> {
-        // 1. Initialize protected_models array (if it doesn't exist)
-        if account_json.get("protected_models").is_none() {
-            account_json["protected_models"] = serde_json::Value::Array(Vec::new());
-        }
-
-        let protected_models = account_json["protected_models"].as_array_mut().unwrap();
-
-        // 2. Check if it already exists
-        if !protected_models
-            .iter()
-            .any(|m| m.as_str() == Some(model_name))
-        {
-            protected_models.push(serde_json::Value::String(model_name.to_string()));
-
-            tracing::info!(
-                "Model {} of account {} has been added to the protection list due to quota limit ({}% <= {}%)",
-                account_id,
-                model_name,
-                current_val,
-                threshold
-            );
-
-            // 3. Write to disk
-            std::fs::write(account_path, serde_json::to_string_pretty(account_json).unwrap())
-                .map_err(|e| format!("Failed to write file: {}", e))?;
-
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
-    // Check and restore from account-level protection (migrate to model-level, Issue #621)
-    async fn check_and_restore_quota(
-        &self,
-        account_json: &mut serde_json::Value,
-        account_path: &PathBuf,
-        quota: &serde_json::Value,
-        config: &crate::models::QuotaProtectionConfig,
-    ) -> bool {
-        // [Compatibility] If the account is currently proxy_disabled=true and the reason is quota_protection,
-        // we set its proxy_disabled to false, while updating its protected_models list.
-        tracing::info!(
-            "Migrating account {} from global quota protection mode to model-level protection mode",
-            account_json
-                .get("email")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-        );
-
-        account_json["proxy_disabled"] = serde_json::Value::Bool(false);
-        account_json["proxy_disabled_reason"] = serde_json::Value::Null;
-        account_json["proxy_disabled_at"] = serde_json::Value::Null;
-
-        let threshold = config.threshold_percentage as i32;
-        let mut protected_list = Vec::new();
-
-        if let Some(models) = quota.get("models").and_then(|m| m.as_array()) {
-            for model in models {
-                let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if !config.monitored_models.iter().any(|m| m == name) { continue; }
-
-                let percentage = model.get("percentage").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                if percentage <= threshold {
-                    protected_list.push(serde_json::Value::String(name.to_string()));
-                }
-            }
-        }
-
-        account_json["protected_models"] = serde_json::Value::Array(protected_list);
-
-        let _ = std::fs::write(account_path, serde_json::to_string_pretty(account_json).unwrap());
-
-        false // Return false indicating it's now okay to try loading this account (model-level filtering occurs during get_token)
-    }
-
-    // Restore quota protection for specific model
-    // Returns true if changed
-    async fn restore_quota_protection(
-        &self,
-        account_json: &mut serde_json::Value,
-        account_id: &str,
-        account_path: &PathBuf,
-        model_name: &str,
-    ) -> Result<bool, String> {
-        if let Some(arr) = account_json
-            .get_mut("protected_models")
-            .and_then(|v| v.as_array_mut())
-        {
-            let original_len = arr.len();
-            arr.retain(|m| m.as_str() != Some(model_name));
-
-            if arr.len() < original_len {
-                tracing::info!(
-                    "Quota for model {} of account {} has been restored, removing from protection list",
-                    account_id,
-                    model_name
+            if let Some(sid) = session_id {
+                self.session_accounts
+                    .insert(sid.to_string(), selected.account_id.clone());
+                tracing::debug!(
+                    "Sticky Session: Bound new account {} to session {}",
+                    selected.email,
+                    sid
                 );
-                std::fs::write(
-                    account_path,
-                    serde_json::to_string_pretty(account_json).unwrap(),
-                )
-                .map_err(|e| format!("Failed to write file: {}", e))?;
-                return Ok(true);
             }
+
+            return (Some(selected), update_last_used);
         }
 
-        Ok(false)
+        (None, None)
     }
 
-    // Candidate pool size for P2C algorithm - randomly select from the top N best candidates
-    const P2C_POOL_SIZE: usize = 5;
-
-    // Power of 2 Choices (P2C) selection algorithm
-    // Randomly pick 2 from the top 5 candidates, select the one with higher quota -> avoid hotspots
-    // Return the selected index
-    //
-    // # Arguments
-    // * `candidates` - Sorted list of candidate tokens
-    // * `attempted` - Set of account IDs that have already been attempted and failed
-    // * `normalized_target` - Normalized target model name
-    // * `quota_protection_enabled` - Whether quota protection is enabled
-    fn select_with_p2c<'a>(
+    async fn try_mode_c_p2c(
         &self,
-        candidates: &'a [ProxyToken],
+        tokens_snapshot: &[ProxyToken],
         attempted: &HashSet<String>,
         normalized_target: &str,
         quota_protection_enabled: bool,
-    ) -> Option<&'a ProxyToken> {
-        use rand::Rng;
+        total: usize,
+        rotate: bool,
+    ) -> Option<ProxyToken> {
+        tracing::debug!("🔄 [Mode C] P2C selection from {} candidates", total);
 
-        // Filter available tokens
-        let available: Vec<&ProxyToken> = candidates.iter()
-            .filter(|t| !attempted.contains(&t.account_id))
-            .filter(|t| !quota_protection_enabled || !t.protected_models.contains(normalized_target))
-            .collect();
+        let non_limited = self
+            .collect_non_limited_candidates(tokens_snapshot, normalized_target)
+            .await;
+        let selected = crate::proxy::token::pool::select_with_p2c(
+            &non_limited,
+            attempted,
+            normalized_target,
+            quota_protection_enabled,
+        )?;
+        let selected = selected.clone();
 
-        if available.is_empty() { return None; }
-        if available.len() == 1 { return Some(available[0]); }
-
-        // P2C: Randomly pick 2 from the top min(P2C_POOL_SIZE, len)
-        let pool_size = available.len().min(Self::P2C_POOL_SIZE);
-        let mut rng = rand::thread_rng();
-
-        let pick1 = rng.gen_range(0..pool_size);
-        let pick2 = rng.gen_range(0..pool_size);
-        // Ensure two different candidates are selected
-        let pick2 = if pick2 == pick1 {
-            (pick1 + 1) % pool_size
-        } else {
-            pick2
-        };
-
-        let c1 = available[pick1];
-        let c2 = available[pick2];
-
-        // Select the one with higher quota
-        let selected = if c1.remaining_quota.unwrap_or(0) >= c2.remaining_quota.unwrap_or(0) {
-            c1
-        } else {
-            c2
-        };
-
-        tracing::debug!(
-            "🎲 [P2C] Selected {} ({}%) from [{}({}%), {}({}%)]",
-            selected.email, selected.remaining_quota.unwrap_or(0),
-            c1.email, c1.remaining_quota.unwrap_or(0),
-            c2.email, c2.remaining_quota.unwrap_or(0)
-        );
-
+        tracing::debug!("  {} - SELECTED via P2C", selected.email);
+        if rotate {
+            tracing::debug!("Force Rotation: Switched to account: {}", selected.email);
+        }
         Some(selected)
     }
 
@@ -1001,79 +827,17 @@ impl TokenManager {
             return Err("Token pool is empty".to_string());
         }
 
-        // ===== [OPTIMIZATION] Quota-First Sorting: Protect low quota accounts, balanced usage =====
-        // Priority: Target model quota > Health score > Subscription tier > Reset time
-        // -> High quota accounts are prioritized to avoid PRO/ULTRA running out first and losing the 5-hour refresh cycle
-        // Use targeted model's quota instead of max (all models)
-        const RESET_TIME_THRESHOLD_SECS: i64 = 600; // 10-minute threshold; differences smaller than this are considered the same
-
         let normalized_target =
             crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
                 .unwrap_or_else(|| target_model.to_string());
 
-        tokens_snapshot.sort_by(|a, b| {
-            // Priority 1: target model quota (higher is better) -> protect low-quota accounts
-            // [OPTIMIZATION] Use in-memory cache; avoid disk I/O reads
-            let quota_a = a.model_quotas.get(&normalized_target).copied()
-                .unwrap_or(a.remaining_quota.unwrap_or(0));
-            let quota_b = b.model_quotas.get(&normalized_target).copied()
-                .unwrap_or(b.remaining_quota.unwrap_or(0));
-
-            let quota_cmp = quota_b.cmp(&quota_a);
-            if quota_cmp != std::cmp::Ordering::Equal {
-                return quota_cmp;
-            }
-
-            // Priority 2: Health score (higher is better)
-            let health_cmp = b.health_score.partial_cmp(&a.health_score)
-                .unwrap_or(std::cmp::Ordering::Equal);
-            if health_cmp != std::cmp::Ordering::Equal {
-                return health_cmp;
-            }
-
-            // Priority 3: Subscription tier (ULTRA > PRO > FREE) -> Prioritize higher tier accounts in case of tie
-            let tier_priority = |tier: &Option<String>| {
-                let t = tier.as_deref().unwrap_or("").to_lowercase();
-                if t.contains("ultra") { 0 }
-                else if t.contains("pro") { 1 }
-                else if t.contains("free") { 2 }
-                else { 3 }
-            };
-            let tier_cmp = tier_priority(&a.subscription_tier)
-                .cmp(&tier_priority(&b.subscription_tier));
-            if tier_cmp != std::cmp::Ordering::Equal {
-                return tier_cmp;
-            }
-
-            // Priority 4: Reset time (earlier is better, but only if diff > 10 min)
-            let reset_a = a.reset_time.unwrap_or(i64::MAX);
-            let reset_b = b.reset_time.unwrap_or(i64::MAX);
-            if (reset_a - reset_b).abs() >= RESET_TIME_THRESHOLD_SECS {
-                reset_a.cmp(&reset_b)
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        });
+        crate::proxy::token::pool::sort_tokens_for_target(&mut tokens_snapshot, &normalized_target);
 
         // [DEBUG LOG] Print sorted account order (shows target model's quota)
         tracing::debug!(
             "🔄 [Token Rotation] target={} Accounts: {:?}",
             normalized_target,
-            tokens_snapshot.iter().map(|t| format!(
-                "{}(quota={}%, reset={:?}, health={:.2})",
-                t.email,
-                t.model_quotas.get(&normalized_target).copied().unwrap_or(0),
-                t.reset_time.map(|ts| {
-                    let now = chrono::Utc::now().timestamp();
-                    let diff_secs = ts - now;
-                    if diff_secs > 0 {
-                        format!("{}m", diff_secs / 60)
-                    } else {
-                        "now".to_string()
-                    }
-                }),
-                t.health_score
-            )).collect::<Vec<_>>()
+            crate::proxy::token::pool::debug_rotation_rows(&tokens_snapshot, &normalized_target)
         );
 
         // 0. Read current scheduling configuration
@@ -1225,166 +989,63 @@ impl TokenManager {
         let mut attempted: HashSet<String> = HashSet::new();
         let mut last_error: Option<String> = None;
         let mut need_update_last_used: Option<(String, std::time::Instant)> = None;
+        let use_sticky_mode = scheduling.mode != SchedulingMode::PerformanceFirst;
 
         for attempt in 0..total {
             let rotate = force_rotate || attempt > 0;
-
-            // ===== [CORE] Sticky Session and Smart Scheduling Logic =====
-            let mut target_token: Option<ProxyToken> = None;
 
             // Normalize target model name to standard ID for quota protection check
             let normalized_target = crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
                 .unwrap_or_else(|| target_model.to_string());
 
             // Mode A: Sticky session processing (CacheFirst or Balance with session_id)
-            if !rotate
-                && session_id.is_some()
-                && scheduling.mode != SchedulingMode::PerformanceFirst
-            {
-                let sid = session_id.unwrap();
+            let mut target_token = self
+                .try_mode_a_sticky(
+                    rotate,
+                    use_sticky_mode,
+                    session_id,
+                    &tokens_snapshot,
+                    &attempted,
+                    &normalized_target,
+                    quota_protection_enabled,
+                    target_model,
+                )
+                .await;
 
-                // 1. Check if session is already bound to an account
-                if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
-                    // Find the corresponding account via account_id first to get its email
-                    // 2. Convert email -> account_id to check if the bound account is rate-limited
-                    if let Some(bound_token) =
-                        tokens_snapshot.iter().find(|t| t.account_id == bound_id)
-                    {
-                        let key = self
-                            .email_to_account_id(&bound_token.email)
-                            .unwrap_or_else(|| bound_token.account_id.clone());
-                        //  Pass None for specific model wait time if not applicable
-                        let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
-                        if reset_sec > 0 {
-                            // Unbind and switch account immediately; do not block
-                            // Reason: blocking can cause client socket timeouts under concurrency (UND_ERR_SOCKET)
-                            tracing::debug!(
-                                "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
-                                bound_token.email, reset_sec
-                            );
-                            self.session_accounts.remove(sid);
-                        } else if !attempted.contains(&bound_id)
-                            && !(quota_protection_enabled
-                                && bound_token.protected_models.contains(&normalized_target))
-                        {
-                            // 3. Account is available and not marked as attempt failed, prioritize reuse
-                            tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
-                            target_token = Some(bound_token.clone());
-                        } else if quota_protection_enabled
-                            && bound_token.protected_models.contains(&normalized_target)
-                        {
-                            tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.", bound_token.email, normalized_target, target_model);
-                            self.session_accounts.remove(sid);
-                        }
-                    } else {
-                        // Bound account no longer exists (possibly deleted); unbind it
-                        tracing::debug!(
-                            "Sticky Session: Bound account not found for session {}, unbinding",
-                            sid
-                        );
-                        self.session_accounts.remove(sid);
-                    }
+            // Mode B: Atomic 60s global lock + P2C fallback
+            if target_token.is_none() {
+                let (mode_b_token, mode_b_update_last_used) = self
+                    .try_mode_b_locked_or_p2c(
+                        rotate,
+                        quota_group,
+                        use_sticky_mode,
+                        &last_used_account_id,
+                        &tokens_snapshot,
+                        &attempted,
+                        &normalized_target,
+                        quota_protection_enabled,
+                        session_id,
+                        target_model,
+                    )
+                    .await;
+                target_token = mode_b_token;
+                if mode_b_update_last_used.is_some() {
+                    need_update_last_used = mode_b_update_last_used;
                 }
             }
 
-            // Mode B: Atomic 60s global lock (default protection for cases without session_id)
-            // Performance-first mode should skip 60s locking;
-            if target_token.is_none()
-                && !rotate
-                && quota_group != "image_gen"
-                && scheduling.mode != SchedulingMode::PerformanceFirst
-            {
-                // [OPTIMIZATION] Use pre-fetched snapshot, no more locking inside the loop
-                if let Some((account_id, last_time)) = &last_used_account_id {
-                    // 60s locking logic should check the `attempted` set to avoid retrying failed accounts
-                    if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
-                        if let Some(found) =
-                            tokens_snapshot.iter().find(|t| &t.account_id == account_id)
-                        {
-                            // Check rate limit status and quota protection to avoid reusing locked accounts
-                            if !self
-                                .is_rate_limited(&found.account_id, Some(&normalized_target))
-                                .await
-                                && !(quota_protection_enabled
-                                    && found.protected_models.contains(&normalized_target))
-                            {
-                                tracing::debug!(
-                                    "60s Window: Force reusing last account: {}",
-                                    found.email
-                                );
-                                target_token = Some(found.clone());
-                            } else {
-                                if self
-                                    .is_rate_limited(&found.account_id, Some(&normalized_target))
-                                    .await
-                                {
-                                    tracing::debug!(
-                                        "60s Window: Last account {} is rate-limited, skipping",
-                                        found.email
-                                    );
-                                } else {
-                                    tracing::debug!("60s Window: Last account {} is quota-protected for model {} [{}], skipping", found.email, normalized_target, target_model);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // If no lock, use P2C to select account (avoid hotspots)
-                if target_token.is_none() {
-                    // If no lock, use P2C to select account (avoid hotspots)
-                    let mut non_limited: Vec<ProxyToken> = Vec::new();
-                    for t in &tokens_snapshot {
-                        if !self.is_rate_limited(&t.account_id, Some(&normalized_target)).await {
-                            non_limited.push(t.clone());
-                        }
-                    }
-
-                    if let Some(selected) = self.select_with_p2c(
-                        &non_limited, &attempted, &normalized_target, quota_protection_enabled
-                    ) {
-                        target_token = Some(selected.clone());
-                        need_update_last_used = Some((selected.account_id.clone(), std::time::Instant::now()));
-
-                        // If first-time session assignment and stickiness required, establish binding here
-                        if let Some(sid) = session_id {
-                            if scheduling.mode != SchedulingMode::PerformanceFirst {
-                                self.session_accounts
-                                    .insert(sid.to_string(), selected.account_id.clone());
-                                tracing::debug!(
-                                    "Sticky Session: Bound new account {} to session {}",
-                                    selected.email,
-                                    sid
-                                );
-                            }
-                        }
-                    }
-                }
-            } else if target_token.is_none() {
-                // Mode C: P2C Selection (Instead of pure round-robin)
-                tracing::debug!(
-                    "🔄 [Mode C] P2C selection from {} candidates",
-                    total
-                );
-
-                // Filter out non-rate-limited accounts first
-                let mut non_limited: Vec<ProxyToken> = Vec::new();
-                for t in &tokens_snapshot {
-                    if !self.is_rate_limited(&t.account_id, Some(&normalized_target)).await {
-                        non_limited.push(t.clone());
-                    }
-                }
-
-                if let Some(selected) = self.select_with_p2c(
-                    &non_limited, &attempted, &normalized_target, quota_protection_enabled
-                ) {
-                    tracing::debug!("  {} - SELECTED via P2C", selected.email);
-                    target_token = Some(selected.clone());
-
-                    if rotate {
-                        tracing::debug!("Force Rotation: Switched to account: {}", selected.email);
-                    }
-                }
+            // Mode C: P2C Selection (instead of pure round-robin)
+            if target_token.is_none() {
+                target_token = self
+                    .try_mode_c_p2c(
+                        &tokens_snapshot,
+                        &attempted,
+                        &normalized_target,
+                        quota_protection_enabled,
+                        total,
+                        rotate,
+                    )
+                    .await;
             }
 
             let mut token = match target_token {
@@ -2920,8 +2581,6 @@ mod tests {
     #[test]
     fn test_p2c_selects_higher_quota() {
         // P2C should select account with higher quota
-        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
-
         let low_quota = create_test_token("low@test.com", Some("PRO"), 1.0, None, Some(20));
         let high_quota = create_test_token("high@test.com", Some("PRO"), 1.0, None, Some(80));
 
@@ -2930,7 +2589,12 @@ mod tests {
 
         // Run multiple times to ensure high quota account is selected
         for _ in 0..10 {
-            let result = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
+            let result = crate::proxy::token::pool::select_with_p2c(
+                &candidates,
+                &attempted,
+                "claude-sonnet",
+                false,
+            );
             assert!(result.is_some());
             // P2C selects the one with higher quota from two candidates
             // Since there are only two candidates, high_quota should always be selected
@@ -2941,8 +2605,6 @@ mod tests {
     #[test]
     fn test_p2c_skips_attempted() {
         // P2C should skip accounts already attempted
-        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
-
         let token_a = create_test_token("a@test.com", Some("PRO"), 1.0, None, Some(80));
         let token_b = create_test_token("b@test.com", Some("PRO"), 1.0, None, Some(50));
 
@@ -2950,7 +2612,12 @@ mod tests {
         let mut attempted: HashSet<String> = HashSet::new();
         attempted.insert("a@test.com".to_string());
 
-        let result = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
+        let result = crate::proxy::token::pool::select_with_p2c(
+            &candidates,
+            &attempted,
+            "claude-sonnet",
+            false,
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().email, "b@test.com");
     }
@@ -2958,8 +2625,6 @@ mod tests {
     #[test]
     fn test_p2c_skips_protected_models() {
         // P2C should skip accounts protected for target model (quota_protection_enabled = true)
-        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
-
         let mut protected = HashSet::new();
         protected.insert("claude-sonnet".to_string());
 
@@ -2969,7 +2634,12 @@ mod tests {
         let candidates = vec![protected_account, normal_account];
         let attempted: HashSet<String> = HashSet::new();
 
-        let result = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet", true);
+        let result = crate::proxy::token::pool::select_with_p2c(
+            &candidates,
+            &attempted,
+            "claude-sonnet",
+            true,
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().email, "normal@test.com");
     }
@@ -2977,13 +2647,16 @@ mod tests {
     #[test]
     fn test_p2c_single_candidate() {
         // Directly return when there is a single candidate
-        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
-
         let token = create_test_token("single@test.com", Some("PRO"), 1.0, None, Some(50));
         let candidates = vec![token];
         let attempted: HashSet<String> = HashSet::new();
 
-        let result = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
+        let result = crate::proxy::token::pool::select_with_p2c(
+            &candidates,
+            &attempted,
+            "claude-sonnet",
+            false,
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().email, "single@test.com");
     }
@@ -2991,20 +2664,21 @@ mod tests {
     #[test]
     fn test_p2c_empty_candidates() {
         // Return None for empty candidates
-        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
-
         let candidates: Vec<ProxyToken> = vec![];
         let attempted: HashSet<String> = HashSet::new();
 
-        let result = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
+        let result = crate::proxy::token::pool::select_with_p2c(
+            &candidates,
+            &attempted,
+            "claude-sonnet",
+            false,
+        );
         assert!(result.is_none());
     }
 
     #[test]
     fn test_p2c_all_attempted() {
         // Return None when all accounts have been attempted
-        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
-
         let token_a = create_test_token("a@test.com", Some("PRO"), 1.0, None, Some(80));
         let token_b = create_test_token("b@test.com", Some("PRO"), 1.0, None, Some(50));
 
@@ -3013,7 +2687,12 @@ mod tests {
         attempted.insert("a@test.com".to_string());
         attempted.insert("b@test.com".to_string());
 
-        let result = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
+        let result = crate::proxy::token::pool::select_with_p2c(
+            &candidates,
+            &attempted,
+            "claude-sonnet",
+            false,
+        );
         assert!(result.is_none());
     }
 }
