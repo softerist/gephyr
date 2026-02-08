@@ -208,9 +208,76 @@ function Wait-ServiceReady {
 }
 
 function Show-Status {
-    Write-Host "NAMES`tSTATUS`tPORTS`tIMAGE"
-    docker ps -a --format "{{.Names}}`t{{.Status}}`t{{.Ports}}`t{{.Image}}" |
-        Where-Object { $_ -match "^$([regex]::Escape($ContainerName))`t" }
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "                      GEPHYR STATUS                            " -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Docker Container Status
+    Write-Host "┌─ Docker Container ─────────────────────────────────────────────" -ForegroundColor DarkGray
+    $containerInfo = docker ps -a --format "{{.Names}}|{{.Status}}|{{.Ports}}|{{.Image}}" |
+        Where-Object { $_ -match "^$([regex]::Escape($ContainerName))\|" }
+
+    if ($containerInfo) {
+        $parts = $containerInfo -split '\|'
+        Write-Host "  Container:  " -NoNewline -ForegroundColor Gray
+        Write-Host $parts[0] -ForegroundColor White
+        Write-Host "  Status:     " -NoNewline -ForegroundColor Gray
+        if ($parts[1] -match "^Up") {
+            Write-Host $parts[1] -ForegroundColor Green
+        } else {
+            Write-Host $parts[1] -ForegroundColor Red
+        }
+        Write-Host "  Ports:      " -NoNewline -ForegroundColor Gray
+        Write-Host $parts[2] -ForegroundColor White
+        Write-Host "  Image:      " -NoNewline -ForegroundColor Gray
+        Write-Host $parts[3] -ForegroundColor White
+    } else {
+        Write-Host "  Container not found: $ContainerName" -ForegroundColor Red
+    }
+    Write-Host ""
+
+    # API Configuration
+    Write-Host "┌─ API Configuration ────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  Base URL:   " -NoNewline -ForegroundColor Gray
+    Write-Host "http://127.0.0.1:$Port" -ForegroundColor Yellow
+
+    if ($env:GEPHYR_API_KEY) {
+        $maskedKey = $env:GEPHYR_API_KEY.Substring(0, [Math]::Min(8, $env:GEPHYR_API_KEY.Length)) + "..." + $env:GEPHYR_API_KEY.Substring([Math]::Max(0, $env:GEPHYR_API_KEY.Length - 4))
+        Write-Host "  API Key:    " -NoNewline -ForegroundColor Gray
+        Write-Host $maskedKey -ForegroundColor Yellow
+    } else {
+        Write-Host "  API Key:    " -NoNewline -ForegroundColor Gray
+        Write-Host "(not set)" -ForegroundColor Red
+    }
+    Write-Host ""
+
+    # Health Check (if container is running)
+    if ($containerInfo -and ($containerInfo -match "Up")) {
+        Write-Host "┌─ Service Health ───────────────────────────────────────────────" -ForegroundColor DarkGray
+        try {
+            $headers = Get-AuthHeaders
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 5
+            Write-Host "  Health:     " -NoNewline -ForegroundColor Gray
+            Write-Host "OK" -ForegroundColor Green
+            if ($health.accounts_loaded) {
+                Write-Host "  Accounts:   " -NoNewline -ForegroundColor Gray
+                Write-Host "$($health.accounts_loaded) loaded" -ForegroundColor White
+            }
+            if ($health.version) {
+                Write-Host "  Version:    " -NoNewline -ForegroundColor Gray
+                Write-Host $health.version -ForegroundColor White
+            }
+        } catch {
+            Write-Host "  Health:     " -NoNewline -ForegroundColor Gray
+            Write-Host "FAILED (API key mismatch or service error)" -ForegroundColor Red
+        }
+        Write-Host ""
+    }
+
+    Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
 }
 
 function Show-Logs {

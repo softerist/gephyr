@@ -149,13 +149,12 @@ pub async fn handle_chat_completions(
         {
             Ok(t) => t,
             Err(e) => {
-                let headers = [("X-Mapped-Model", mapped_model.as_str())];
-                return Ok((
+                return Ok(crate::proxy::handlers::errors::text_error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    headers,
-                    format!("Token error: {}", e),
-                )
-                    .into_response());
+                    &format!("Token error: {}", e),
+                    None,
+                    Some(&mapped_model),
+                ));
             }
         };
 
@@ -1159,15 +1158,13 @@ pub async fn handle_completions(
                                 "usage": chat_resp.usage
                             });
 
-                            return (
+                            return crate::proxy::handlers::streaming::build_json_response_with_headers(
                                 StatusCode::OK,
-                                [
-                                    ("X-Account-Email", email.as_str()),
-                                    ("X-Mapped-Model", mapped_model.as_str()),
-                                ],
-                                Json(legacy_resp),
-                            )
-                                .into_response();
+                                &legacy_resp,
+                                Some(&email),
+                                Some(&mapped_model),
+                                &[],
+                            );
                         }
                         Err(e) => {
                             return crate::proxy::handlers::errors::stream_collection_error_response(
@@ -1210,15 +1207,13 @@ pub async fn handle_completions(
                 "usage": chat_resp.usage
             });
 
-            return (
+            return crate::proxy::handlers::streaming::build_json_response_with_headers(
                 StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                Json(legacy_resp),
-            )
-                .into_response();
+                &legacy_resp,
+                Some(&email),
+                Some(&mapped_model),
+                &[],
+            );
         }
         let status_code = status.as_u16();
         let retry_after = response
@@ -1253,15 +1248,12 @@ pub async fn handle_completions(
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
             continue;
         } else {
-            return (
+            return crate::proxy::handlers::errors::text_error_response(
                 status,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
-                error_text,
-            )
-                .into_response();
+                &error_text,
+                Some(&email),
+                Some(&mapped_model),
+            );
         }
     }
     crate::proxy::handlers::errors::accounts_exhausted_text_response(

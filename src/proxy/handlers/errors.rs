@@ -205,3 +205,24 @@ pub fn gemini_upstream_error_response(
     )
         .into_response()
 }
+
+pub fn text_error_response(
+    status: StatusCode,
+    message: &str,
+    account_email: Option<&str>,
+    mapped_model: Option<&str>,
+) -> Response {
+    let mut headers = HeaderMap::new();
+    if let Some(email) = account_email {
+        if let Ok(v) = HeaderValue::from_str(email) {
+            headers.insert("X-Account-Email", v);
+        }
+    }
+    if let Some(model) = mapped_model {
+        if let Ok(v) = HeaderValue::from_str(model) {
+            headers.insert("X-Mapped-Model", v);
+        }
+    }
+
+    (status, headers, message.to_string()).into_response()
+}
