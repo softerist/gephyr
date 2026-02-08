@@ -60,32 +60,24 @@ pub fn update_thinking_budget_config(config: ThinkingBudgetConfig) {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ProxyAuthMode {
     Off,
+    #[default]
     Strict,
     AllExceptHealth,
     Auto,
 }
 
-impl Default for ProxyAuthMode {
-    fn default() -> Self {
-        Self::Strict
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ZaiDispatchMode {
+    #[default]
     Off,
     Exclusive,
     Pooled,
     Fallback,
-}
-
-impl Default for ZaiDispatchMode {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +100,7 @@ impl Default for ZaiModelDefaults {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ZaiMcpConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -118,17 +110,6 @@ pub struct ZaiMcpConfig {
     pub web_reader_enabled: bool,
     #[serde(default)]
     pub vision_enabled: bool,
-}
-
-impl Default for ZaiMcpConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            web_search_enabled: false,
-            web_reader_enabled: false,
-            vision_enabled: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -205,17 +186,14 @@ fn default_threshold_l3() -> f32 {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ThinkingBudgetMode {
+    #[default]
     Auto,
     Passthrough,
     Custom,
 }
 
-impl Default for ThinkingBudgetMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinkingBudgetConfig {
     #[serde(default)]
@@ -245,7 +223,7 @@ fn default_false() -> bool {
     false
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DebugLoggingConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -253,14 +231,6 @@ pub struct DebugLoggingConfig {
     pub output_dir: Option<String>,
 }
 
-impl Default for DebugLoggingConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            output_dir: None,
-        }
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpBlacklistConfig {
     #[serde(default)]
@@ -297,7 +267,7 @@ impl Default for IpWhitelistConfig {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SecurityMonitorConfig {
     #[serde(default)]
     pub blacklist: IpBlacklistConfig,
@@ -305,14 +275,6 @@ pub struct SecurityMonitorConfig {
     pub whitelist: IpWhitelistConfig,
 }
 
-impl Default for SecurityMonitorConfig {
-    fn default() -> Self {
-        Self {
-            blacklist: IpBlacklistConfig::default(),
-            whitelist: IpWhitelistConfig::default(),
-        }
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     pub enabled: bool,

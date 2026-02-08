@@ -542,21 +542,19 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                             ));
                             account.protected_models.insert(standard_id.clone());
                         }
-                    } else {
-                        if account.protected_models.contains(&standard_id) {
-                            crate::modules::logger::log_info(&format!(
-                                "[Quota] Model protection recovered: {} ({} [{}] quota restored to {}%)",
-                                account.email, standard_id, model.name, model.percentage
-                            ));
-                            account.protected_models.remove(&standard_id);
-                        }
+                    } else if account.protected_models.contains(&standard_id) {
+                        crate::modules::logger::log_info(&format!(
+                            "[Quota] Model protection recovered: {} ({} [{}] quota restored to {}%)",
+                            account.email, standard_id, model.name, model.percentage
+                        ));
+                        account.protected_models.remove(&standard_id);
                     }
                 }
                 if account.proxy_disabled
                     && account
                         .proxy_disabled_reason
                         .as_ref()
-                        .map_or(false, |r| r == "quota_protection")
+                        .is_some_and(|r| r == "quota_protection")
                 {
                     crate::modules::logger::log_info(&format!(
                         "[Quota] Migrating account {} from account-level to model-level protection",
@@ -659,7 +657,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         modules::logger::log_info(&format!("Time-based Token refresh: {}", account.email));
         account.token = token.clone();
         let name = if account.name.is_none()
-            || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
+            || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
         {
             match oauth::get_user_info(&token.access_token, Some(&account.id)).await {
                 Ok(user_info) => user_info.get_display_name(),
@@ -672,7 +670,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         account.name = name.clone();
         upsert_account(account.email.clone(), name, token.clone()).map_err(AppError::Account)?;
     }
-    if account.name.is_none() || account.name.as_ref().map_or(false, |n| n.trim().is_empty()) {
+    if account.name.is_none() || account.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         modules::logger::log_info(&format!(
             "Account {} missing display name, attempting to fetch...",
             account.email
@@ -757,7 +755,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     None,
                 );
                 let name = if account.name.is_none()
-                    || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
+                    || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
                 {
                     match oauth::get_user_info(&token_res.access_token, Some(&account.id)).await {
                         Ok(user_info) => user_info.get_display_name(),

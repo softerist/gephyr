@@ -334,7 +334,7 @@ pub async fn get_all_dynamic_models(
     model_ids.insert(MODEL_GEMINI_3_PRO_LOW.to_string());
     let base = MODEL_GEMINI_3_PRO_IMAGE;
     let resolutions = vec!["", "-2k", "-4k"];
-    let ratios = vec!["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
+    let ratios = ["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
 
     for res in resolutions {
         for ratio in ratios.iter() {
@@ -378,12 +378,10 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
             text_pos += part.len();
         } else if i == parts.len() - 1 {
             return text[text_pos..].ends_with(part);
+        } else if let Some(pos) = text[text_pos..].find(part) {
+            text_pos += pos + part.len();
         } else {
-            if let Some(pos) = text[text_pos..].find(part) {
-                text_pos += pos + part.len();
-            } else {
-                return false;
-            }
+            return false;
         }
     }
 

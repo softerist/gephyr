@@ -320,7 +320,7 @@ pub fn create_legacy_sse_stream(
 
                                             let mut content_out = String::new();
                                             if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                                if let Some(candidate) = candidates.get(0) {
+                                                if let Some(candidate) = candidates.first() {
                                                     if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                         for part in parts {
                                                             if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
@@ -334,7 +334,7 @@ pub fn create_legacy_sse_stream(
                                                 }
                                             }
 
-                                            let finish_reason = actual_data.get("candidates").and_then(|c| c.as_array()).and_then(|c| c.get(0)).and_then(|c| c.get("finishReason")).and_then(|f| f.as_str()).map(|f| match f {
+                                            let finish_reason = actual_data.get("candidates").and_then(|c| c.as_array()).and_then(|c| c.first()).and_then(|c| c.get("finishReason")).and_then(|f| f.as_str()).map(|f| match f {
                                                 "STOP" => "stop", "MAX_TOKENS" => "length", "SAFETY" => "content_filter", _ => f,
                                             });
 
@@ -418,7 +418,7 @@ pub fn create_codex_sse_stream(
                                     if let Ok(mut json) = serde_json::from_str::<Value>(json_part) {
                                         let actual_data = if let Some(inner) = json.get_mut("response").map(|v| v.take()) { inner } else { json };
                                         if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                            if let Some(candidate) = candidates.get(0) {
+                                            if let Some(candidate) = candidates.first() {
                                                 if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                     for part in parts {
                                                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {

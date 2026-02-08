@@ -70,7 +70,6 @@ pub async fn handle_generate(
     let force_stream_internally = !client_wants_stream;
     let is_stream = client_wants_stream || force_stream_internally;
 
-    if force_stream_internally {}
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();

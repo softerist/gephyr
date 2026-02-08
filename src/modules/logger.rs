@@ -82,23 +82,21 @@ pub fn cleanup_old_logs(days_to_keep: u64) -> Result<(), String> {
     let entries =
         fs::read_dir(&log_dir).map_err(|e| format!("Failed to read log directory: {}", e))?;
 
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
 
-            if let Ok(metadata) = fs::metadata(&path) {
-                let modified = metadata.modified().unwrap_or(SystemTime::now());
-                let modified_secs = modified
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
+        if let Ok(metadata) = fs::metadata(&path) {
+            let modified = metadata.modified().unwrap_or(SystemTime::now());
+            let modified_secs = modified
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
 
-                let size = metadata.len();
-                entries_info.push((path, size, modified_secs));
-            }
+            let size = metadata.len();
+            entries_info.push((path, size, modified_secs));
         }
     }
 
@@ -161,12 +159,10 @@ pub fn clear_logs() -> Result<(), String> {
     if log_dir.exists() {
         let entries =
             fs::read_dir(&log_dir).map_err(|e| format!("Failed to read log directory: {}", e))?;
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    let _ = fs::OpenOptions::new().write(true).truncate(true).open(path);
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let _ = fs::OpenOptions::new().write(true).truncate(true).open(path);
             }
         }
     }

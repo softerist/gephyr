@@ -34,21 +34,19 @@ pub async fn ip_filter_middleware(
                     tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
                 }
             }
-        } else {
-            if security_config
-                .security_monitor
-                .whitelist
-                .whitelist_priority
-            {
-                match security_db::is_ip_in_whitelist(ip) {
-                    Ok(true) => {
-                        tracing::debug!("[IP Filter] IP {} is in whitelist (priority mode), skipping blacklist check", ip);
-                        return next.run(request).await;
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
-                    }
+        } else if security_config
+            .security_monitor
+            .whitelist
+            .whitelist_priority
+        {
+            match security_db::is_ip_in_whitelist(ip) {
+                Ok(true) => {
+                    tracing::debug!("[IP Filter] IP {} is in whitelist (priority mode), skipping blacklist check", ip);
+                    return next.run(request).await;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
                 }
             }
         }

@@ -120,10 +120,8 @@ impl ContextManager {
                                             total += estimate_tokens_from_str(text);
                                         }
                                     }
-                                } else {
-                                    if let Ok(s) = serde_json::to_string(content) {
-                                        total += estimate_tokens_from_str(&s);
-                                    }
+                                } else if let Ok(s) = serde_json::to_string(content) {
+                                    total += estimate_tokens_from_str(&s);
                                 }
                             }
                             _ => {}

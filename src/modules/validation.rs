@@ -107,14 +107,12 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
     validate_proxy_pool(&config.proxy_pool, errors);
 }
 fn validate_upstream_proxy(config: &UpstreamProxyConfig, errors: &mut Vec<ConfigError>) {
-    if config.enabled && !config.url.is_empty() {
-        if !is_valid_proxy_url(&config.url) {
-            errors.push(ConfigError::with_value(
-                "proxy.upstream_proxy.url",
-                "must be a valid proxy URL (http://, https://, or socks5://)",
-                &config.url,
-            ));
-        }
+    if config.enabled && !config.url.is_empty() && !is_valid_proxy_url(&config.url) {
+        errors.push(ConfigError::with_value(
+            "proxy.upstream_proxy.url",
+            "must be a valid proxy URL (http://, https://, or socks5://)",
+            &config.url,
+        ));
     }
 }
 fn validate_zai_config(config: &ZaiConfig, errors: &mut Vec<ConfigError>) {

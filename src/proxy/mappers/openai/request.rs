@@ -10,10 +10,7 @@ pub fn transform_openai_request(
     let session_id =
         crate::proxy::session_manager::SessionManager::extract_openai_session_id(request);
     let message_count = request.messages.len();
-    let tools_val = request
-        .tools
-        .as_ref()
-        .map(|list| list.iter().map(|v| v.clone()).collect::<Vec<_>>());
+    let tools_val = request.tools.as_ref().map(|list| list.to_vec());
 
     let mapped_model_lower = mapped_model.to_lowercase();
     let config = crate::proxy::mappers::common_utils::resolve_request_config(
@@ -242,7 +239,7 @@ pub fn transform_openai_request(
                 }
             }
             if let Some(tool_calls) = &msg.tool_calls {
-                for (_index, tc) in tool_calls.iter().enumerate() {
+                for tc in tool_calls.iter() {
 
 
 

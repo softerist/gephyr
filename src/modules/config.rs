@@ -27,17 +27,15 @@ pub fn load_app_config() -> Result<AppConfig, String> {
         let mut custom_mapping = proxy
             .get("custom_mapping")
             .and_then(|m| m.as_object())
-            .map(|m| m.clone())
+            .cloned()
             .unwrap_or_default();
         if let Some(anthropic) = proxy
             .get_mut("anthropic_mapping")
             .and_then(|m| m.as_object_mut())
         {
             for (k, v) in anthropic.iter() {
-                if !k.ends_with("-series") {
-                    if !custom_mapping.contains_key(k) {
-                        custom_mapping.insert(k.clone(), v.clone());
-                    }
+                if !k.ends_with("-series") && !custom_mapping.contains_key(k) {
+                    custom_mapping.insert(k.clone(), v.clone());
                 }
             }
             proxy.as_object_mut().unwrap().remove("anthropic_mapping");
@@ -48,10 +46,8 @@ pub fn load_app_config() -> Result<AppConfig, String> {
             .and_then(|m| m.as_object_mut())
         {
             for (k, v) in openai.iter() {
-                if !k.ends_with("-series") {
-                    if !custom_mapping.contains_key(k) {
-                        custom_mapping.insert(k.clone(), v.clone());
-                    }
+                if !k.ends_with("-series") && !custom_mapping.contains_key(k) {
+                    custom_mapping.insert(k.clone(), v.clone());
                 }
             }
             proxy.as_object_mut().unwrap().remove("openai_mapping");

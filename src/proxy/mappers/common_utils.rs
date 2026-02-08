@@ -56,15 +56,13 @@ pub fn resolve_request_config(
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
     final_model = normalize_preview_alias(&final_model);
 
-    if enable_networking {
-        if final_model != web_search_fallback_model() {
-            tracing::info!(
-                "[Common-Utils] Downgrading {} to {} for web search",
-                final_model,
-                web_search_fallback_model()
-            );
-            final_model = web_search_fallback_model().to_string();
-        }
+    if enable_networking && final_model != web_search_fallback_model() {
+        tracing::info!(
+            "[Common-Utils] Downgrading {} to {} for web search",
+            final_model,
+            web_search_fallback_model()
+        );
+        final_model = web_search_fallback_model().to_string();
     }
 
     RequestConfig {
@@ -90,28 +88,26 @@ pub fn parse_image_config_with_params(
     let mut aspect_ratio = "1:1";
     if let Some(s) = size {
         aspect_ratio = calculate_aspect_ratio_from_size(s);
-    } else {
-        if model_name.contains("-21x9") || model_name.contains("-21-9") {
-            aspect_ratio = "21:9";
-        } else if model_name.contains("-16x9") || model_name.contains("-16-9") {
-            aspect_ratio = "16:9";
-        } else if model_name.contains("-9x16") || model_name.contains("-9-16") {
-            aspect_ratio = "9:16";
-        } else if model_name.contains("-4x3") || model_name.contains("-4-3") {
-            aspect_ratio = "4:3";
-        } else if model_name.contains("-3x4") || model_name.contains("-3-4") {
-            aspect_ratio = "3:4";
-        } else if model_name.contains("-3x2") || model_name.contains("-3-2") {
-            aspect_ratio = "3:2";
-        } else if model_name.contains("-2x3") || model_name.contains("-2-3") {
-            aspect_ratio = "2:3";
-        } else if model_name.contains("-5x4") || model_name.contains("-5-4") {
-            aspect_ratio = "5:4";
-        } else if model_name.contains("-4x5") || model_name.contains("-4-5") {
-            aspect_ratio = "4:5";
-        } else if model_name.contains("-1x1") || model_name.contains("-1-1") {
-            aspect_ratio = "1:1";
-        }
+    } else if model_name.contains("-21x9") || model_name.contains("-21-9") {
+        aspect_ratio = "21:9";
+    } else if model_name.contains("-16x9") || model_name.contains("-16-9") {
+        aspect_ratio = "16:9";
+    } else if model_name.contains("-9x16") || model_name.contains("-9-16") {
+        aspect_ratio = "9:16";
+    } else if model_name.contains("-4x3") || model_name.contains("-4-3") {
+        aspect_ratio = "4:3";
+    } else if model_name.contains("-3x4") || model_name.contains("-3-4") {
+        aspect_ratio = "3:4";
+    } else if model_name.contains("-3x2") || model_name.contains("-3-2") {
+        aspect_ratio = "3:2";
+    } else if model_name.contains("-2x3") || model_name.contains("-2-3") {
+        aspect_ratio = "2:3";
+    } else if model_name.contains("-5x4") || model_name.contains("-5-4") {
+        aspect_ratio = "5:4";
+    } else if model_name.contains("-4x5") || model_name.contains("-4-5") {
+        aspect_ratio = "4:5";
+    } else if model_name.contains("-1x1") || model_name.contains("-1-1") {
+        aspect_ratio = "1:1";
     }
 
     let mut config = serde_json::Map::new();
@@ -205,7 +201,7 @@ pub fn inject_google_search_tool(body: &mut Value) {
         if let Some(tools_arr) = tools_entry.as_array_mut() {
             let has_functions = tools_arr.iter().any(|t| {
                 t.as_object()
-                    .map_or(false, |o| o.contains_key("functionDeclarations"))
+                    .is_some_and(|o| o.contains_key("functionDeclarations"))
             });
 
             if has_functions {

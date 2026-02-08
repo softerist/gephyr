@@ -85,22 +85,7 @@ impl TokenManager {
                                 .await
                                 {
                                     Ok(token_response) => {
-                                        token.access_token = token_response.access_token.clone();
-                                        token.expires_in = token_response.expires_in;
-                                        token.timestamp = now + token_response.expires_in;
-
-                                        if let Some(mut entry) =
-                                            self.tokens.get_mut(&token.account_id)
-                                        {
-                                            entry.access_token = token.access_token.clone();
-                                            entry.expires_in = token.expires_in;
-                                            entry.timestamp = token.timestamp;
-                                        }
-                                        let _ =
-                                            crate::proxy::token::persistence::save_refreshed_token(
-                                                &token.account_path,
-                                                &token_response,
-                                            );
+                                        self.apply_refreshed_token(&mut token, &token_response, now);
                                     }
                                     Err(e) => {
                                         tracing::warn!(
@@ -119,15 +104,7 @@ impl TokenManager {
                                 .await
                                 {
                                     Ok(pid) => {
-                                        if let Some(mut entry) =
-                                            self.tokens.get_mut(&token.account_id)
-                                        {
-                                            entry.project_id = Some(pid.clone());
-                                        }
-                                        let _ = crate::proxy::token::persistence::save_project_id(
-                                            &token.account_path,
-                                            &pid,
-                                        );
+                                        self.apply_project_id(&mut token, &pid);
                                         pid
                                     }
                                     Err(_) => "bamboo-precept-lgxtn".to_string(),

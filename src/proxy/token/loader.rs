@@ -92,7 +92,7 @@ pub(crate) fn extract_earliest_reset_time(account: &serde_json::Value) -> Option
             }
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_time_str) {
                 let ts = dt.timestamp();
-                if earliest_ts.map_or(true, |v| ts < v) {
+                if earliest_ts.is_none_or(|v| ts < v) {
                     earliest_ts = Some(ts);
                 }
             }
@@ -107,7 +107,7 @@ pub(crate) fn extract_earliest_reset_time(account: &serde_json::Value) -> Option
                 }
                 if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_time_str) {
                     let ts = dt.timestamp();
-                    if earliest_ts.map_or(true, |v| ts < v) {
+                    if earliest_ts.is_none_or(|v| ts < v) {
                         earliest_ts = Some(ts);
                     }
                 }

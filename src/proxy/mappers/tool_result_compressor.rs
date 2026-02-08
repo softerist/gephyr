@@ -162,10 +162,8 @@ fn truncate_text_safe(text: &str, max_chars: usize) -> String {
     }
     if let Some(last_open_brace) = sub.rfind('{') {
         if let Some(last_close_brace) = sub.rfind('}') {
-            if last_open_brace > last_close_brace {
-                if max_chars - last_open_brace < 100 {
-                    split_pos = split_pos.min(last_open_brace);
-                }
+            if last_open_brace > last_close_brace && max_chars - last_open_brace < 100 {
+                split_pos = split_pos.min(last_open_brace);
             }
         }
     }

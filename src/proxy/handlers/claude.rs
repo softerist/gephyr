@@ -1592,11 +1592,10 @@ async fn try_compress_with_summary(
         },
     ];
     if let Some(last_msg) = original_request.messages.last() {
-        if last_msg.role == "user" {
-            if !matches!(&last_msg.content, MessageContent::String(s) if s.contains(CONTEXT_SUMMARY_PROMPT))
-            {
-                forked_messages.push(last_msg.clone());
-            }
+        if last_msg.role == "user"
+            && !matches!(&last_msg.content, MessageContent::String(s) if s.contains(CONTEXT_SUMMARY_PROMPT))
+        {
+            forked_messages.push(last_msg.clone());
         }
     }
 

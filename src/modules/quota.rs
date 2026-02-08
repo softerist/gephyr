@@ -163,9 +163,9 @@ pub async fn fetch_quota_with_cache(
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
                     if status == reqwest::StatusCode::FORBIDDEN {
-                        crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden), marking as forbidden"
-                        ));
+                        crate::modules::logger::log_warn(
+                            "Account unauthorized (403 Forbidden), marking as forbidden",
+                        );
                         let mut q = QuotaData::new();
                         q.is_forbidden = true;
                         q.subscription_tier = subscription_tier.clone();
@@ -190,7 +190,7 @@ pub async fn fetch_quota_with_cache(
                 }
 
                 let quota_response: QuotaResponse =
-                    response.json().await.map_err(|e| AppError::Network(e))?;
+                    response.json().await.map_err(AppError::Network)?;
 
                 let mut quota_data = QuotaData::new();
                 tracing::debug!("Quota API returned {} models", quota_response.models.len());

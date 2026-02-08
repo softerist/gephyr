@@ -149,7 +149,7 @@ fn sort_thinking_blocks_first(messages: &mut [Message]) {
                 let mut needs_reorder = false;
                 let mut saw_non_thinking = false;
 
-                for (_i, block) in blocks.iter().enumerate() {
+                for block in blocks.iter() {
                     match block {
                         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {
                             if saw_non_thinking {
@@ -656,10 +656,8 @@ fn build_contents(
 
     match content {
         MessageContent::String(text) => {
-            if text != "(no content)" {
-                if !text.trim().is_empty() {
-                    parts.push(json!({"text": text.trim()}));
-                }
+            if text != "(no content)" && !text.trim().is_empty() {
+                parts.push(json!({"text": text.trim()}));
             }
         }
         MessageContent::Array(blocks) => {
@@ -859,19 +857,17 @@ fn build_contents(
                             .cloned()
                             .or_else(|| {
                                 crate::proxy::SignatureCache::global().get_session_signature(session_id)
-                                    .map(|s| {
+                                    .inspect(|s| {
                                         tracing::info!(
                                             "[Claude-Request] Recovered signature from SESSION cache (session: {}, len: {})",
                                             session_id, s.len()
                                         );
-                                        s
                                     })
                             })
                             .or_else(|| {
                                 crate::proxy::SignatureCache::global().get_tool_signature(id)
-                                    .map(|s| {
+                                    .inspect(|_s| {
                                         tracing::info!("[Claude-Request] Recovered signature from TOOL cache for tool_id: {}", id);
-                                        s
                                     })
                             })
                             .or_else(|| {
@@ -888,51 +884,47 @@ fn build_contents(
                         if let Some(sig) = final_sig {
                             if is_retry && signature.is_none() {
                                 tracing::warn!("[Tool-Signature] Skipping signature backfill for tool_use: {} during retry.", id);
+                            } else if sig.len() < MIN_SIGNATURE_LENGTH {
+                                tracing::warn!(
+                                    "[Tool-Signature] Signature too short for tool_use: {} (len: {} < {}), skipping.",
+                                    id, sig.len(), MIN_SIGNATURE_LENGTH
+                                );
                             } else {
-                                if sig.len() < MIN_SIGNATURE_LENGTH {
-                                    tracing::warn!(
-                                        "[Tool-Signature] Signature too short for tool_use: {} (len: {} < {}), skipping.",
-                                        id, sig.len(), MIN_SIGNATURE_LENGTH
-                                    );
-                                } else {
-                                    let cached_family = crate::proxy::SignatureCache::global()
-                                        .get_signature_family(&sig);
+                                let cached_family = crate::proxy::SignatureCache::global()
+                                    .get_signature_family(&sig);
 
-                                    let should_use_sig = match cached_family {
-                                        Some(family) => {
-                                            if is_model_compatible(&family, mapped_model) {
-                                                true
-                                            } else {
-                                                tracing::warn!(
-                                                    "[Tool-Signature] Incompatible signature for tool_use: {} (Family: {}, Target: {})",
-                                                    id, family, mapped_model
-                                                );
-                                                false
-                                            }
+                                let should_use_sig = match cached_family {
+                                    Some(family) => {
+                                        if is_model_compatible(&family, mapped_model) {
+                                            true
+                                        } else {
+                                            tracing::warn!(
+                                                "[Tool-Signature] Incompatible signature for tool_use: {} (Family: {}, Target: {})",
+                                                id, family, mapped_model
+                                            );
+                                            false
                                         }
-                                        None => {
-                                            if sig.len() >= MIN_SIGNATURE_LENGTH {
-                                                tracing::debug!(
-                                                    "[Tool-Signature] Unknown signature origin but valid length (len: {}) for tool_use: {}, using as-is for JSON tool calling.",
-                                                    sig.len(), id
-                                                );
-                                                true
-                                            } else {
-                                                if is_thinking_enabled {
-                                                    tracing::warn!(
-                                                        "[Tool-Signature] Unknown signature origin and too short for tool_use: {} (len: {}). Dropping in thinking mode.",
-                                                        id, sig.len()
-                                                    );
-                                                    false
-                                                } else {
-                                                    true
-                                                }
-                                            }
-                                        }
-                                    };
-                                    if should_use_sig {
-                                        part["thoughtSignature"] = json!(sig);
                                     }
+                                    None => {
+                                        if sig.len() >= MIN_SIGNATURE_LENGTH {
+                                            tracing::debug!(
+                                                "[Tool-Signature] Unknown signature origin but valid length (len: {}) for tool_use: {}, using as-is for JSON tool calling.",
+                                                sig.len(), id
+                                            );
+                                            true
+                                        } else if is_thinking_enabled {
+                                            tracing::warn!(
+                                                "[Tool-Signature] Unknown signature origin and too short for tool_use: {} (len: {}). Dropping in thinking mode.",
+                                                id, sig.len()
+                                            );
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    }
+                                };
+                                if should_use_sig {
+                                    part["thoughtSignature"] = json!(sig);
                                 }
                             }
                         } else {
@@ -1073,7 +1065,7 @@ fn build_contents(
                 parts.len()
             );
         } else {
-            let first_is_thought = parts.get(0).map_or(false, |p| {
+            let first_is_thought = parts.first().is_some_and(|p| {
                 (p.get("thought").is_some() || p.get("thoughtSignature").is_some())
                     && p.get("text").is_some()
             });
@@ -1087,12 +1079,10 @@ fn build_contents(
                     }),
                 );
                 tracing::debug!("First part of model message at {} is not a valid thought block. Prepending dummy.", parts.len());
-            } else {
-                if let Some(p0) = parts.get_mut(0) {
-                    if p0.get("thought").is_none() {
-                        p0.as_object_mut()
-                            .map(|obj| obj.insert("thought".to_string(), json!(true)));
-                    }
+            } else if let Some(p0) = parts.get_mut(0) {
+                if p0.get("thought").is_none() {
+                    p0.as_object_mut()
+                        .map(|obj| obj.insert("thought".to_string(), json!(true)));
                 }
             }
         }
@@ -1207,7 +1197,7 @@ fn build_google_contents(
         }
     }
 
-    for (_i, msg) in messages.iter().enumerate() {
+    for msg in messages.iter() {
         let google_content = build_google_content(
             msg,
             claude_req,

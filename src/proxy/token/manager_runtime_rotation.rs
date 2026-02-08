@@ -76,87 +76,24 @@ impl TokenManager {
             let mut token = match target_token {
                 Some(t) => t,
                 None => {
-                    let min_wait = tokens_snapshot
-                        .iter()
-                        .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
-                        .min();
-                    if let Some(wait_sec) = min_wait {
-                        if wait_sec <= 2 {
-                            let wait_ms = (wait_sec as f64 * 1000.0) as u64;
-                            tracing::warn!(
-                                "All accounts rate-limited but shortest wait is {}s. Applying {}ms buffer for state sync...",
-                                wait_sec, wait_ms
-                            );
-                            tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
-                            let retry_token = tokens_snapshot.iter().find(|t| {
-                                !attempted.contains(&t.account_id)
-                                    && !self.is_rate_limited_sync(&t.account_id, None)
-                            });
-
-                            if let Some(t) = retry_token {
-                                tracing::info!(
-                                    "✅ Buffer delay successful! Found available account: {}",
-                                    t.email
-                                );
-                                t.clone()
-                            } else {
-                                tracing::warn!(
-                                    "Buffer delay failed. Executing optimistic reset for all {} accounts...",
-                                    tokens_snapshot.len()
-                                );
-                                self.rate_limit_tracker.clear_all();
-                                let final_token = tokens_snapshot
-                                    .iter()
-                                    .find(|t| !attempted.contains(&t.account_id));
-
-                                if let Some(t) = final_token {
-                                    tracing::info!(
-                                        "✅ Optimistic reset successful! Using account: {}",
-                                        t.email
-                                    );
-                                    t.clone()
-                                } else {
-                                    return Err(
-                                        "All accounts failed after optimistic reset.".to_string()
-                                    );
-                                }
-                            }
-                        } else {
-                            return Err(format!("All accounts limited. Wait {}s.", wait_sec));
-                        }
-                    } else {
-                        return Err("All accounts failed or unhealthy.".to_string());
-                    }
+                    self.select_via_rate_limited_fallback(tokens_snapshot, &attempted)
+                        .await?
                 }
             };
-            match crate::proxy::token::loader::get_account_state_on_disk(&token.account_path).await
+            if self
+                .should_skip_selected_token(&token, &mut attempted)
+                .await
             {
-                OnDiskAccountState::Disabled => {
-                    tracing::warn!(
-                        "Selected account {} is disabled on disk, purging and retrying",
-                        token.email
-                    );
-                    attempted.insert(token.account_id.clone());
-                    self.remove_account(&token.account_id);
-                    continue;
-                }
-                OnDiskAccountState::Unknown => {
-                    tracing::warn!(
-                        "Selected account {} state on disk is unavailable, skipping",
-                        token.email
-                    );
-                    attempted.insert(token.account_id.clone());
-                    continue;
-                }
-                OnDiskAccountState::Enabled => {}
+                continue;
             }
             if let Err(e) = self.refresh_rotating_token_if_needed(&mut token).await {
-                last_error = Some(format!("Token refresh failed: {}", e));
-                attempted.insert(token.account_id.clone());
-                Self::mark_need_clear_last_used_if_selected(
+                Self::record_rotation_attempt_failure(
                     quota_group,
                     &last_used_account_id,
-                    &token.account_id,
+                    &token,
+                    format!("Token refresh failed: {}", e),
+                    &mut last_error,
+                    &mut attempted,
                     &mut need_update_last_used,
                 );
                 continue;
@@ -165,15 +102,13 @@ impl TokenManager {
                 Ok(pid) => pid,
                 Err(e) => {
                     tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
-                    last_error = Some(format!(
-                        "Failed to fetch project_id for {}: {}",
-                        token.email, e
-                    ));
-                    attempted.insert(token.account_id.clone());
-                    Self::mark_need_clear_last_used_if_selected(
+                    Self::record_rotation_attempt_failure(
                         quota_group,
                         &last_used_account_id,
-                        &token.account_id,
+                        &token,
+                        format!("Failed to fetch project_id for {}: {}", token.email, e),
+                        &mut last_error,
+                        &mut attempted,
                         &mut need_update_last_used,
                     );
                     continue;
@@ -194,6 +129,91 @@ impl TokenManager {
         Err(last_error.unwrap_or_else(|| "All accounts failed".to_string()))
     }
 
+    async fn select_via_rate_limited_fallback(
+        &self,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+    ) -> Result<ProxyToken, String> {
+        let min_wait = tokens_snapshot
+            .iter()
+            .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
+            .min();
+        if let Some(wait_sec) = min_wait {
+            if wait_sec <= 2 {
+                let wait_ms = (wait_sec as f64 * 1000.0) as u64;
+                tracing::warn!(
+                    "All accounts rate-limited but shortest wait is {}s. Applying {}ms buffer for state sync...",
+                    wait_sec, wait_ms
+                );
+                tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
+                let retry_token = tokens_snapshot.iter().find(|t| {
+                    !attempted.contains(&t.account_id)
+                        && !self.is_rate_limited_sync(&t.account_id, None)
+                });
+
+                if let Some(t) = retry_token {
+                    tracing::info!(
+                        "✅ Buffer delay successful! Found available account: {}",
+                        t.email
+                    );
+                    Ok(t.clone())
+                } else {
+                    tracing::warn!(
+                        "Buffer delay failed. Executing optimistic reset for all {} accounts...",
+                        tokens_snapshot.len()
+                    );
+                    self.rate_limit_tracker.clear_all();
+                    let final_token = tokens_snapshot
+                        .iter()
+                        .find(|t| !attempted.contains(&t.account_id));
+
+                    if let Some(t) = final_token {
+                        tracing::info!(
+                            "✅ Optimistic reset successful! Using account: {}",
+                            t.email
+                        );
+                        Ok(t.clone())
+                    } else {
+                        Err("All accounts failed after optimistic reset.".to_string())
+                    }
+                }
+            } else {
+                Err(format!("All accounts limited. Wait {}s.", wait_sec))
+            }
+        } else {
+            Err("All accounts failed or unhealthy.".to_string())
+        }
+    }
+
+    async fn should_skip_selected_token(
+        &self,
+        token: &ProxyToken,
+        attempted: &mut HashSet<String>,
+    ) -> bool {
+        // Safety net: avoid selecting an account that has been disabled on disk but still
+        // exists in the in-memory snapshot (e.g. stale cache + sticky session binding).
+        match crate::proxy::token::loader::get_account_state_on_disk(&token.account_path).await {
+            OnDiskAccountState::Disabled => {
+                tracing::warn!(
+                    "Selected account {} is disabled on disk, purging and retrying",
+                    token.email
+                );
+                attempted.insert(token.account_id.clone());
+                self.remove_account(&token.account_id);
+                true
+            }
+            OnDiskAccountState::Unknown => {
+                tracing::warn!(
+                    "Selected account {} state on disk is unavailable, skipping",
+                    token.email
+                );
+                attempted.insert(token.account_id.clone());
+                true
+            }
+            OnDiskAccountState::Enabled => false,
+        }
+    }
+
     async fn refresh_rotating_token_if_needed(&self, token: &mut ProxyToken) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp();
         if now < token.timestamp - 300 {
@@ -212,22 +232,7 @@ impl TokenManager {
         {
             Ok(token_response) => {
                 tracing::debug!("Token refresh succeeded!");
-                token.access_token = token_response.access_token.clone();
-                token.expires_in = token_response.expires_in;
-                token.timestamp = now + token_response.expires_in;
-
-                if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                    entry.access_token = token.access_token.clone();
-                    entry.expires_in = token.expires_in;
-                    entry.timestamp = token.timestamp;
-                }
-
-                if let Err(e) = crate::proxy::token::persistence::save_refreshed_token(
-                    &token.account_path,
-                    &token_response,
-                ) {
-                    tracing::debug!("Failed to persist refreshed token ({}): {}", token.email, e);
-                }
+                self.apply_refreshed_token(token, &token_response, now);
                 Ok(())
             }
             Err(e) => {
@@ -262,10 +267,7 @@ impl TokenManager {
             token.email
         );
         let pid = crate::proxy::project_resolver::fetch_project_id(&token.access_token).await?;
-        if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-            entry.project_id = Some(pid.clone());
-        }
-        let _ = crate::proxy::token::persistence::save_project_id(&token.account_path, &pid);
+        self.apply_project_id(token, &pid);
         Ok(pid)
     }
 
@@ -280,6 +282,25 @@ impl TokenManager {
         {
             *need_update_last_used = Some((String::new(), std::time::Instant::now()));
         }
+    }
+
+    fn record_rotation_attempt_failure(
+        quota_group: &str,
+        last_used_account_id: &Option<(String, std::time::Instant)>,
+        token: &ProxyToken,
+        message: String,
+        last_error: &mut Option<String>,
+        attempted: &mut HashSet<String>,
+        need_update_last_used: &mut Option<(String, std::time::Instant)>,
+    ) {
+        *last_error = Some(message);
+        attempted.insert(token.account_id.clone());
+        Self::mark_need_clear_last_used_if_selected(
+            quota_group,
+            last_used_account_id,
+            &token.account_id,
+            need_update_last_used,
+        );
     }
 
     async fn apply_last_used_update(

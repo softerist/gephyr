@@ -119,6 +119,8 @@ mod manager_runtime;
 mod manager_runtime_preferred;
 #[path = "manager_runtime_rotation.rs"]
 mod manager_runtime_rotation;
+#[path = "manager_runtime_shared.rs"]
+mod manager_runtime_shared;
 #[path = "manager_selection.rs"]
 mod manager_selection;
 #[cfg(test)]

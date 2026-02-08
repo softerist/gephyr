@@ -1,16 +1,12 @@
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum SchedulingMode {
     CacheFirst,
+    #[default]
     Balance,
     PerformanceFirst,
 }
 
-impl Default for SchedulingMode {
-    fn default() -> Self {
-        Self::Balance
-    }
-}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StickySessionConfig {

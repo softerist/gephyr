@@ -27,7 +27,7 @@ impl EstimationCalibrator {
         self.total_actual
             .fetch_add(actual as u64, Ordering::Relaxed);
         let count = self.sample_count.fetch_add(1, Ordering::Relaxed) + 1;
-        if count % 5 == 0 {
+        if count.is_multiple_of(5) {
             self.update_calibration();
         }
     }
