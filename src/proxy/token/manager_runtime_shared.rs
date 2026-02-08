@@ -4,7 +4,7 @@ impl TokenManager {
     pub(super) fn apply_refreshed_token(
         &self,
         token: &mut ProxyToken,
-        token_response: &crate::modules::oauth::TokenResponse,
+        token_response: &crate::modules::auth::oauth::TokenResponse,
         now: i64,
     ) {
         token.access_token = token_response.access_token.clone();

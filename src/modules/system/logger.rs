@@ -1,4 +1,4 @@
-use crate::modules::account::get_data_dir;
+use crate::modules::auth::account::get_data_dir;
 use std::fs;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
@@ -47,7 +47,7 @@ pub fn init_logger() {
         .with_level(true)
         .with_timer(LocalTimer);
     let filter_layer = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let bridge_layer = crate::modules::log_bridge::LogBridgeLayer::new();
+    let bridge_layer = crate::modules::system::log_bridge::LogBridgeLayer::new();
     let _ = tracing_subscriber::registry()
         .with(filter_layer)
         .with(console_layer)

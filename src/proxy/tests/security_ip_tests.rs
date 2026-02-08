@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod security_db_tests {
-    use crate::modules::security_db::{
+    use crate::modules::persistence::security_db::{
         add_to_blacklist, add_to_whitelist, cleanup_old_ip_logs, clear_ip_access_logs,
         get_blacklist, get_blacklist_entry_for_ip, get_ip_access_logs, get_ip_stats, get_whitelist,
         init_db, is_ip_in_blacklist, is_ip_in_whitelist, remove_from_blacklist,
@@ -549,7 +549,7 @@ mod ip_filter_middleware_tests {
 
 #[cfg(test)]
 mod performance_benchmarks {
-    use crate::modules::security_db::{
+    use crate::modules::persistence::security_db::{
         add_to_blacklist, get_blacklist, init_db, is_ip_in_blacklist,
     };
     use std::time::Instant;
@@ -559,7 +559,7 @@ mod performance_benchmarks {
         let _ = init_db();
         if let Ok(entries) = get_blacklist() {
             for entry in entries {
-                let _ = crate::modules::security_db::remove_from_blacklist(&entry.id);
+                let _ = crate::modules::persistence::security_db::remove_from_blacklist(&entry.id);
             }
         }
 
@@ -580,7 +580,7 @@ mod performance_benchmarks {
         );
         if let Ok(entries) = get_blacklist() {
             for entry in entries {
-                let _ = crate::modules::security_db::remove_from_blacklist(&entry.id);
+                let _ = crate::modules::persistence::security_db::remove_from_blacklist(&entry.id);
             }
         }
     }
@@ -590,7 +590,7 @@ mod performance_benchmarks {
         let _ = init_db();
         if let Ok(entries) = get_blacklist() {
             for entry in entries {
-                let _ = crate::modules::security_db::remove_from_blacklist(&entry.id);
+                let _ = crate::modules::persistence::security_db::remove_from_blacklist(&entry.id);
             }
         }
         for i in 0..20 {
@@ -615,7 +615,7 @@ mod performance_benchmarks {
         );
         if let Ok(entries) = get_blacklist() {
             for entry in entries {
-                let _ = crate::modules::security_db::remove_from_blacklist(&entry.id);
+                let _ = crate::modules::persistence::security_db::remove_from_blacklist(&entry.id);
             }
         }
     }

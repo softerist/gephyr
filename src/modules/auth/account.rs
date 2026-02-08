@@ -61,21 +61,21 @@ pub fn load_account_index() -> Result<AccountIndex, String> {
     let index_path = data_dir.join(ACCOUNTS_INDEX);
 
     if !index_path.exists() {
-        crate::modules::logger::log_warn("Account index file not found");
+        crate::modules::system::logger::log_warn("Account index file not found");
         return Ok(AccountIndex::new());
     }
 
     let content = fs::read_to_string(&index_path)
         .map_err(|e| format!("failed_to_read_account_index: {}", e))?;
     if content.trim().is_empty() {
-        crate::modules::logger::log_warn("Account index is empty, initializing new index");
+        crate::modules::system::logger::log_warn("Account index is empty, initializing new index");
         return Ok(AccountIndex::new());
     }
 
     let index: AccountIndex = serde_json::from_str(&content)
         .map_err(|e| format!("failed_to_parse_account_index: {}", e))?;
 
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Successfully loaded index with {} accounts",
         index.accounts.len()
     ));
@@ -115,7 +115,7 @@ pub fn save_account(account: &Account) -> Result<(), String> {
     fs::write(&account_path, content).map_err(|e| format!("failed_to_save_account_data: {}", e))
 }
 pub fn list_accounts() -> Result<Vec<Account>, String> {
-    crate::modules::logger::log_info("Listing accounts...");
+    crate::modules::system::logger::log_info("Listing accounts...");
     let index = load_account_index()?;
     let mut accounts = Vec::new();
 
@@ -123,7 +123,7 @@ pub fn list_accounts() -> Result<Vec<Account>, String> {
         match load_account(&summary.id) {
             Ok(account) => accounts.push(account),
             Err(e) => {
-                crate::modules::logger::log_error(&format!(
+                crate::modules::system::logger::log_error(&format!(
                     "Failed to load account {}: {}",
                     summary.id, e
                 ));
@@ -206,7 +206,7 @@ pub fn upsert_account(
                 return Ok(account);
             }
             Err(e) => {
-                crate::modules::logger::log_warn(&format!(
+                crate::modules::system::logger::log_warn(&format!(
                     "Account {} file missing ({}), recreating...",
                     account_id, e
                 ));
@@ -301,7 +301,7 @@ pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
 
     index.accounts = new_accounts;
 
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Account order updated, {} accounts total",
         index.accounts.len()
     ));
@@ -312,7 +312,7 @@ pub async fn switch_account(
     account_id: &str,
     integration: &(impl modules::integration::SystemIntegration + ?Sized),
 ) -> Result<(), String> {
-    use crate::modules::oauth;
+    use crate::modules::auth::oauth;
 
     let index = {
         let _lock = ACCOUNT_INDEX_LOCK
@@ -325,7 +325,7 @@ pub async fn switch_account(
     }
 
     let mut account = load_account(account_id)?;
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Switching to account: {} (ID: {})",
         account.email, account.id
     ));
@@ -337,7 +337,7 @@ pub async fn switch_account(
         save_account(&account)?;
     }
     if account.device_profile.is_none() {
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "Account {} has no bound fingerprint, generating new one for isolation...",
             account.email
         ));
@@ -362,7 +362,7 @@ pub async fn switch_account(
     account.update_last_used();
     save_account(&account)?;
 
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Account switch core logic completed: {}",
         account.email
     ));
@@ -378,19 +378,19 @@ pub struct DeviceProfiles {
 }
 
 pub fn get_device_profiles(account_id: &str) -> Result<DeviceProfiles, String> {
-    let current = crate::modules::device::get_storage_path()
+    let current = crate::modules::system::device::get_storage_path()
         .ok()
-        .and_then(|path| crate::modules::device::read_profile(&path).ok());
+        .and_then(|path| crate::modules::system::device::read_profile(&path).ok());
     let account = load_account(account_id)?;
     Ok(DeviceProfiles {
         current_storage: current,
         bound_profile: account.device_profile.clone(),
         history: account.device_history.clone(),
-        baseline: crate::modules::device::load_global_original(),
+        baseline: crate::modules::system::device::load_global_original(),
     })
 }
 pub fn bind_device_profile(account_id: &str, mode: &str) -> Result<DeviceProfile, String> {
-    use crate::modules::device;
+    use crate::modules::system::device;
 
     let profile = match mode {
         "capture" => device::read_profile(&device::get_storage_path()?)?,
@@ -410,7 +410,7 @@ pub fn bind_device_profile_with_profile(
     label: Option<String>,
 ) -> Result<DeviceProfile, String> {
     let mut account = load_account(account_id)?;
-    let _ = crate::modules::device::save_global_original(&profile);
+    let _ = crate::modules::system::device::save_global_original(&profile);
     apply_profile_to_account(&mut account, profile.clone(), label, true)?;
 
     Ok(profile)
@@ -442,7 +442,7 @@ pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<Devi
     let mut account = load_account(account_id)?;
 
     let target_profile = if version_id == "baseline" {
-        crate::modules::device::load_global_original().ok_or("Global original profile not found")?
+        crate::modules::system::device::load_global_original().ok_or("Global original profile not found")?
     } else if let Some(v) = account.device_history.iter().find(|v| v.id == version_id) {
         v.profile.clone()
     } else if version_id == "current" {
@@ -484,7 +484,7 @@ pub fn delete_device_version(account_id: &str, version_id: &str) -> Result<(), S
 pub fn restore_original_device() -> Result<String, String> {
     if let Some(current_id) = get_current_account_id()? {
         if let Ok(mut account) = load_account(&current_id) {
-            if let Some(original) = crate::modules::device::load_global_original() {
+            if let Some(original) = crate::modules::system::device::load_global_original() {
                 account.device_profile = Some(original);
                 for h in account.device_history.iter_mut() {
                     h.is_current = false;
@@ -513,7 +513,7 @@ pub fn get_current_account() -> Result<Option<Account>, String> {
 pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), String> {
     let mut account = load_account(account_id)?;
     account.update_quota(quota);
-    if let Ok(config) = crate::modules::config::load_app_config() {
+    if let Ok(config) = crate::modules::system::config::load_app_config() {
         if config.quota_protection.enabled {
             if let Some(ref q) = account.quota {
                 let threshold = config.quota_protection.threshold_percentage as i32;
@@ -536,14 +536,14 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
 
                     if model.percentage <= threshold {
                         if !account.protected_models.contains(&standard_id) {
-                            crate::modules::logger::log_info(&format!(
+                            crate::modules::system::logger::log_info(&format!(
                                 "[Quota] Triggering model protection: {} ({} [{}] remaining {}% <= threshold {}%)",
                                 account.email, standard_id, model.name, model.percentage, threshold
                             ));
                             account.protected_models.insert(standard_id.clone());
                         }
                     } else if account.protected_models.contains(&standard_id) {
-                        crate::modules::logger::log_info(&format!(
+                        crate::modules::system::logger::log_info(&format!(
                             "[Quota] Model protection recovered: {} ({} [{}] quota restored to {}%)",
                             account.email, standard_id, model.name, model.percentage
                         ));
@@ -556,7 +556,7 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
                         .as_ref()
                         .is_some_and(|r| r == "quota_protection")
                 {
-                    crate::modules::logger::log_info(&format!(
+                    crate::modules::system::logger::log_info(&format!(
                         "[Quota] Migrating account {} from account-level to model-level protection",
                         account.email
                     ));
@@ -633,7 +633,7 @@ pub fn export_accounts() -> Result<Vec<(String, String)>, String> {
 }
 pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppResult<QuotaData> {
     use crate::error::AppError;
-    use crate::modules::oauth;
+    use crate::modules::auth::oauth;
     use reqwest::StatusCode;
     let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
         Ok(t) => t,
@@ -822,7 +822,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     const MAX_CONCURRENT: usize = 5;
     let start = std::time::Instant::now();
 
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Starting batch refresh of all account quotas (Concurrent mode, max: {})",
         MAX_CONCURRENT
     ));
@@ -834,7 +834,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         .into_iter()
         .filter(|account| {
             if account.disabled || account.proxy_disabled {
-                crate::modules::logger::log_info(&format!(
+                crate::modules::system::logger::log_info(&format!(
                     "  - Skipping {} ({})",
                     account.email,
                     if account.disabled {
@@ -846,7 +846,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                 return false;
             }
             if account.proxy_disabled {
-                crate::modules::logger::log_info(&format!(
+                crate::modules::system::logger::log_info(&format!(
                     "  - Skipping {} (Proxy Disabled)",
                     account.email
                 ));
@@ -854,7 +854,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
             }
             if let Some(ref q) = account.quota {
                 if q.is_forbidden {
-                    crate::modules::logger::log_info(&format!(
+                    crate::modules::system::logger::log_info(&format!(
                         "  - Skipping {} (Forbidden)",
                         account.email
                     ));
@@ -869,21 +869,21 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
             let permit = semaphore.clone();
             async move {
                 let _guard = permit.acquire().await.unwrap();
-                crate::modules::logger::log_info(&format!("  - Processing {}", email));
+                crate::modules::system::logger::log_info(&format!("  - Processing {}", email));
                 match fetch_quota_with_retry(&mut account).await {
                     Ok(quota) => {
                         if let Err(e) = update_account_quota(&account_id, quota) {
                             let msg = format!("Account {}: Save quota failed - {}", email, e);
-                            crate::modules::logger::log_error(&msg);
+                            crate::modules::system::logger::log_error(&msg);
                             Err(msg)
                         } else {
-                            crate::modules::logger::log_info(&format!("    ✅ {} Success", email));
+                            crate::modules::system::logger::log_info(&format!("    ✅ {} Success", email));
                             Ok(())
                         }
                     }
                     Err(e) => {
                         let msg = format!("Account {}: Fetch quota failed - {}", email, e);
-                        crate::modules::logger::log_error(&msg);
+                        crate::modules::system::logger::log_error(&msg);
                         Err(msg)
                     }
                 }
@@ -909,7 +909,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     }
 
     let elapsed = start.elapsed();
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Batch refresh completed: {} success, {} failed, took: {}ms",
         success,
         failed,

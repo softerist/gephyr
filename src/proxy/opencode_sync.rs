@@ -660,7 +660,7 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
         }
     }
 
-    let app_accounts = crate::modules::account::list_accounts()
+    let app_accounts = crate::modules::auth::account::list_accounts()
         .map_err(|e| format!("Failed to list accounts: {}", e))?;
 
     let mut new_accounts: Vec<OpencodeAccount> = Vec::new();

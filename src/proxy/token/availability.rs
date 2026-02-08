@@ -8,7 +8,7 @@ pub(crate) async fn has_available_account(
     circuit_breaker_config: &tokio::sync::RwLock<crate::models::CircuitBreakerConfig>,
     target_model: &str,
 ) -> bool {
-    let quota_protection_enabled = crate::modules::config::load_app_config()
+    let quota_protection_enabled = crate::modules::system::config::load_app_config()
         .map(|cfg| cfg.quota_protection.enabled)
         .unwrap_or(false);
 

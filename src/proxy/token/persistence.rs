@@ -39,7 +39,7 @@ pub(crate) fn save_project_id(path: &PathBuf, project_id: &str) -> Result<(), St
 
 pub(crate) fn save_refreshed_token(
     path: &PathBuf,
-    token_response: &crate::modules::oauth::TokenResponse,
+    token_response: &crate::modules::auth::oauth::TokenResponse,
 ) -> Result<(), String> {
     let mut content = read_account_json(path)?;
 

@@ -289,7 +289,7 @@ impl TokenManager {
             "Token for account {} is about to expire, refreshing...",
             token.email
         );
-        match crate::modules::oauth::refresh_access_token(
+        match crate::modules::auth::oauth::refresh_access_token(
             &token.refresh_token,
             Some(&token.account_id),
         )

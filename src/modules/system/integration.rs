@@ -10,7 +10,7 @@ pub struct HeadlessIntegration;
 
 impl SystemIntegration for HeadlessIntegration {
     async fn on_account_switch(&self, account: &Account) -> Result<(), String> {
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "[Headless] Account switched in memory: {}",
             account.email
         ));
@@ -20,7 +20,7 @@ impl SystemIntegration for HeadlessIntegration {
     fn refresh_runtime_state(&self) {}
 
     fn show_notification(&self, title: &str, body: &str) {
-        crate::modules::logger::log_info(&format!("[Notification] {}: {}", title, body));
+        crate::modules::system::logger::log_info(&format!("[Notification] {}: {}", title, body));
     }
 }
 

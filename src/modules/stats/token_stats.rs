@@ -46,7 +46,7 @@ pub struct AccountTrendPoint {
 }
 
 pub(crate) fn get_db_path() -> Result<PathBuf, String> {
-    let data_dir = crate::modules::account::get_data_dir()?;
+    let data_dir = crate::modules::auth::account::get_data_dir()?;
     Ok(data_dir.join("token_stats.db"))
 }
 

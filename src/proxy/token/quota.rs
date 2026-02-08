@@ -25,7 +25,7 @@ pub(crate) async fn check_and_protect_quota(
     account_json: &mut serde_json::Value,
     account_path: &PathBuf,
 ) -> bool {
-    let config = match crate::modules::config::load_app_config() {
+    let config = match crate::modules::system::config::load_app_config() {
         Ok(cfg) => cfg.quota_protection,
         Err(_) => return false,
     };

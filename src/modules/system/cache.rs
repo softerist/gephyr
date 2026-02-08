@@ -1,4 +1,4 @@
-use crate::modules::logger;
+use crate::modules::system::logger;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;

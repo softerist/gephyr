@@ -51,7 +51,7 @@ pub struct IpRanking {
     pub is_blocked: bool,
 }
 pub fn get_security_db_path() -> Result<PathBuf, String> {
-    let data_dir = crate::modules::account::get_data_dir()?;
+    let data_dir = crate::modules::auth::account::get_data_dir()?;
     Ok(data_dir.join("security.db"))
 }
 fn connect_db() -> Result<Connection, String> {

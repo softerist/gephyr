@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 fn get_antigravity_path() -> Option<PathBuf> {
-    if let Ok(config) = crate::modules::config::load_app_config() {
+    if let Ok(config) = crate::modules::system::config::load_app_config() {
         if let Some(path_str) = config.antigravity_executable {
             let path = PathBuf::from(path_str);
             if path.exists() {
@@ -9,10 +9,10 @@ fn get_antigravity_path() -> Option<PathBuf> {
             }
         }
     }
-    crate::modules::process::get_antigravity_executable_path()
+    crate::modules::system::process::get_antigravity_executable_path()
 }
 pub fn get_db_path() -> Result<PathBuf, String> {
-    if let Some(user_data_dir) = crate::modules::process::get_user_data_dir_from_process() {
+    if let Some(user_data_dir) = crate::modules::system::process::get_user_data_dir_from_process() {
         let custom_db_path = user_data_dir
             .join("User")
             .join("globalStorage")

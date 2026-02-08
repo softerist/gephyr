@@ -88,7 +88,7 @@ impl AxumServer {
         experimental_config: crate::proxy::config::ExperimentalConfig,
         debug_logging: crate::proxy::config::DebugLoggingConfig,
 
-        integration: crate::modules::integration::SystemManager,
+        integration: crate::modules::system::integration::SystemManager,
         proxy_pool_config: crate::proxy::config::ProxyPoolConfig,
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
@@ -106,7 +106,7 @@ impl AxumServer {
         let switching_state = Arc::new(RwLock::new(false));
         let thought_signature_map =
             Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
-        let account_service = Arc::new(crate::modules::account_service::AccountService::new(
+        let account_service = Arc::new(crate::modules::auth::account_service::AccountService::new(
             integration.clone(),
         ));
         let upstream = {

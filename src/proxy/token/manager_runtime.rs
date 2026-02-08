@@ -45,7 +45,7 @@ impl TokenManager {
         );
         let scheduling = self.sticky_config.read().await.clone();
         use crate::proxy::sticky_config::SchedulingMode;
-        let quota_protection_enabled = crate::modules::config::load_app_config()
+        let quota_protection_enabled = crate::modules::system::config::load_app_config()
             .map(|cfg| cfg.quota_protection.enabled)
             .unwrap_or(false);
         if let Some(result) = self

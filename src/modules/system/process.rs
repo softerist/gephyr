@@ -97,7 +97,7 @@ pub fn get_args_from_running_process() -> Option<Vec<String>> {
     args
 }
 pub fn get_user_data_dir_from_process() -> Option<std::path::PathBuf> {
-    if let Ok(config) = crate::modules::config::load_app_config() {
+    if let Ok(config) = crate::modules::system::config::load_app_config() {
         if let Some(args) = config.antigravity_args {
             for i in 0..args.len() {
                 if args[i] == "--user-data-dir" && i + 1 < args.len() {

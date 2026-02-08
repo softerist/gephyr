@@ -22,7 +22,7 @@ pub struct UserToken {
     pub total_tokens_used: i64,
 }
 pub fn get_db_path() -> Result<PathBuf, String> {
-    let mut path = crate::modules::account::get_data_dir()?;
+    let mut path = crate::modules::auth::account::get_data_dir()?;
     path.push("user_tokens.db");
     Ok(path)
 }

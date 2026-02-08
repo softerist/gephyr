@@ -9,8 +9,8 @@ pub struct CoreServices {
     pub token_manager: Arc<TokenManager>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
-    pub integration: crate::modules::integration::SystemManager,
-    pub account_service: Arc<crate::modules::account_service::AccountService>,
+    pub integration: crate::modules::system::integration::SystemManager,
+    pub account_service: Arc<crate::modules::auth::account_service::AccountService>,
 }
 
 #[derive(Clone)]

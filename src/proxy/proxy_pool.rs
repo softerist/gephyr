@@ -80,7 +80,7 @@ impl ProxyPoolManager {
 
         if let Some(proxy_cfg) = proxy_opt {
             builder = builder.proxy(proxy_cfg.proxy);
-        } else if let Ok(app_cfg) = crate::modules::config::load_app_config() {
+        } else if let Ok(app_cfg) = crate::modules::system::config::load_app_config() {
             let up = app_cfg.proxy.upstream_proxy;
             if up.enabled && !up.url.is_empty() {
                 if let Ok(p) = reqwest::Proxy::all(&up.url) {
@@ -305,10 +305,10 @@ impl ProxyPoolManager {
             let mut config = self.config.write().await;
             config.account_bindings = bindings;
         }
-        if let Ok(mut app_config) = crate::modules::config::load_app_config() {
+        if let Ok(mut app_config) = crate::modules::system::config::load_app_config() {
             let config = self.config.read().await;
             app_config.proxy.proxy_pool = config.clone();
-            if let Err(e) = crate::modules::config::save_app_config(&app_config) {
+            if let Err(e) = crate::modules::system::config::save_app_config(&app_config) {
                 tracing::error!("[ProxyPool] Failed to persist bindings: {}", e);
             }
         }

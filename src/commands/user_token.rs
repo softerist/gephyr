@@ -1,4 +1,4 @@
-use crate::modules::user_token_db::{self, UserToken};
+use crate::modules::persistence::user_token_db::{self, UserToken};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

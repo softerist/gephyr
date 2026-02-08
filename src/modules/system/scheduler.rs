@@ -1,4 +1,4 @@
-use crate::modules::{config, logger};
+use crate::modules::system::{config, logger};
 use tokio::time::{self, Duration};
 
 pub fn start_scheduler(proxy_state: crate::commands::proxy::ProxyServiceState) {

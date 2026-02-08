@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
-    use crate::modules::security_db::{
+    use crate::modules::persistence::security_db::{
         self, add_to_blacklist, add_to_whitelist, get_blacklist, get_whitelist, init_db,
         remove_from_blacklist, remove_from_whitelist,
     };
@@ -207,7 +207,7 @@ mod integration_tests {
 
 #[cfg(test)]
 mod stress_tests {
-    use crate::modules::security_db::{
+    use crate::modules::persistence::security_db::{
         add_to_blacklist, clear_ip_access_logs, get_blacklist, init_db, is_ip_in_blacklist,
         remove_from_blacklist, save_ip_access_log, IpAccessLog,
     };

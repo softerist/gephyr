@@ -91,7 +91,7 @@ async fn fetch_project_id(
                         .or_else(|| data.current_tier.and_then(|t| t.id));
 
                     if let Some(ref tier) = subscription_tier {
-                        crate::modules::logger::log_info(&format!(
+                        crate::modules::system::logger::log_info(&format!(
                             "📊 [{}] Subscription identified successfully: {}",
                             email, tier
                         ));
@@ -100,7 +100,7 @@ async fn fetch_project_id(
                     return (project_id, subscription_tier);
                 }
             } else {
-                crate::modules::logger::log_warn(&format!(
+                crate::modules::system::logger::log_warn(&format!(
                     "⚠️  [{}] loadCodeAssist failed: Status: {}",
                     email,
                     res.status()
@@ -108,7 +108,7 @@ async fn fetch_project_id(
             }
         }
         Err(e) => {
-            crate::modules::logger::log_error(&format!(
+            crate::modules::system::logger::log_error(&format!(
                 "❌ [{}] loadCodeAssist network error: {}",
                 email, e
             ));
@@ -163,7 +163,7 @@ pub async fn fetch_quota_with_cache(
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
                     if status == reqwest::StatusCode::FORBIDDEN {
-                        crate::modules::logger::log_warn(
+                        crate::modules::system::logger::log_warn(
                             "Account unauthorized (403 Forbidden), marking as forbidden",
                         );
                         let mut q = QuotaData::new();
@@ -173,7 +173,7 @@ pub async fn fetch_quota_with_cache(
                     }
                     if attempt < MAX_RETRIES {
                         let text = response.text().await.unwrap_or_default();
-                        crate::modules::logger::log_warn(&format!(
+                        crate::modules::system::logger::log_warn(&format!(
                             "API Error: {} - {} (Attempt {}/{})",
                             status, text, attempt, MAX_RETRIES
                         ));
@@ -213,7 +213,7 @@ pub async fn fetch_quota_with_cache(
                 return Ok((quota_data, project_id.clone()));
             }
             Err(e) => {
-                crate::modules::logger::log_warn(&format!(
+                crate::modules::system::logger::log_warn(&format!(
                     "Request failed: {} (Attempt {}/{})",
                     e, attempt, MAX_RETRIES
                 ));

@@ -135,7 +135,7 @@ async fn start_headless_runtime() -> Result<(), String> {
     commands::proxy::internal_start_proxy_service(
         config.proxy,
         &proxy_state,
-        crate::modules::integration::SystemManager::Headless,
+        crate::modules::system::integration::SystemManager::Headless,
     )
     .await
     .map_err(|e| format!("failed_to_start_headless_proxy_service: {}", e))?;

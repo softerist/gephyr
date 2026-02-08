@@ -1,4 +1,4 @@
-use crate::modules::logger;
+use crate::modules::system::logger;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,7 +84,7 @@ async fn create_client() -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .user_agent("gephyr")
         .timeout(std::time::Duration::from_secs(10));
-    if let Ok(config) = crate::modules::config::load_app_config() {
+    if let Ok(config) = crate::modules::system::config::load_app_config() {
         if config.proxy.upstream_proxy.enabled && !config.proxy.upstream_proxy.url.is_empty() {
             logger::log_info(&format!(
                 "Update checker using upstream proxy: {}",
@@ -263,7 +263,7 @@ pub fn should_check_for_updates(settings: &UpdateSettings) -> bool {
     elapsed_hours >= interval
 }
 pub fn load_update_settings() -> Result<UpdateSettings, String> {
-    let data_dir = crate::modules::account::get_data_dir()
+    let data_dir = crate::modules::auth::account::get_data_dir()
         .map_err(|e| format!("Failed to get data dir: {}", e))?;
     let settings_path = data_dir.join("update_settings.json");
 
@@ -277,7 +277,7 @@ pub fn load_update_settings() -> Result<UpdateSettings, String> {
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))
 }
 pub fn save_update_settings(settings: &UpdateSettings) -> Result<(), String> {
-    let data_dir = crate::modules::account::get_data_dir()
+    let data_dir = crate::modules::auth::account::get_data_dir()
         .map_err(|e| format!("Failed to get data dir: {}", e))?;
     let settings_path = data_dir.join("update_settings.json");
 

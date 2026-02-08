@@ -3,7 +3,7 @@ use rusqlite::{params, Connection};
 use std::path::PathBuf;
 
 pub fn get_proxy_db_path() -> Result<PathBuf, String> {
-    let data_dir = crate::modules::account::get_data_dir()?;
+    let data_dir = crate::modules::auth::account::get_data_dir()?;
     Ok(data_dir.join("proxy_logs.db"))
 }
 
@@ -427,7 +427,7 @@ pub fn get_token_usage_by_ip(limit: usize, hours: i64) -> Result<Vec<IpTokenStat
         let (client_ip, total_tokens, input_tokens, output_tokens, request_count) =
             row.map_err(|e| e.to_string())?;
         let username =
-            crate::modules::user_token_db::get_username_for_ip(&client_ip).unwrap_or(None);
+            crate::modules::persistence::user_token_db::get_username_for_ip(&client_ip).unwrap_or(None);
 
         stats.push(IpTokenStats {
             client_ip,

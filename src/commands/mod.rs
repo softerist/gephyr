@@ -39,7 +39,7 @@ pub async fn open_data_folder() -> Result<(), String> {
 
 pub async fn get_antigravity_path(bypass_config: Option<bool>) -> Result<String, String> {
     if bypass_config != Some(true) {
-        if let Ok(config) = crate::modules::config::load_app_config() {
+        if let Ok(config) = crate::modules::system::config::load_app_config() {
             if let Some(path) = config.antigravity_executable {
                 if std::path::Path::new(&path).exists() {
                     return Ok(path);
@@ -48,14 +48,14 @@ pub async fn get_antigravity_path(bypass_config: Option<bool>) -> Result<String,
         }
     }
 
-    match crate::modules::process::get_antigravity_executable_path() {
+    match crate::modules::system::process::get_antigravity_executable_path() {
         Some(path) => Ok(path.to_string_lossy().to_string()),
         None => Err("Antigravity executable path not found".to_string()),
     }
 }
 
 pub async fn get_antigravity_args() -> Result<Vec<String>, String> {
-    match crate::modules::process::get_args_from_running_process() {
+    match crate::modules::system::process::get_args_from_running_process() {
         Some(args) => Ok(args),
         None => Err("No running Antigravity process found".to_string()),
     }

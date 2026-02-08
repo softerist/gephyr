@@ -1,4 +1,4 @@
-use crate::modules::security_db;
+use crate::modules::persistence::security_db;
 use crate::proxy::ProxySecurityConfig;
 use axum::{
     extract::{Request, State},

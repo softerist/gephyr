@@ -1,4 +1,4 @@
-use crate::modules::config::load_app_config;
+use crate::modules::system::config::load_app_config;
 use once_cell::sync::Lazy;
 use reqwest::{Client, Proxy};
 pub static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| create_base_client(15));

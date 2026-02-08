@@ -1,5 +1,10 @@
 use crate::models::AppConfig;
-use crate::modules::{account, config, logger, migration, proxy_db, security_db, token_stats};
+use crate::modules::{
+    auth::account,
+    persistence::{proxy_db, security_db},
+    stats::token_stats,
+    system::{config, logger, migration},
+};
 use crate::proxy::state::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -642,9 +647,9 @@ pub(crate) async fn admin_get_proxy_status(
 }
 
 pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
-    if let Ok(mut config) = crate::modules::config::load_app_config() {
+    if let Ok(mut config) = crate::modules::system::config::load_app_config() {
         config.proxy.auto_start = true;
-        let _ = crate::modules::config::save_app_config(&config);
+        let _ = crate::modules::system::config::save_app_config(&config);
     }
     if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
@@ -660,9 +665,9 @@ pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> 
 }
 
 pub(crate) async fn admin_stop_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
-    if let Ok(mut config) = crate::modules::config::load_app_config() {
+    if let Ok(mut config) = crate::modules::system::config::load_app_config() {
         config.proxy.auto_start = false;
-        let _ = crate::modules::config::save_app_config(&config);
+        let _ = crate::modules::system::config::save_app_config(&config);
     }
 
     let mut running = state.runtime.is_running.write().await;
@@ -686,7 +691,7 @@ pub(crate) async fn admin_update_model_mapping(
         let mut mapping = state.config.custom_mapping.write().await;
         *mapping = config.custom_mapping.clone();
     }
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
+    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -695,7 +700,7 @@ pub(crate) async fn admin_update_model_mapping(
 
     app_config.proxy.custom_mapping = config.custom_mapping;
 
-    crate::modules::config::save_app_config(&app_config).map_err(|e| {
+    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -882,7 +887,7 @@ pub(crate) async fn admin_get_proxy_log_detail(
     Path(log_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let res =
-        tokio::task::spawn_blocking(move || crate::modules::proxy_db::get_log_detail(&log_id))
+        tokio::task::spawn_blocking(move || crate::modules::persistence::proxy_db::get_log_detail(&log_id))
             .await;
 
     match res {
@@ -917,7 +922,7 @@ pub(crate) async fn admin_get_proxy_logs_filtered(
     Query(params): Query<LogsFilterQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let res = tokio::task::spawn_blocking(move || {
-        crate::modules::proxy_db::get_logs_filtered(
+        crate::modules::persistence::proxy_db::get_logs_filtered(
             &params.filter,
             params.errors_only,
             params.limit,
@@ -949,7 +954,7 @@ pub(crate) async fn admin_get_proxy_stats(
 }
 
 pub(crate) async fn admin_get_data_dir_path() -> impl IntoResponse {
-    match crate::modules::account::get_data_dir() {
+    match crate::modules::auth::account::get_data_dir() {
         Ok(p) => Json(p.to_string_lossy().to_string()),
         Err(e) => Json(format!("Error: {}", e)),
     }
@@ -1047,13 +1052,13 @@ pub(crate) async fn admin_update_user_token(
 
 pub(crate) async fn admin_should_check_updates(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let settings = crate::modules::update_checker::load_update_settings().map_err(|e| {
+    let settings = crate::modules::system::update_checker::load_update_settings().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
         )
     })?;
-    let should = crate::modules::update_checker::should_check_for_updates(&settings);
+    let should = crate::modules::system::update_checker::should_check_for_updates(&settings);
     Ok(Json(should))
 }
 
@@ -1349,7 +1354,7 @@ pub(crate) async fn admin_clear_token_stats() -> impl IntoResponse {
 }
 
 pub(crate) async fn admin_get_update_settings() -> impl IntoResponse {
-    match crate::modules::update_checker::load_update_settings() {
+    match crate::modules::system::update_checker::load_update_settings() {
         Ok(s) => Json(serde_json::to_value(s).unwrap_or_default()),
         Err(_) => Json(serde_json::json!({
             "auto_check": true,
@@ -1361,7 +1366,7 @@ pub(crate) async fn admin_get_update_settings() -> impl IntoResponse {
 
 pub(crate) async fn admin_check_for_updates(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let info = crate::modules::update_checker::check_for_updates()
+    let info = crate::modules::system::update_checker::check_for_updates()
         .await
         .map_err(|e| {
             (
@@ -1374,7 +1379,7 @@ pub(crate) async fn admin_check_for_updates(
 
 pub(crate) async fn admin_update_last_check_time(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::update_checker::update_last_check_time().map_err(|e| {
+    crate::modules::system::update_checker::update_last_check_time().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -1387,9 +1392,9 @@ pub(crate) async fn admin_save_update_settings(
     Json(settings): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if let Ok(s) =
-        serde_json::from_value::<crate::modules::update_checker::UpdateSettings>(settings)
+        serde_json::from_value::<crate::modules::system::update_checker::UpdateSettings>(settings)
     {
-        let _ = crate::modules::update_checker::save_update_settings(&s);
+        let _ = crate::modules::system::update_checker::save_update_settings(&s);
         StatusCode::OK
     } else {
         StatusCode::BAD_REQUEST
@@ -1405,7 +1410,7 @@ pub(crate) struct BulkDeleteRequest {
 pub(crate) async fn admin_delete_accounts(
     Json(payload): Json<BulkDeleteRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::account::delete_accounts(&payload.account_ids).map_err(|e| {
+    crate::modules::auth::account::delete_accounts(&payload.account_ids).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -1424,7 +1429,7 @@ pub(crate) async fn admin_reorder_accounts(
     State(state): State<AppState>,
     Json(payload): Json<ReorderRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::account::reorder_accounts(&payload.account_ids).map_err(|e| {
+    crate::modules::auth::account::reorder_accounts(&payload.account_ids).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -1450,7 +1455,7 @@ pub(crate) async fn admin_fetch_account_quota(
         )
     })?;
 
-    let quota = crate::modules::account::fetch_quota_with_retry(&mut account)
+    let quota = crate::modules::auth::account::fetch_quota_with_retry(&mut account)
         .await
         .map_err(|e| {
             (
@@ -1483,7 +1488,7 @@ pub(crate) async fn admin_toggle_proxy_status(
     Path(account_id): Path<String>,
     Json(payload): Json<ToggleProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::account::toggle_proxy_status(
+    crate::modules::auth::account::toggle_proxy_status(
         &account_id,
         payload.enable,
         payload.reason.as_deref(),
@@ -1527,7 +1532,7 @@ pub(crate) async fn admin_list_device_versions(
 
 pub(crate) async fn admin_preview_generate_profile(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let profile = crate::modules::device::generate_profile();
+    let profile = crate::modules::system::device::generate_profile();
     Ok(Json(profile))
 }
 
@@ -1853,7 +1858,7 @@ pub(crate) async fn handle_oauth_callback(
 ) -> Result<Html<String>, StatusCode> {
     let code = params.code;
     let state_param = params.state;
-    match crate::modules::oauth_server::submit_oauth_code(code, state_param).await {
+    match crate::modules::auth::oauth_server::submit_oauth_code(code, state_param).await {
         Ok(()) => Ok(Html(format!(
             r#"
                 <!DOCTYPE html>
@@ -1932,7 +1937,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
 
     let state_str = uuid::Uuid::new_v4().to_string();
     let (auth_url, code_verifier, mut code_rx) =
-        crate::modules::oauth_server::prepare_oauth_flow_manually(
+        crate::modules::auth::oauth_server::prepare_oauth_flow_manually(
             redirect_uri.clone(),
             state_str.clone(),
         )
@@ -1948,10 +1953,10 @@ pub(crate) async fn admin_prepare_oauth_url_web(
     tokio::spawn(async move {
         match code_rx.recv().await {
             Some(Ok(code)) => {
-                crate::modules::logger::log_info(
+                crate::modules::system::logger::log_info(
                     "Consuming manually submitted OAuth code in background",
                 );
-                match crate::modules::oauth::exchange_code(
+                match crate::modules::auth::oauth::exchange_code(
                     &code,
                     &redirect_uri_clone,
                     &code_verifier_clone,
@@ -1966,32 +1971,32 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                         .add_account(&user_info.email, refresh_token)
                                         .await
                                     {
-                                        crate::modules::logger::log_error(&format!(
+                                        crate::modules::system::logger::log_error(&format!(
                                             "Failed to save account in background OAuth: {}",
                                             e
                                         ));
                                     } else {
-                                        crate::modules::logger::log_info(&format!(
+                                        crate::modules::system::logger::log_info(&format!(
                                             "Successfully added account {} via background OAuth",
                                             user_info.email
                                         ));
                                     }
                                 }
                                 Err(e) => {
-                                    crate::modules::logger::log_error(&format!(
+                                    crate::modules::system::logger::log_error(&format!(
                                         "Failed to fetch user info in background OAuth: {}",
                                         e
                                     ));
                                 }
                             }
                         } else {
-                            crate::modules::logger::log_error(
+                            crate::modules::system::logger::log_error(
                                 "Background OAuth error: Google did not return a refresh_token.",
                             );
                         }
                     }
                     Err(e) => {
-                        crate::modules::logger::log_error(&format!(
+                        crate::modules::system::logger::log_error(&format!(
                             "Background OAuth exchange failed: {}",
                             e
                         ));
@@ -1999,10 +2004,10 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                 }
             }
             Some(Err(e)) => {
-                crate::modules::logger::log_error(&format!("Background OAuth flow error: {}", e));
+                crate::modules::system::logger::log_error(&format!("Background OAuth flow error: {}", e));
             }
             None => {
-                crate::modules::logger::log_info("Background OAuth flow channel closed");
+                crate::modules::system::logger::log_info("Background OAuth flow channel closed");
             }
         }
     });
@@ -2042,7 +2047,7 @@ fn default_page_size() -> usize {
 
 #[derive(Serialize)]
 pub(crate) struct IpAccessLogResponse {
-    logs: Vec<crate::modules::security_db::IpAccessLog>,
+    logs: Vec<crate::modules::persistence::security_db::IpAccessLog>,
     total: usize,
 }
 
@@ -2080,7 +2085,7 @@ pub(crate) struct IpStatsResponse {
     total_requests: usize,
     unique_ips: usize,
     blocked_requests: usize,
-    top_ips: Vec<crate::modules::security_db::IpRanking>,
+    top_ips: Vec<crate::modules::persistence::security_db::IpRanking>,
 }
 
 pub(crate) async fn admin_get_ip_stats(
@@ -2326,7 +2331,7 @@ pub(crate) async fn admin_check_ip_in_whitelist(
 pub(crate) async fn admin_get_security_config(
     State(_state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let app_config = crate::modules::config::load_app_config().map_err(|e| {
+    let app_config = crate::modules::system::config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -2348,7 +2353,7 @@ pub(crate) async fn admin_update_security_config(
     Json(payload): Json<UpdateSecurityConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = payload.config;
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| {
+    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -2359,7 +2364,7 @@ pub(crate) async fn admin_update_security_config(
 
     app_config.proxy.security_monitor = config.clone();
 
-    crate::modules::config::save_app_config(&app_config).map_err(|e| {
+    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -2378,26 +2383,26 @@ pub(crate) async fn admin_update_security_config(
 }
 
 pub(crate) async fn admin_enable_debug_console() -> impl IntoResponse {
-    crate::modules::log_bridge::enable_log_bridge();
+    crate::modules::system::log_bridge::enable_log_bridge();
     StatusCode::OK
 }
 
 pub(crate) async fn admin_disable_debug_console() -> impl IntoResponse {
-    crate::modules::log_bridge::disable_log_bridge();
+    crate::modules::system::log_bridge::disable_log_bridge();
     StatusCode::OK
 }
 
 pub(crate) async fn admin_is_debug_console_enabled() -> impl IntoResponse {
-    Json(crate::modules::log_bridge::is_log_bridge_enabled())
+    Json(crate::modules::system::log_bridge::is_log_bridge_enabled())
 }
 
 pub(crate) async fn admin_get_debug_console_logs() -> impl IntoResponse {
-    let logs = crate::modules::log_bridge::get_buffered_logs();
+    let logs = crate::modules::system::log_bridge::get_buffered_logs();
     Json(logs)
 }
 
 pub(crate) async fn admin_clear_debug_console_logs() -> impl IntoResponse {
-    crate::modules::log_bridge::clear_log_buffer();
+    crate::modules::system::log_bridge::clear_log_buffer();
     StatusCode::OK
 }
 

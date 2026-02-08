@@ -19,7 +19,7 @@ fn record_user_token_usage(
     user_agent: Option<String>,
 ) {
     if let Some(identity) = user_token_identity {
-        let _ = crate::modules::user_token_db::record_token_usage_and_ip(
+        let _ = crate::modules::persistence::user_token_db::record_token_usage_and_ip(
             &identity.token_id,
             log.client_ip.as_deref().unwrap_or("127.0.0.1"),
             log.model.as_deref().unwrap_or("unknown"),

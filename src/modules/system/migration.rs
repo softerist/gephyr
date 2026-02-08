@@ -1,12 +1,12 @@
 use crate::models::{Account, TokenData};
-use crate::modules::{account, db};
+use crate::modules::{auth::account, persistence::db};
 use crate::utils::protobuf;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 pub async fn import_from_v1() -> Result<Vec<Account>, String> {
-    use crate::modules::oauth;
+    use crate::modules::auth::oauth;
 
     let home = dirs::home_dir().ok_or("Failed to get home directory")?;
     let v1_dir = home.join(".antigravity-agent");
@@ -24,12 +24,12 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
         }
 
         found_index = true;
-        crate::modules::logger::log_info(&format!("V1 data discovered: {:?}", v1_accounts_path));
+        crate::modules::system::logger::log_info(&format!("V1 data discovered: {:?}", v1_accounts_path));
 
         let content = match fs::read_to_string(&v1_accounts_path) {
             Ok(c) => c,
             Err(e) => {
-                crate::modules::logger::log_warn(&format!("Failed to read index: {}", e));
+                crate::modules::system::logger::log_warn(&format!("Failed to read index: {}", e));
                 continue;
             }
         };
@@ -37,7 +37,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
         let v1_index: Value = match serde_json::from_str(&content) {
             Ok(v) => v,
             Err(e) => {
-                crate::modules::logger::log_warn(&format!("Failed to parse index JSON: {}", e));
+                crate::modules::system::logger::log_warn(&format!("Failed to parse index JSON: {}", e));
                 continue;
             }
         };
@@ -66,7 +66,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
             let target_file = backup_file_str.or(data_file_str);
 
             if target_file.is_none() {
-                crate::modules::logger::log_warn(&format!(
+                crate::modules::system::logger::log_warn(&format!(
                     "Account {} ({}) missing data file path",
                     id, email_placeholder
                 ));
@@ -91,7 +91,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
             }
 
             if !backup_path.exists() {
-                crate::modules::logger::log_warn(&format!(
+                crate::modules::system::logger::log_warn(&format!(
                     "Account {} ({}) backup file not found: {:?}",
                     id, email_placeholder, backup_path
                 ));
@@ -125,7 +125,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                     }
 
                     if let Some(refresh_token) = refresh_token_opt {
-                        crate::modules::logger::log_info(&format!(
+                        crate::modules::system::logger::log_info(&format!(
                             "Importing account: {}",
                             email_placeholder
                         ));
@@ -147,7 +147,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                                     }
                                 }
                                 Err(e) => {
-                                    crate::modules::logger::log_warn(&format!(
+                                    crate::modules::system::logger::log_warn(&format!(
                                         "Token refresh failed (likely expired): {}",
                                         e
                                     ));
@@ -169,19 +169,19 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                         );
                         match account::upsert_account(email.clone(), None, token_data) {
                             Ok(acc) => {
-                                crate::modules::logger::log_info(&format!(
+                                crate::modules::system::logger::log_info(&format!(
                                     "Import successful: {}",
                                     email
                                 ));
                                 imported_accounts.push(acc);
                             }
-                            Err(e) => crate::modules::logger::log_error(&format!(
+                            Err(e) => crate::modules::system::logger::log_error(&format!(
                                 "Import save failed {}: {}",
                                 email, e
                             )),
                         }
                     } else {
-                        crate::modules::logger::log_warn(&format!(
+                        crate::modules::system::logger::log_warn(&format!(
                             "Account {} data file missing Refresh Token",
                             email_placeholder
                         ));
@@ -198,7 +198,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
     Ok(imported_accounts)
 }
 pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, String> {
-    use crate::modules::oauth;
+    use crate::modules::auth::oauth;
 
     let path = PathBuf::from(path_str);
     if !path.exists() {
@@ -206,13 +206,13 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
     }
 
     let refresh_token = extract_refresh_token_from_file(&path)?;
-    crate::modules::logger::log_info("Getting user info using Refresh Token...");
+    crate::modules::system::logger::log_info("Getting user info using Refresh Token...");
     let token_resp = oauth::refresh_access_token(&refresh_token, None).await?;
     let user_info = oauth::get_user_info(&token_resp.access_token, None).await?;
 
     let email = user_info.email;
 
-    crate::modules::logger::log_info(&format!("Successfully retrieved account info: {}", email));
+    crate::modules::system::logger::log_info(&format!("Successfully retrieved account info: {}", email));
 
     let token_data = TokenData::new(
         token_resp.access_token,

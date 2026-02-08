@@ -15,7 +15,7 @@ fn resolve_output_dir(cfg: &DebugLoggingConfig) -> Option<PathBuf> {
     if let Some(dir) = cfg.output_dir.as_ref() {
         return Some(PathBuf::from(dir));
     }
-    if let Ok(data_dir) = crate::modules::account::get_data_dir() {
+    if let Ok(data_dir) = crate::modules::auth::account::get_data_dir() {
         return Some(data_dir.join("debug_logs"));
     }
     None

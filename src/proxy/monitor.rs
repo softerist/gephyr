@@ -40,11 +40,11 @@ pub struct ProxyMonitor {
 
 impl ProxyMonitor {
     pub fn new(max_logs: usize) -> Self {
-        if let Err(e) = crate::modules::proxy_db::init_db() {
+        if let Err(e) = crate::modules::persistence::proxy_db::init_db() {
             tracing::error!("Failed to initialize proxy DB: {}", e);
         }
         tokio::spawn(async {
-            match crate::modules::proxy_db::cleanup_old_logs(30) {
+            match crate::modules::persistence::proxy_db::cleanup_old_logs(30) {
                 Ok(deleted) => {
                     if deleted > 0 {
                         tracing::info!("Auto cleanup: removed {} old logs (>30 days)", deleted);
@@ -80,7 +80,7 @@ impl ProxyMonitor {
             let account = account.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    crate::modules::token_stats::record_usage(&account, &model, input, output)
+                    crate::modules::stats::token_stats::record_usage(&account, &model, input, output)
                 {
                     tracing::debug!("Failed to record token stats: {}", e);
                 }
@@ -109,11 +109,11 @@ impl ProxyMonitor {
         }
         let log_to_save = log.clone();
         tokio::spawn(async move {
-            if let Err(e) = crate::modules::proxy_db::save_log(&log_to_save) {
+            if let Err(e) = crate::modules::persistence::proxy_db::save_log(&log_to_save) {
                 tracing::error!("Failed to save proxy log to DB: {}", e);
             }
             if let Some(ip) = &log_to_save.client_ip {
-                let security_log = crate::modules::security_db::IpAccessLog {
+                let security_log = crate::modules::persistence::security_db::IpAccessLog {
                     id: uuid::Uuid::new_v4().to_string(),
                     client_ip: ip.clone(),
                     timestamp: log_to_save.timestamp / 1000,
@@ -128,7 +128,7 @@ impl ProxyMonitor {
                     username: log_to_save.username.clone(),
                 };
 
-                if let Err(e) = crate::modules::security_db::save_ip_access_log(&security_log) {
+                if let Err(e) = crate::modules::persistence::security_db::save_ip_access_log(&security_log) {
                     tracing::error!("Failed to save security log: {}", e);
                 }
             }
@@ -142,7 +142,7 @@ impl ProxyMonitor {
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string());
                 if let Err(e) =
-                    crate::modules::token_stats::record_usage(account, &model, input, output)
+                    crate::modules::stats::token_stats::record_usage(account, &model, input, output)
                 {
                     tracing::debug!("Failed to record token stats: {}", e);
                 }
@@ -152,7 +152,7 @@ impl ProxyMonitor {
 
     pub async fn get_logs(&self, limit: usize) -> Vec<ProxyRequestLog> {
         let db_result =
-            tokio::task::spawn_blocking(move || crate::modules::proxy_db::get_logs(limit)).await;
+            tokio::task::spawn_blocking(move || crate::modules::persistence::proxy_db::get_logs(limit)).await;
 
         match db_result {
             Ok(Ok(logs)) => logs,
@@ -170,7 +170,7 @@ impl ProxyMonitor {
     }
 
     pub async fn get_stats(&self) -> ProxyStats {
-        let db_result = tokio::task::spawn_blocking(crate::modules::proxy_db::get_stats).await;
+        let db_result = tokio::task::spawn_blocking(crate::modules::persistence::proxy_db::get_stats).await;
 
         match db_result {
             Ok(Ok(stats)) => stats,
@@ -197,7 +197,7 @@ impl ProxyMonitor {
         let search = search_text.unwrap_or_default();
 
         let res = tokio::task::spawn_blocking(move || {
-            crate::modules::proxy_db::get_logs_filtered(&search, errors_only, page_size, offset)
+            crate::modules::persistence::proxy_db::get_logs_filtered(&search, errors_only, page_size, offset)
         })
         .await;
 
@@ -214,7 +214,7 @@ impl ProxyMonitor {
         *stats = ProxyStats::default();
 
         let _ = tokio::task::spawn_blocking(|| {
-            if let Err(e) = crate::modules::proxy_db::clear_logs() {
+            if let Err(e) = crate::modules::persistence::proxy_db::clear_logs() {
                 tracing::error!("Failed to clear logs in DB: {}", e);
             }
         })

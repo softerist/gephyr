@@ -46,7 +46,7 @@ impl Drop for StartingGuard {
 pub async fn internal_start_proxy_service(
     config: ProxyConfig,
     state: &ProxyServiceState,
-    integration: crate::modules::integration::SystemManager,
+    integration: crate::modules::system::integration::SystemManager,
 ) -> Result<ProxyStatus, String> {
     {
         let instance_lock = state.instance.read().await;
@@ -87,7 +87,7 @@ pub async fn internal_start_proxy_service(
     token_manager
         .update_sticky_config(config.scheduling.clone())
         .await;
-    let app_config = crate::modules::config::load_app_config()
+    let app_config = crate::modules::system::config::load_app_config()
         .unwrap_or_else(|_| crate::models::AppConfig::new());
     token_manager
         .update_circuit_breaker_config(app_config.circuit_breaker)
@@ -133,7 +133,7 @@ pub async fn internal_start_proxy_service(
 pub async fn ensure_admin_server(
     config: ProxyConfig,
     state: &ProxyServiceState,
-    integration: crate::modules::integration::SystemManager,
+    integration: crate::modules::system::integration::SystemManager,
 ) -> Result<(), String> {
     let mut admin_lock = state.admin_server.write().await;
     if admin_lock.is_some() {
@@ -146,7 +146,7 @@ pub async fn ensure_admin_server(
         }
         monitor_lock.as_ref().unwrap().clone()
     };
-    let app_data_dir = crate::modules::account::get_data_dir()?;
+    let app_data_dir = crate::modules::auth::account::get_data_dir()?;
     let token_manager = Arc::new(TokenManager::new(app_data_dir));
     let _ = token_manager.load_accounts().await;
 

@@ -1,5 +1,5 @@
 use crate::models::DeviceProfile;
-use crate::modules::{logger, process};
+use crate::modules::system::{logger, process};
 use chrono::Local;
 use rand::{distributions::Alphanumeric, Rng};
 use rusqlite::Connection;

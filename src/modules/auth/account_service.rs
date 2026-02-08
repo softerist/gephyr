@@ -1,11 +1,11 @@
 use crate::models::{Account, TokenData};
 use crate::modules;
 pub struct AccountService {
-    pub integration: crate::modules::integration::SystemManager,
+    pub integration: crate::modules::system::integration::SystemManager,
 }
 
 impl AccountService {
-    pub fn new(integration: crate::modules::integration::SystemManager) -> Self {
+    pub fn new(integration: crate::modules::system::integration::SystemManager) -> Self {
         Self { integration }
     }
     pub async fn add_account(&self, refresh_token: &str) -> Result<Account, String> {

@@ -167,7 +167,7 @@ impl TokenManager {
     pub async fn get_user_info(
         &self,
         refresh_token: &str,
-    ) -> Result<crate::modules::oauth::UserInfo, String> {
+    ) -> Result<crate::modules::auth::oauth::UserInfo, String> {
         crate::proxy::token::account_ops::get_user_info(refresh_token).await
     }
     pub async fn add_account(&self, email: &str, refresh_token: &str) -> Result<(), String> {

@@ -392,7 +392,7 @@ pub fn resolve_model_route(
     custom_mapping: &std::collections::HashMap<String, String>,
 ) -> String {
     if let Some(target) = custom_mapping.get(original_model) {
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "[Router] Exact mapping: {} -> {}",
             original_model, target
         ));
@@ -410,7 +410,7 @@ pub fn resolve_model_route(
     }
 
     if let Some((pattern, target, _)) = best_match {
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "[Router] Wildcard match: {} -> {} (rule: {})",
             original_model, target, pattern
         ));
@@ -418,7 +418,7 @@ pub fn resolve_model_route(
     }
     let result = map_claude_model_to_gemini(original_model);
     if result != original_model {
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "[Router] System default mapping: {} -> {}",
             original_model, result
         ));

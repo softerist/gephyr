@@ -1,4 +1,4 @@
-use crate::modules::oauth;
+use crate::modules::auth::oauth;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -102,7 +102,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
             match TcpListener::bind(format!("127.0.0.1:{}", port)).await {
                 Ok(l4) => ipv4_listener = Some(l4),
                 Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
+                    crate::modules::system::logger::log_warn(&format!(
                         "failed_to_bind_ipv4_callback_port_127_0_0_1:{} (will only listen on IPv6): {}",
                         port, e
                     ));
@@ -122,7 +122,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
             match TcpListener::bind(format!("[::1]:{}", port)).await {
                 Ok(l6) => ipv6_listener = Some(l6),
                 Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
+                    crate::modules::system::logger::log_warn(&format!(
                         "failed_to_bind_ipv6_callback_port_::1:{} (will only listen on IPv4): {}",
                         port, e
                     ));
@@ -190,7 +190,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                 };
 
                 if code.is_none() && bytes_read > 0 {
-                    crate::modules::logger::log_error(&format!(
+                    crate::modules::system::logger::log_error(&format!(
                         "OAuth callback failed to parse code. Raw request (first 512 bytes): {}",
                         &request.chars().take(512).collect::<String>()
                     ));
@@ -209,13 +209,13 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
-                        crate::modules::logger::log_info(
+                        crate::modules::system::logger::log_info(
                             "Successfully captured OAuth code from IPv4 listener",
                         );
                         (Ok(code), oauth_success_html())
                     }
                     (Some(_), false) => {
-                        crate::modules::logger::log_error(
+                        crate::modules::system::logger::log_error(
                             "OAuth callback state mismatch (CSRF protection)",
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
@@ -277,7 +277,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                 };
 
                 if code.is_none() && bytes_read > 0 {
-                    crate::modules::logger::log_error(&format!(
+                    crate::modules::system::logger::log_error(&format!(
                         "OAuth callback failed to parse code (IPv6). Raw request: {}",
                         &request.chars().take(512).collect::<String>()
                     ));
@@ -296,13 +296,13 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
-                        crate::modules::logger::log_info(
+                        crate::modules::system::logger::log_info(
                             "Successfully captured OAuth code from IPv6 listener",
                         );
                         (Ok(code), oauth_success_html())
                     }
                     (Some(_), false) => {
-                        crate::modules::logger::log_error(
+                        crate::modules::system::logger::log_error(
                             "OAuth callback state mismatch (IPv6 CSRF protection)",
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
@@ -341,7 +341,7 @@ pub fn cancel_oauth_flow() {
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.take() {
             let _ = s.cancel_tx.send(true);
-            crate::modules::logger::log_info("Sent OAuth cancellation signal");
+            crate::modules::system::logger::log_info("Sent OAuth cancellation signal");
         }
     }
 }
@@ -437,7 +437,7 @@ pub async fn submit_oauth_code(
         code_input
     };
 
-    crate::modules::logger::log_info("Received manual OAuth code submission");
+    crate::modules::system::logger::log_info("Received manual OAuth code submission");
     tx.send(Ok(code))
         .await
         .map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;

@@ -156,7 +156,7 @@ pub async fn exchange_code(
             .json::<TokenResponse>()
             .await
             .map_err(|e| format!("Token parsing failed: {}", e))?;
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "Token exchange successful! access_token: {}..., refresh_token: {}",
             &token_res.access_token.chars().take(20).collect::<String>(),
             if token_res.refresh_token.is_some() {
@@ -166,7 +166,7 @@ pub async fn exchange_code(
             }
         ));
         if token_res.refresh_token.is_none() {
-            crate::modules::logger::log_warn(
+            crate::modules::system::logger::log_warn(
                 "Warning: Google did not return a refresh_token. Potential reasons:\n\
                  1. User has previously authorized this application\n\
                  2. Need to revoke access in Google Cloud Console and retry\n\
@@ -201,9 +201,9 @@ pub async fn refresh_access_token(
         params.push(("client_secret", s));
     }
     if let Some(id) = account_id {
-        crate::modules::logger::log_info(&format!("Refreshing Token for account: {}...", id));
+        crate::modules::system::logger::log_info(&format!("Refreshing Token for account: {}...", id));
     } else {
-        crate::modules::logger::log_info("Refreshing Token for generic request (no account_id)...");
+        crate::modules::system::logger::log_info("Refreshing Token for generic request (no account_id)...");
     }
 
     let response = client
@@ -225,7 +225,7 @@ pub async fn refresh_access_token(
             .await
             .map_err(|e| format!("Refresh data parsing failed: {}", e))?;
 
-        crate::modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "Token refreshed successfully! Expires in: {} seconds",
             token_data.expires_in
         ));
@@ -270,7 +270,7 @@ pub async fn ensure_fresh_token(
     if current_token.expiry_timestamp > now + 300 {
         return Ok(current_token.clone());
     }
-    crate::modules::logger::log_info(&format!(
+    crate::modules::system::logger::log_info(&format!(
         "Token expiring soon for account {:?}, refreshing...",
         account_id
     ));

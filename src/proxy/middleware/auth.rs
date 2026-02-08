@@ -60,7 +60,7 @@ async fn auth_middleware_internal(
 
             if let Some(token) = api_key {
                 if let Ok(Some(user_token)) =
-                    crate::modules::user_token_db::get_token_by_value(token)
+                    crate::modules::persistence::user_token_db::get_token_by_value(token)
                 {
                     let identity = UserTokenIdentity {
                         token_id: user_token.id,
@@ -146,10 +146,10 @@ async fn auth_middleware_internal(
                     .map(|s| s.to_string())
             })
             .unwrap_or_else(|| "127.0.0.1".to_string());
-        match crate::modules::user_token_db::validate_token(token, &client_ip) {
+        match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
             Ok((true, _)) => {
                 if let Ok(Some(user_token)) =
-                    crate::modules::user_token_db::get_token_by_value(token)
+                    crate::modules::persistence::user_token_db::get_token_by_value(token)
                 {
                     let identity = UserTokenIdentity {
                         token_id: user_token.id,
