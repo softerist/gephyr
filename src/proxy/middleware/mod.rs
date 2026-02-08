@@ -11,5 +11,5 @@ pub mod service_status;
 pub use cors::cors_layer;
 pub use monitor::monitor_middleware;
 pub use service_status::service_status_middleware;
-pub use auth::{auth_middleware, admin_auth_middleware};
+pub use auth::{admin_auth_middleware, auth_middleware};
 pub use ip_filter::ip_filter_middleware;

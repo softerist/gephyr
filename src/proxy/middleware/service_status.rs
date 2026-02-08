@@ -4,10 +4,10 @@ use axum::{
     response::{IntoResponse, Response},
     http::StatusCode,
 };
-use crate::proxy::server::AppState;
+use crate::proxy::state::RuntimeState;
 
 pub async fn service_status_middleware(
-    State(state): State<AppState>,
+    State(state): State<RuntimeState>,
     request: Request,
     next: Next,
 ) -> Response {

@@ -41,28 +41,6 @@ pub struct AppState {
     pub core: Arc<CoreServices>,
     pub config: Arc<ConfigState>,
     pub runtime: Arc<RuntimeState>,
-    pub token_manager: Arc<TokenManager>,
-    pub custom_mapping: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
-    #[allow(dead_code)]
-    pub request_timeout: u64, // API request timeout (seconds)
-    #[allow(dead_code)]
-    pub thought_signature_map: Arc<tokio::sync::Mutex<HashMap<String, String>>>, // Thinking signature mapping (ID -> Signature)
-    #[allow(dead_code)]
-    pub upstream_proxy: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
-    pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
-    pub zai: Arc<RwLock<crate::proxy::ZaiConfig>>,
-    pub provider_rr: Arc<AtomicUsize>,
-    pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
-    pub experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
-    pub debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
-    pub switching: Arc<RwLock<bool>>, // Account switching state, used to prevent concurrent switching
-    pub integration: crate::modules::integration::SystemManager, // System integration layer implementation
-    pub account_service: Arc<crate::modules::account_service::AccountService>, // Account management service layer
-    pub security: Arc<RwLock<crate::proxy::ProxySecurityConfig>>, // Security configuration state
-    pub is_running: Arc<RwLock<bool>>, // Running state flag
-    pub port: u16,                     // Local listening port
-    pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>,
-    pub proxy_pool_manager: Arc<crate::proxy::proxy_pool::ProxyPoolManager>,
 }
 
 #[derive(Clone)]
@@ -82,6 +60,42 @@ pub struct ModelCatalogState {
 impl axum::extract::FromRef<AppState> for Arc<RwLock<crate::proxy::ProxySecurityConfig>> {
     fn from_ref(state: &AppState) -> Self {
         state.config.security.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for CoreServices {
+    fn from_ref(state: &AppState) -> Self {
+        state.core.as_ref().clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for ConfigState {
+    fn from_ref(state: &AppState) -> Self {
+        state.config.as_ref().clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for RuntimeState {
+    fn from_ref(state: &AppState) -> Self {
+        state.runtime.as_ref().clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<CoreServices> {
+    fn from_ref(state: &AppState) -> Self {
+        state.core.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<ConfigState> {
+    fn from_ref(state: &AppState) -> Self {
+        state.config.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<RuntimeState> {
+    fn from_ref(state: &AppState) -> Self {
+        state.runtime.clone()
     }
 }
 

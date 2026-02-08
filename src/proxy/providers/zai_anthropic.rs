@@ -138,7 +138,7 @@ pub async fn forward_anthropic_json(
     mut body: Value,
     message_count: usize, //  Pass message count for rewind detection
 ) -> Response {
-    let zai = state.zai.read().await.clone();
+    let zai = state.config.zai.read().await.clone();
     if !zai.enabled || zai.dispatch_mode == crate::proxy::ZaiDispatchMode::Off {
         return (StatusCode::BAD_REQUEST, "z.ai is disabled").into_response();
     }
@@ -167,8 +167,8 @@ pub async fn forward_anthropic_json(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
 
-    let timeout_secs = state.request_timeout.max(5);
-    let upstream_proxy = state.upstream_proxy.read().await.clone();
+    let timeout_secs = state.config.request_timeout.max(5);
+    let upstream_proxy = state.config.upstream_proxy.read().await.clone();
     let client = match build_client(Some(upstream_proxy), timeout_secs) {
         Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -228,3 +228,4 @@ pub async fn forward_anthropic_json(
         (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
     })
 }
+

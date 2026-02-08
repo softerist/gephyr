@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tracing::{debug, error, info};
 
 use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
-use crate::proxy::server::AppState;
+use crate::proxy::server::{ModelCatalogState, OpenAIHandlerState};
 use crate::proxy::session_manager::SessionManager;
 use crate::proxy::handlers::common::{determine_retry_strategy, apply_retry_strategy, should_rotate_account};
 use crate::proxy::debug_logger;
@@ -16,7 +16,7 @@ const MAX_RETRY_ATTEMPTS: usize = 3;
 // Handle generateContent and streamGenerateContent
 // Path parameters: model_name, method (e.g. "gemini-pro", "generateContent")
 pub async fn handle_generate(
-    State(state): State<AppState>,
+    State(state): State<OpenAIHandlerState>,
     Path(model_action): Path<String>,
     headers: HeaderMap, //  Extract headers for adapter detection
     Json(mut body): Json<Value>  // Changed to mut to support repair prompt injection
@@ -463,7 +463,7 @@ pub async fn handle_generate(
     }
 }
 
-pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> Result<impl IntoResponse, (StatusCode, String)> {
     use crate::proxy::common::model_mapping::get_all_dynamic_models;
 
     // Get all dynamic models list (consistent with /v1/models)
@@ -497,7 +497,7 @@ pub async fn handle_get_model(Path(model_name): Path<String>) -> impl IntoRespon
     }))
 }
 
-pub async fn handle_count_tokens(State(state): State<AppState>, Path(_model_name): Path<String>, Json(_body): Json<Value>) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn handle_count_tokens(State(state): State<OpenAIHandlerState>, Path(_model_name): Path<String>, Json(_body): Json<Value>) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
     let (_access_token, _project_id, _, _, _wait_ms) = state.token_manager.get_token(model_group, false, None, "gemini").await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;

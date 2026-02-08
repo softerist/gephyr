@@ -270,25 +270,6 @@ impl AxumServer {
             core: core.clone(),
             config: config_state.clone(),
             runtime: runtime_state.clone(),
-            token_manager: core.token_manager.clone(),
-            custom_mapping: config_state.custom_mapping.clone(),
-            request_timeout: config_state.request_timeout,
-            thought_signature_map: runtime_state.thought_signature_map.clone(),
-            upstream_proxy: config_state.upstream_proxy.clone(),
-            upstream: core.upstream.clone(),
-            zai: config_state.zai.clone(),
-            provider_rr: runtime_state.provider_rr.clone(),
-            monitor: core.monitor.clone(),
-            experimental: config_state.experimental.clone(),
-            debug_logging: config_state.debug_logging.clone(),
-            switching: runtime_state.switching.clone(),
-            integration: core.integration.clone(),
-            account_service: core.account_service.clone(),
-            security: config_state.security.clone(),
-            is_running: runtime_state.is_running.clone(),
-            port: runtime_state.port,
-            proxy_pool_state: runtime_state.proxy_pool_state.clone(),
-            proxy_pool_manager: runtime_state.proxy_pool_manager.clone(),
         };
 
         // Build routes
@@ -415,14 +396,14 @@ pub(crate) async fn health_check_handler() -> Response {
 pub(crate) async fn admin_list_accounts(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let accounts = state.account_service.list_accounts().map_err(|e| {
+    let accounts = state.core.account_service.list_accounts().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
         )
     })?;
 
-    let current_id = state.account_service.get_current_id().ok().flatten();
+    let current_id = state.core.account_service.get_current_id().ok().flatten();
 
     let account_responses: Vec<AccountResponse> = accounts
         .into_iter()
@@ -495,7 +476,7 @@ pub(crate) async fn admin_export_accounts(
 pub(crate) async fn admin_get_current_account(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -558,7 +539,7 @@ pub(crate) async fn admin_add_account(
     Json(payload): Json<AddAccountRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
-        .account_service
+        .core.account_service
         .add_account(&payload.refresh_token)
         .await
         .map_err(|e| {
@@ -569,14 +550,14 @@ pub(crate) async fn admin_add_account(
         })?;
 
     // Reload TokenManager immediately after account change
-    if let Err(e) = state.token_manager.load_accounts().await {
+    if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
             "[API] Failed to reload accounts after adding: {}",
             e
         ));
     }
 
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -590,7 +571,7 @@ pub(crate) async fn admin_delete_account(
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
-        .account_service
+        .core.account_service
         .delete_account(&account_id)
         .map_err(|e| {
             (
@@ -600,7 +581,7 @@ pub(crate) async fn admin_delete_account(
         })?;
 
     // Reload TokenManager immediately after account change
-    if let Err(e) = state.token_manager.load_accounts().await {
+    if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
             "[API] Failed to reload accounts after deletion: {}",
             e
@@ -621,7 +602,7 @@ pub(crate) async fn admin_switch_account(
     Json(payload): Json<SwitchRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     {
-        let switching = state.switching.read().await;
+        let switching = state.runtime.switching.read().await;
         if *switching {
             return Err((
                 StatusCode::CONFLICT,
@@ -633,17 +614,17 @@ pub(crate) async fn admin_switch_account(
     }
 
     {
-        let mut switching = state.switching.write().await;
+        let mut switching = state.runtime.switching.write().await;
         *switching = true;
     }
 
     let account_id = payload.account_id.clone();
     logger::log_info(&format!("[API] Starting account switch: {}", account_id));
 
-    let result = state.account_service.switch_account(&account_id).await;
+    let result = state.core.account_service.switch_account(&account_id).await;
 
     {
-        let mut switching = state.switching.write().await;
+        let mut switching = state.runtime.switching.write().await;
         *switching = false;
     }
 
@@ -652,8 +633,8 @@ pub(crate) async fn admin_switch_account(
             logger::log_info(&format!("[API] Account switch successful: {}", account_id));
 
             // Sync memory status immediately after account switch
-            state.token_manager.clear_all_sessions();
-            if let Err(e) = state.token_manager.load_accounts().await {
+            state.core.token_manager.clear_all_sessions();
+            if let Err(e) = state.core.token_manager.load_accounts().await {
                 logger::log_error(&format!(
                     "[API] Failed to reload accounts after switch: {}",
                     e
@@ -691,7 +672,7 @@ pub(crate) async fn admin_prepare_oauth_url(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let url = state
-        .account_service
+        .core.account_service
         .prepare_oauth_url()
         .await
         .map_err(|e| {
@@ -707,7 +688,7 @@ pub(crate) async fn admin_start_oauth_login(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
-        .account_service
+        .core.account_service
         .start_oauth_login()
         .await
         .map_err(|e| {
@@ -716,7 +697,7 @@ pub(crate) async fn admin_start_oauth_login(
                 Json(ErrorResponse { error: e }),
             )
         })?;
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -729,7 +710,7 @@ pub(crate) async fn admin_complete_oauth_login(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
-        .account_service
+        .core.account_service
         .complete_oauth_login()
         .await
         .map_err(|e| {
@@ -738,7 +719,7 @@ pub(crate) async fn admin_complete_oauth_login(
                 Json(ErrorResponse { error: e }),
             )
         })?;
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -750,7 +731,7 @@ pub(crate) async fn admin_complete_oauth_login(
 pub(crate) async fn admin_cancel_oauth_login(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.account_service.cancel_oauth_login();
+    state.core.account_service.cancel_oauth_login();
     Ok(StatusCode::OK)
 }
 
@@ -765,7 +746,7 @@ pub(crate) async fn admin_submit_oauth_code(
     Json(payload): Json<SubmitCodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
-        .account_service
+        .core.account_service
         .submit_oauth_code(payload.code, payload.state)
         .await
         .map_err(|e| {
@@ -853,31 +834,31 @@ pub(crate) async fn admin_save_config(
 
     // Update model mapping
     {
-        let mut mapping = state.custom_mapping.write().await;
+        let mut mapping = state.config.custom_mapping.write().await;
         *mapping = new_config.clone().proxy.custom_mapping;
     }
 
     // Update upstream proxy
     {
-        let mut proxy = state.upstream_proxy.write().await;
+        let mut proxy = state.config.upstream_proxy.write().await;
         *proxy = new_config.clone().proxy.upstream_proxy;
     }
 
     // Update security policy
     {
-        let mut security = state.security.write().await;
+        let mut security = state.config.security.write().await;
         *security = crate::proxy::ProxySecurityConfig::from_proxy_config(&new_config.proxy);
     }
 
     // Update Z.ai configuration
     {
-        let mut zai = state.zai.write().await;
+        let mut zai = state.config.zai.write().await;
         *zai = new_config.clone().proxy.zai;
     }
 
     // Update experimental configuration
     {
-        let mut exp = state.experimental.write().await;
+        let mut exp = state.config.experimental.write().await;
         *exp = new_config.clone().proxy.experimental;
     }
 
@@ -888,7 +869,7 @@ pub(crate) async fn admin_save_config(
 pub(crate) async fn admin_get_proxy_pool_config(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let config = state.proxy_pool_state.read().await;
+    let config = state.runtime.proxy_pool_state.read().await;
     Ok(Json(config.clone()))
 }
 
@@ -896,7 +877,7 @@ pub(crate) async fn admin_get_proxy_pool_config(
 pub(crate) async fn admin_get_all_account_bindings(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let bindings = state.proxy_pool_manager.get_all_bindings_snapshot();
+    let bindings = state.runtime.proxy_pool_manager.get_all_bindings_snapshot();
     Ok(Json(bindings))
 }
 
@@ -912,7 +893,7 @@ pub(crate) async fn admin_bind_account_proxy(
     State(state): State<AppState>,
     Json(payload): Json<BindAccountProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.proxy_pool_manager
+    state.runtime.proxy_pool_manager
         .bind_account_to_proxy(payload.account_id, payload.proxy_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
@@ -930,7 +911,7 @@ pub(crate) async fn admin_unbind_account_proxy(
     State(state): State<AppState>,
     Json(payload): Json<UnbindAccountProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.proxy_pool_manager.unbind_account_proxy(payload.account_id).await;
+    state.runtime.proxy_pool_manager.unbind_account_proxy(payload.account_id).await;
     Ok(StatusCode::OK)
 }
 
@@ -939,7 +920,7 @@ pub(crate) async fn admin_get_account_proxy_binding(
     State(state): State<AppState>,
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let binding = state.proxy_pool_manager.get_account_binding(&account_id);
+    let binding = state.runtime.proxy_pool_manager.get_account_binding(&account_id);
     Ok(Json(binding))
 }
 
@@ -947,7 +928,7 @@ pub(crate) async fn admin_get_account_proxy_binding(
 pub(crate) async fn admin_trigger_proxy_health_check(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.proxy_pool_manager.health_check().await.map_err(|e| {
+    state.runtime.proxy_pool_manager.health_check().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -955,7 +936,7 @@ pub(crate) async fn admin_trigger_proxy_health_check(
     })?;
 
     // Return updated proxy pool configuration (including health status)
-    let config = state.proxy_pool_state.read().await;
+    let config = state.runtime.proxy_pool_state.read().await;
     Ok(Json(serde_json::json!({
         "success": true,
         "message": "Health check completed",
@@ -967,13 +948,13 @@ pub(crate) async fn admin_get_proxy_status(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     // In Headless/Axum mode, since AxumServer is running, it's typically "running"
-    let active_accounts = state.token_manager.len();
+    let active_accounts = state.core.token_manager.len();
 
-    let is_running = { *state.is_running.read().await };
+    let is_running = { *state.runtime.is_running.read().await };
     Ok(Json(serde_json::json!({
         "running": is_running,
-        "port": state.port,
-        "base_url": format!("http://127.0.0.1:{}", state.port),
+        "port": state.runtime.port,
+        "base_url": format!("http://127.0.0.1:{}", state.runtime.port),
         "active_accounts": active_accounts,
     })))
 }
@@ -986,11 +967,11 @@ pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> 
     }
 
     // 2. Ensure accounts are loaded (if first start)
-    if let Err(e) = state.token_manager.load_accounts().await {
+    if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!("[API] Failed to enable service and load accounts: {}", e));
     }
 
-    let mut running = state.is_running.write().await;
+    let mut running = state.runtime.is_running.write().await;
     *running = true;
     logger::log_info("[API] Proxy service enabled (Persistence synced)");
     StatusCode::OK
@@ -1003,7 +984,7 @@ pub(crate) async fn admin_stop_proxy_service(State(state): State<AppState>) -> i
         let _ = crate::modules::config::save_app_config(&config);
     }
 
-    let mut running = state.is_running.write().await;
+    let mut running = state.runtime.is_running.write().await;
     *running = false;
     logger::log_info("[API] Proxy service disabled (Axum mode / Persistence synced)");
     StatusCode::OK
@@ -1023,7 +1004,7 @@ pub(crate) async fn admin_update_model_mapping(
 
     // 1. Update memory state (Hot-reload)
     {
-        let mut mapping = state.custom_mapping.write().await;
+        let mut mapping = state.config.custom_mapping.write().await;
         *mapping = config.custom_mapping.clone();
     }
 
@@ -1055,13 +1036,13 @@ pub(crate) async fn admin_generate_api_key() -> impl IntoResponse {
 }
 
 pub(crate) async fn admin_clear_proxy_session_bindings(State(state): State<AppState>) -> impl IntoResponse {
-    state.token_manager.clear_all_sessions();
+    state.core.token_manager.clear_all_sessions();
     logger::log_info("[API] All session bindings cleared");
     StatusCode::OK
 }
 
 pub(crate) async fn admin_clear_all_rate_limits(State(state): State<AppState>) -> impl IntoResponse {
-    state.token_manager.clear_all_rate_limits();
+    state.core.token_manager.clear_all_rate_limits();
     logger::log_info("[API] All rate limit records cleared");
     StatusCode::OK
 }
@@ -1070,7 +1051,7 @@ pub(crate) async fn admin_clear_rate_limit(
     State(state): State<AppState>,
     Path(account_id): Path<String>,
 ) -> impl IntoResponse {
-    let cleared = state.token_manager.clear_rate_limit(&account_id);
+    let cleared = state.core.token_manager.clear_rate_limit(&account_id);
     if cleared {
         logger::log_info(&format!("[API] Rate limit record for account {} cleared", account_id));
         StatusCode::OK
@@ -1080,7 +1061,7 @@ pub(crate) async fn admin_clear_rate_limit(
 }
 
 pub(crate) async fn admin_get_preferred_account(State(state): State<AppState>) -> impl IntoResponse {
-    let pref = state.token_manager.get_preferred_account().await;
+    let pref = state.core.token_manager.get_preferred_account().await;
     Json(pref)
 }
 
@@ -1095,7 +1076,7 @@ pub(crate) async fn admin_set_preferred_account(
     Json(payload): Json<SetPreferredAccountRequest>,
 ) -> impl IntoResponse {
     state
-        .token_manager
+        .core.token_manager
         .set_preferred_account(payload.account_id)
         .await;
     StatusCode::OK
@@ -1178,8 +1159,8 @@ pub(crate) async fn admin_set_proxy_monitor_enabled(
         .unwrap_or(false);
 
     // Only log and set when the state actually changes, to avoid the "reboot" illusion caused by repeated triggers
-    if state.monitor.is_enabled() != enabled {
-        state.monitor.set_enabled(enabled);
+    if state.core.monitor.is_enabled() != enabled {
+        state.core.monitor.set_enabled(enabled);
         logger::log_info(&format!("[API] Monitor status set to: {}", enabled));
     }
 
@@ -1286,7 +1267,7 @@ pub(crate) async fn admin_get_proxy_logs_filtered(
 pub(crate) async fn admin_get_proxy_stats(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let stats = state.monitor.get_stats().await;
+    let stats = state.core.monitor.get_stats().await;
     Ok(Json(stats))
 }
 
@@ -1774,7 +1755,7 @@ pub(crate) async fn admin_reorder_accounts(
     })?;
 
     // Reload TokenManager immediately after order change
-    if let Err(e) = state.token_manager.load_accounts().await {
+    if let Err(e) = state.core.token_manager.load_accounts().await {
         logger::log_error(&format!(
             "[API] Failed to reload accounts after reorder: {}",
             e
@@ -1840,7 +1821,7 @@ pub(crate) async fn admin_toggle_proxy_status(
     })?;
 
     // Sync to the running proxy service
-    let _ = state.token_manager.reload_account(&account_id).await;
+    let _ = state.core.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)
 }
@@ -1997,9 +1978,9 @@ pub(crate) async fn admin_import_v1_accounts(
     })?;
 
     // Load immediately after import
-    let _ = state.token_manager.load_accounts().await;
+    let _ = state.core.token_manager.load_accounts().await;
 
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -2023,9 +2004,9 @@ pub(crate) async fn admin_import_from_db(
     })?;
 
     // Load immediately after import
-    let _ = state.token_manager.load_accounts().await;
+    let _ = state.core.token_manager.load_accounts().await;
 
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -2063,9 +2044,9 @@ pub(crate) async fn admin_import_custom_db(
         })?;
 
     // Load immediately after import
-    let _ = state.token_manager.load_accounts().await;
+    let _ = state.core.token_manager.load_accounts().await;
 
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -2105,9 +2086,9 @@ pub(crate) async fn admin_sync_account_from_db(
     })?;
 
     // Reload TokenManager immediately after sync
-    let _ = state.token_manager.load_accounts().await;
+    let _ = state.core.token_manager.load_accounts().await;
 
-    let current_id = state.account_service.get_current_id().map_err(|e| {
+    let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -2293,7 +2274,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
-    let port = state.security.read().await.port;
+    let port = state.config.security.read().await.port;
     let host = headers.get("host").and_then(|h| h.to_str().ok());
     let proto = headers
         .get("x-forwarded-proto")
@@ -2315,7 +2296,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
     })?;
 
     // Start background task to handle callback/manual submission code
-    let token_manager = state.token_manager.clone();
+    let token_manager = state.core.token_manager.clone();
     let redirect_uri_clone = redirect_uri.clone();
     let code_verifier_clone = code_verifier.clone();
     tokio::spawn(async move {
@@ -2636,7 +2617,7 @@ pub(crate) async fn admin_update_security_config(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     {
-        let mut sec = state.security.write().await;
+        let mut sec = state.config.security.write().await;
         *sec = crate::proxy::ProxySecurityConfig::from_proxy_config(&app_config.proxy);
         tracing::info!("[Security] Runtime security config hot-reloaded via Web API");
     }
@@ -2752,4 +2733,6 @@ pub(crate) async fn admin_get_opencode_config_content(
             Json(ErrorResponse { error: e }),
         ))
 }
+
+
 

@@ -5,7 +5,7 @@ use axum::{
     body::Body,
 };
 use std::time::Instant;
-use crate::proxy::server::AppState;
+use crate::proxy::state::CoreServices;
 use crate::proxy::monitor::ProxyRequestLog;
 use serde_json::Value;
 use crate::proxy::middleware::auth::UserTokenIdentity;
@@ -34,7 +34,7 @@ fn record_user_token_usage(
 }
 
 pub async fn monitor_middleware(
-    State(state): State<AppState>,
+    State(state): State<CoreServices>,
     request: Request,
     next: Next,
 ) -> Response {

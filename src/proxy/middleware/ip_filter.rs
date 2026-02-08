@@ -4,12 +4,14 @@ use axum::{
     response::{IntoResponse, Response},
     http::StatusCode,
 };
-use crate::proxy::server::AppState;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use crate::modules::security_db;
+use crate::proxy::ProxySecurityConfig;
 
 // IP Blacklist/Whitelist Filter Middleware
 pub async fn ip_filter_middleware(
-    State(state): State<AppState>,
+    State(state): State<Arc<RwLock<ProxySecurityConfig>>>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -18,7 +20,7 @@ pub async fn ip_filter_middleware(
     
     if let Some(ip) = &client_ip {
         // Read security config
-        let security_config = state.security.read().await;
+        let security_config = state.read().await;
         
         // 1. Check whitelist (if enabled, only allow whitelisted IPs)
         if security_config.security_monitor.whitelist.enabled {

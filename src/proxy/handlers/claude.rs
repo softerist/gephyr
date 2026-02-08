@@ -127,7 +127,7 @@ pub async fn handle_messages(
         .take(6)
         .map(char::from)
         .collect::<String>().to_lowercase();
-    let debug_cfg = state.debug_logging.read().await.clone();
+    let debug_cfg = state.config.debug_logging.read().await.clone();
     
     //  Detect Client Adapter
     // Check if there are matching client adapters (e.g., opencode)
@@ -137,9 +137,9 @@ pub async fn handle_messages(
     }
         
     // Decide whether this request should be handled by z.ai (Anthropic passthrough) or the existing Google flow.
-    let zai = state.zai.read().await.clone();
+    let zai = state.config.zai.read().await.clone();
     let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
-    let google_accounts = state.token_manager.len();
+    let google_accounts = state.core.token_manager.len();
 
     // [CRITICAL REFACTOR] Parse request in advance to get model info (for smart fallback judgment)
     let mut request: crate::proxy::mappers::claude::models::ClaudeRequest = match serde_json::from_value(body) {
@@ -187,7 +187,7 @@ pub async fn handle_messages(
                     true
                 } else {
                     //  Smart judgment: Check if there are available Google accounts
-                    let has_available = state.token_manager.has_available_account("claude", &normalized_model).await;
+                    let has_available = state.core.token_manager.has_available_account("claude", &normalized_model).await;
                     if !has_available {
                         tracing::info!(
                             "[{}] All Google accounts unavailable (rate-limited or quota-protected for {}), using fallback provider",
@@ -202,7 +202,7 @@ pub async fn handle_messages(
                 // Treat z.ai as exactly one extra slot in the pool.
                 // No strict guarantees: it may get 0 requests if selection never hits.
                 let total = google_accounts.saturating_add(1).max(1);
-                let slot = state.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
+                let slot = state.runtime.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
                 slot == 0
             }
         }
@@ -232,7 +232,7 @@ pub async fn handle_messages(
 
     //  Recover from broken tool loops (where signatures were stripped)
     // This prevents "Assistant message must start with thinking" errors by closing the loop with synthetic messages
-    if state.experimental.read().await.enable_tool_loop_recovery {
+    if state.config.experimental.read().await.enable_tool_loop_recovery {
         close_tool_loop_for_thinking(&mut request.messages);
     }
 
@@ -272,7 +272,7 @@ pub async fn handle_messages(
     // (subsequent code doesn't need to filter_invalid_thinking_blocks again)
     
     //  Get context control config
-    let experimental = state.experimental.read().await;
+    let experimental = state.config.experimental.read().await;
     let scaling_enabled = experimental.enable_usage_scaling;
     let threshold_l1 = experimental.context_compression_threshold_l1;
     let threshold_l2 = experimental.context_compression_threshold_l2;
@@ -374,11 +374,11 @@ pub async fn handle_messages(
     let _session_id: Option<&str> = None;
 
     // 2. Get UpstreamClient
-    let upstream = state.upstream.clone();
+    let upstream = state.core.upstream.clone();
     
     // 3. Prepare config and tokens
     let mut request_for_body = request.clone();
-    let token_manager = state.token_manager;
+    let token_manager = state.core.token_manager.clone();
     
     let pool_size = token_manager.len();
     //  Ensure max_attempts is at least 2 to allow for internal retries (e.g. stripping signatures)
@@ -395,7 +395,7 @@ pub async fn handle_messages(
         // 2. Model route resolution
         let mut mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &request_for_body.model,
-            &*state.custom_mapping.read().await,
+            &*state.config.custom_mapping.read().await,
         );
         last_mapped_model = Some(mapped_model.clone());
         
@@ -463,7 +463,7 @@ pub async fn handle_messages(
             // Otherwise it will directly use generic ID causing downstream to fail to recognize or only be able to use static defaults
             let resolved_model = crate::proxy::common::model_mapping::resolve_model_route(
                 virtual_model_id, 
-                &*state.custom_mapping.read().await
+                &*state.config.custom_mapping.read().await
             );
 
             info!(
@@ -1237,7 +1237,7 @@ pub async fn handle_count_tokens(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let zai = state.zai.read().await.clone();
+    let zai = state.config.zai.read().await.clone();
     let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
 
     if zai_enabled {
@@ -1736,3 +1736,4 @@ async fn try_compress_with_summary(
         quality: original_request.quality.clone(),
     })
 }
+
