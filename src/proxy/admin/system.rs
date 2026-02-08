@@ -1,3 +1,5 @@
+use super::*;
+
 pub(crate) async fn admin_enable_debug_console() -> impl IntoResponse {
     crate::modules::system::log_bridge::enable_log_bridge();
     StatusCode::OK
@@ -112,4 +114,5 @@ pub(crate) async fn admin_get_opencode_config_content(
         )
     })
 }
+
 

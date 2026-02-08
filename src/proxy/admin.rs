@@ -19,8 +19,14 @@ pub(crate) struct ErrorResponse {
     error: String,
 }
 
-include!("admin/accounts.rs");
-include!("admin/runtime.rs");
-include!("admin/stats.rs");
-include!("admin/security.rs");
-include!("admin/system.rs");
+mod accounts;
+mod runtime;
+mod security;
+mod stats;
+mod system;
+
+pub(crate) use accounts::*;
+pub(crate) use runtime::*;
+pub(crate) use security::*;
+pub(crate) use stats::*;
+pub(crate) use system::*;

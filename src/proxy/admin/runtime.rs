@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LogsCountRequest {
@@ -614,4 +616,5 @@ pub(crate) async fn admin_clear_log_cache(
     })?;
     Ok(StatusCode::OK)
 }
+
 
