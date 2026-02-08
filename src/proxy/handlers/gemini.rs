@@ -192,7 +192,6 @@ pub async fn handle_generate(
         if status.is_success() {
             if is_stream {
                 use axum::body::Body;
-                use axum::response::Response;
                 use bytes::{Bytes, BytesMut};
                 use futures::StreamExt;
 
@@ -337,16 +336,13 @@ pub async fn handle_generate(
 
                 if client_wants_stream {
                     let body = Body::from_stream(stream);
-                    return Ok(Response::builder()
-                        .header("Content-Type", "text/event-stream")
-                        .header("Cache-Control", "no-cache")
-                        .header("Connection", "keep-alive")
-                        .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email)
-                        .header("X-Mapped-Model", &mapped_model)
-                        .body(body)
-                        .unwrap()
-                        .into_response());
+                    return Ok(crate::proxy::handlers::streaming::build_sse_response(
+                        body,
+                        &email,
+                        &mapped_model,
+                        true,
+                    )
+                    .into_response());
                 } else {
                     use crate::proxy::mappers::gemini::collector::collect_stream_to_json;
                     match collect_stream_to_json(Box::pin(stream), &s_id).await {

@@ -243,7 +243,6 @@ pub async fn handle_chat_completions(
         if status.is_success() {
             if actual_stream {
                 use axum::body::Body;
-                use axum::response::Response;
                 use futures::StreamExt;
 
                 let meta = json!({
@@ -334,16 +333,13 @@ pub async fn handle_chat_completions(
 
                 if client_wants_stream {
                     let body = Body::from_stream(combined_stream);
-                    return Ok(Response::builder()
-                        .header("Content-Type", "text/event-stream")
-                        .header("Cache-Control", "no-cache")
-                        .header("Connection", "keep-alive")
-                        .header("X-Accel-Buffering", "no")
-                        .header("X-Account-Email", &email)
-                        .header("X-Mapped-Model", &mapped_model)
-                        .body(body)
-                        .unwrap()
-                        .into_response());
+                    return Ok(crate::proxy::handlers::streaming::build_sse_response(
+                        body,
+                        &email,
+                        &mapped_model,
+                        true,
+                    )
+                    .into_response());
                 } else {
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
 
@@ -1014,7 +1010,6 @@ pub async fn handle_completions(
 
             if list_response {
                 use axum::body::Body;
-                use axum::response::Response;
                 use futures::StreamExt;
 
                 let gemini_stream = response.bytes_stream();
@@ -1092,15 +1087,13 @@ pub async fn handle_completions(
                     })
                     .chain(openai_stream);
 
-                    return Response::builder()
-                        .header("Content-Type", "text/event-stream")
-                        .header("Cache-Control", "no-cache")
-                        .header("Connection", "keep-alive")
-                        .header("X-Account-Email", &email)
-                        .header("X-Mapped-Model", &mapped_model)
-                        .body(Body::from_stream(combined_stream))
-                        .unwrap()
-                        .into_response();
+                    return crate::proxy::handlers::streaming::build_sse_response(
+                        Body::from_stream(combined_stream),
+                        &email,
+                        &mapped_model,
+                        false,
+                    )
+                    .into_response();
                 } else {
                     use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
                     let mut openai_stream = create_openai_sse_stream(
