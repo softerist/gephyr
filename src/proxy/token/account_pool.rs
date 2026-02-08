@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -33,7 +33,7 @@ pub(crate) fn remove_account(
 }
 
 pub(crate) async fn load_accounts(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     tokens: &DashMap<String, ProxyToken>,
     current_index: &AtomicUsize,
     last_used_account: &tokio::sync::Mutex<Option<(String, Instant)>>,
@@ -81,7 +81,7 @@ pub(crate) async fn load_accounts(
 }
 
 pub(crate) async fn reload_account(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     tokens: &DashMap<String, ProxyToken>,
     health_scores: &DashMap<String, f32>,
     rate_limit_tracker: &crate::proxy::rate_limit::RateLimitTracker,
@@ -118,7 +118,7 @@ pub(crate) async fn reload_account(
 }
 
 pub(crate) async fn reload_all_accounts(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     tokens: &DashMap<String, ProxyToken>,
     current_index: &AtomicUsize,
     last_used_account: &tokio::sync::Mutex<Option<(String, Instant)>>,

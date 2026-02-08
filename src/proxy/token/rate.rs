@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::proxy::token::types::ProxyToken;
 
@@ -86,7 +86,7 @@ pub(crate) fn mark_account_success(
 }
 
 pub(crate) fn set_precise_lockout(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     rate_limit_tracker: &crate::proxy::rate_limit::RateLimitTracker,
     account_id: &str,
     reason: crate::proxy::rate_limit::RateLimitReason,
@@ -174,30 +174,38 @@ pub(crate) async fn fetch_and_lock_with_realtime_quota(
     }
 }
 
+pub(crate) struct RateLimitedAsyncContext<'a> {
+    pub tokens: &'a DashMap<String, ProxyToken>,
+    pub data_dir: &'a Path,
+    pub rate_limit_tracker: &'a crate::proxy::rate_limit::RateLimitTracker,
+    pub circuit_breaker_config: &'a tokio::sync::RwLock<crate::models::CircuitBreakerConfig>,
+}
+
+pub(crate) struct RateLimitedEvent<'a> {
+    pub email: &'a str,
+    pub status: u16,
+    pub retry_after_header: Option<&'a str>,
+    pub error_body: &'a str,
+    pub model: Option<&'a str>,
+}
+
 pub(crate) async fn mark_rate_limited_async(
-    tokens: &DashMap<String, ProxyToken>,
-    data_dir: &PathBuf,
-    rate_limit_tracker: &crate::proxy::rate_limit::RateLimitTracker,
-    circuit_breaker_config: &tokio::sync::RwLock<crate::models::CircuitBreakerConfig>,
-    email: &str,
-    status: u16,
-    retry_after_header: Option<&str>,
-    error_body: &str,
-    model: Option<&str>,
+    context: RateLimitedAsyncContext<'_>,
+    event: RateLimitedEvent<'_>,
 ) {
-    let config = circuit_breaker_config.read().await.clone();
+    let config = context.circuit_breaker_config.read().await.clone();
     if !config.enabled {
         return;
     }
 
-    let account_id = crate::proxy::token::lookup::account_id_by_email(tokens, email)
-        .unwrap_or_else(|| email.to_string());
+    let account_id = crate::proxy::token::lookup::account_id_by_email(context.tokens, event.email)
+        .unwrap_or_else(|| event.email.to_string());
 
     let has_explicit_retry_time =
-        retry_after_header.is_some() || error_body.contains("quotaResetDelay");
+        event.retry_after_header.is_some() || event.error_body.contains("quotaResetDelay");
 
     if has_explicit_retry_time {
-        if let Some(m) = model {
+        if let Some(m) = event.model {
             tracing::debug!(
                 "429 response for model {} of account {} contains quotaResetDelay, using API provided time directly",
                 account_id,
@@ -209,28 +217,28 @@ pub(crate) async fn mark_rate_limited_async(
                 account_id
             );
         }
-        rate_limit_tracker.parse_from_error(
+        context.rate_limit_tracker.parse_from_error(
             &account_id,
-            status,
-            retry_after_header,
-            error_body,
-            model.map(|s| s.to_string()),
+            event.status,
+            event.retry_after_header,
+            event.error_body,
+            event.model.map(|s| s.to_string()),
             &config.backoff_steps,
         );
         return;
     }
 
-    let reason = if error_body.to_lowercase().contains("model_capacity") {
+    let reason = if event.error_body.to_lowercase().contains("model_capacity") {
         crate::proxy::rate_limit::RateLimitReason::ModelCapacityExhausted
-    } else if error_body.to_lowercase().contains("exhausted")
-        || error_body.to_lowercase().contains("quota")
+    } else if event.error_body.to_lowercase().contains("exhausted")
+        || event.error_body.to_lowercase().contains("quota")
     {
         crate::proxy::rate_limit::RateLimitReason::QuotaExhausted
     } else {
         crate::proxy::rate_limit::RateLimitReason::Unknown
     };
 
-    if let Some(m) = model {
+    if let Some(m) = event.model {
         tracing::info!(
             "Account {} response for model {} did not contain quotaResetDelay, attempting to refresh quota in real-time...",
             account_id,
@@ -244,11 +252,11 @@ pub(crate) async fn mark_rate_limited_async(
     }
 
     if fetch_and_lock_with_realtime_quota(
-        tokens,
-        rate_limit_tracker,
-        email,
+        context.tokens,
+        context.rate_limit_tracker,
+        event.email,
         reason,
-        model.map(|s| s.to_string()),
+        event.model.map(|s| s.to_string()),
     )
     .await
     {
@@ -260,11 +268,11 @@ pub(crate) async fn mark_rate_limited_async(
     }
 
     if set_precise_lockout(
-        data_dir,
-        rate_limit_tracker,
+        context.data_dir,
+        context.rate_limit_tracker,
         &account_id,
         reason,
-        model.map(|s| s.to_string()),
+        event.model.map(|s| s.to_string()),
     ) {
         tracing::info!(
             "Account {} has been locked with locally cached quota",
@@ -277,12 +285,12 @@ pub(crate) async fn mark_rate_limited_async(
         "Account {} unable to fetch quota reset time, using exponential backoff strategy",
         account_id
     );
-    rate_limit_tracker.parse_from_error(
+    context.rate_limit_tracker.parse_from_error(
         &account_id,
-        status,
-        retry_after_header,
-        error_body,
-        model.map(|s| s.to_string()),
+        event.status,
+        event.retry_after_header,
+        event.error_body,
+        event.model.map(|s| s.to_string()),
         &config.backoff_steps,
     );
 }

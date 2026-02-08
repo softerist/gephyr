@@ -116,15 +116,19 @@ impl TokenManager {
         model: Option<&str>,
     ) {
         crate::proxy::token::rate::mark_rate_limited_async(
-            self.tokens.as_ref(),
-            &self.data_dir,
-            &self.rate_limit_tracker,
-            &self.circuit_breaker_config,
-            email,
-            status,
-            retry_after_header,
-            error_body,
-            model,
+            crate::proxy::token::rate::RateLimitedAsyncContext {
+                tokens: self.tokens.as_ref(),
+                data_dir: &self.data_dir,
+                rate_limit_tracker: &self.rate_limit_tracker,
+                circuit_breaker_config: &self.circuit_breaker_config,
+            },
+            crate::proxy::token::rate::RateLimitedEvent {
+                email,
+                status,
+                retry_after_header,
+                error_body,
+                model,
+            },
         )
         .await;
     }

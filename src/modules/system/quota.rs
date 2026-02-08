@@ -160,7 +160,7 @@ pub async fn fetch_quota_with_cache(
             .await
         {
             Ok(response) => {
-                if let Err(_) = response.error_for_status_ref() {
+                if response.error_for_status_ref().is_err() {
                     let status = response.status();
                     if status == reqwest::StatusCode::FORBIDDEN {
                         crate::modules::system::logger::log_warn(

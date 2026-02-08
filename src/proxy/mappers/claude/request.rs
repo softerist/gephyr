@@ -24,7 +24,7 @@ impl SafetyThreshold {
             _ => SafetyThreshold::Off,
         }
     }
-    pub fn to_gemini_threshold(&self) -> &'static str {
+    pub fn to_gemini_threshold(self) -> &'static str {
         match self {
             SafetyThreshold::Off => "OFF",
             SafetyThreshold::BlockLowAndAbove => "BLOCK_LOW_AND_ABOVE",
@@ -633,6 +633,7 @@ fn build_system_instruction(
         "parts": parts
     }))
 }
+#[allow(clippy::too_many_arguments)]
 fn build_contents(
     content: &MessageContent,
     is_assistant: bool,
@@ -872,11 +873,11 @@ fn build_contents(
                             })
                             .or_else(|| {
                                 let global_sig = get_thought_signature();
-                                if global_sig.is_some() {
+                                if let Some(sig) = &global_sig {
                                     tracing::warn!(
                                         "[Claude-Request] Using deprecated GLOBAL thought_signature fallback (length: {}). \
                                          This indicates session cache miss.",
-                                        global_sig.as_ref().unwrap().len()
+                                        sig.len()
                                     );
                                 }
                                 global_sig
@@ -1090,6 +1091,7 @@ fn build_contents(
 
     Ok(parts)
 }
+#[allow(clippy::too_many_arguments)]
 fn build_google_content(
     msg: &Message,
     claude_req: &ClaudeRequest,
@@ -1167,6 +1169,7 @@ fn build_google_content(
         "parts": parts
     }))
 }
+#[allow(clippy::too_many_arguments)]
 fn build_google_contents(
     messages: &[Message],
     claude_req: &ClaudeRequest,

@@ -205,9 +205,4 @@ mod tests {
             .body(axum::body::Body::empty())
             .unwrap();
     }
-
-    #[test]
-    fn test_auth_placeholder() {
-        assert!(true);
-    }
 }

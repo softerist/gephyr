@@ -729,35 +729,6 @@ pub fn restore_opencode_config() -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extract_version_opencode_format() {
-        let input = "opencode/1.2.3";
-        assert_eq!(extract_version(input), "1.2.3");
-    }
-
-    #[test]
-    fn test_extract_version_codex_cli_format() {
-        let input = "codex-cli 0.86.0\n";
-        assert_eq!(extract_version(input), "0.86.0");
-    }
-
-    #[test]
-    fn test_extract_version_simple() {
-        let input = "v2.0.1";
-        assert_eq!(extract_version(input), "2.0.1");
-    }
-
-    #[test]
-    fn test_extract_version_unknown() {
-        let input = "some random text without version";
-        assert_eq!(extract_version(input), "unknown");
-    }
-}
-
 pub fn read_opencode_config_content(file_name: Option<String>) -> Result<String, String> {
     let Some((opencode_path, ag_config_path, ag_accounts_path)) = get_config_paths() else {
         return Err("Failed to get OpenCode config directory".to_string());
@@ -819,4 +790,33 @@ pub async fn execute_opencode_sync(
 
 pub async fn execute_opencode_restore() -> Result<(), String> {
     restore_opencode_config()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_version_opencode_format() {
+        let input = "opencode/1.2.3";
+        assert_eq!(extract_version(input), "1.2.3");
+    }
+
+    #[test]
+    fn test_extract_version_codex_cli_format() {
+        let input = "codex-cli 0.86.0\n";
+        assert_eq!(extract_version(input), "0.86.0");
+    }
+
+    #[test]
+    fn test_extract_version_simple() {
+        let input = "v2.0.1";
+        assert_eq!(extract_version(input), "2.0.1");
+    }
+
+    #[test]
+    fn test_extract_version_unknown() {
+        let input = "some random text without version";
+        assert_eq!(extract_version(input), "unknown");
+    }
 }

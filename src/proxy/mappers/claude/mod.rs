@@ -21,6 +21,7 @@ pub use thinking_utils::{
 use bytes::Bytes;
 use futures::Stream;
 use std::pin::Pin;
+#[allow(clippy::too_many_arguments)]
 pub fn create_claude_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     trace_id: String,

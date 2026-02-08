@@ -1,3 +1,5 @@
+#![allow(clippy::useless_vec)]
+
 use super::{ProxyToken, TokenManager};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};

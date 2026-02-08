@@ -1,6 +1,30 @@
 use super::{ProxyToken, TokenManager};
 use std::collections::HashSet;
 
+pub(super) struct ModeASelection<'a> {
+    pub rotate: bool,
+    pub use_sticky_mode: bool,
+    pub session_id: Option<&'a str>,
+    pub tokens_snapshot: &'a [ProxyToken],
+    pub attempted: &'a HashSet<String>,
+    pub normalized_target: &'a str,
+    pub quota_protection_enabled: bool,
+    pub target_model: &'a str,
+}
+
+pub(super) struct ModeBSelection<'a> {
+    pub rotate: bool,
+    pub quota_group: &'a str,
+    pub use_sticky_mode: bool,
+    pub last_used_account_id: &'a Option<(String, std::time::Instant)>,
+    pub tokens_snapshot: &'a [ProxyToken],
+    pub attempted: &'a HashSet<String>,
+    pub normalized_target: &'a str,
+    pub quota_protection_enabled: bool,
+    pub session_id: Option<&'a str>,
+    pub target_model: &'a str,
+}
+
 impl TokenManager {
     pub(super) async fn collect_non_limited_candidates(
         &self,
@@ -19,24 +43,18 @@ impl TokenManager {
         non_limited
     }
 
-    pub(super) async fn try_mode_a_sticky(
-        &self,
-        rotate: bool,
-        use_sticky_mode: bool,
-        session_id: Option<&str>,
-        tokens_snapshot: &[ProxyToken],
-        attempted: &HashSet<String>,
-        normalized_target: &str,
-        quota_protection_enabled: bool,
-        target_model: &str,
-    ) -> Option<ProxyToken> {
-        if rotate || !use_sticky_mode {
+    pub(super) async fn try_mode_a_sticky(&self, req: ModeASelection<'_>) -> Option<ProxyToken> {
+        if req.rotate || !req.use_sticky_mode {
             return None;
         }
 
-        let sid = session_id?;
+        let sid = req.session_id?;
         let bound_id = self.session_accounts.get(sid).map(|v| v.clone())?;
-        if let Some(bound_token) = tokens_snapshot.iter().find(|t| t.account_id == bound_id) {
+        if let Some(bound_token) = req
+            .tokens_snapshot
+            .iter()
+            .find(|t| t.account_id == bound_id)
+        {
             let key =
                 crate::proxy::token::lookup::account_id_by_email(&self.tokens, &bound_token.email)
                     .unwrap_or_else(|| bound_token.account_id.clone());
@@ -51,11 +69,11 @@ impl TokenManager {
                 return None;
             }
 
-            if !attempted.contains(&bound_id)
+            if !req.attempted.contains(&bound_id)
                 && !crate::proxy::token::pool::is_quota_protected(
                     bound_token,
-                    normalized_target,
-                    quota_protection_enabled,
+                    req.normalized_target,
+                    req.quota_protection_enabled,
                 )
             {
                 tracing::debug!(
@@ -68,14 +86,14 @@ impl TokenManager {
 
             if crate::proxy::token::pool::is_quota_protected(
                 bound_token,
-                normalized_target,
-                quota_protection_enabled,
+                req.normalized_target,
+                req.quota_protection_enabled,
             ) {
                 tracing::debug!(
                     "Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.",
                     bound_token.email,
-                    normalized_target,
-                    target_model
+                    req.normalized_target,
+                    req.target_model
                 );
                 self.session_accounts.remove(sid);
             }
@@ -92,30 +110,25 @@ impl TokenManager {
 
     pub(super) async fn try_mode_b_locked_or_p2c(
         &self,
-        rotate: bool,
-        quota_group: &str,
-        use_sticky_mode: bool,
-        last_used_account_id: &Option<(String, std::time::Instant)>,
-        tokens_snapshot: &[ProxyToken],
-        attempted: &HashSet<String>,
-        normalized_target: &str,
-        quota_protection_enabled: bool,
-        session_id: Option<&str>,
-        target_model: &str,
+        req: ModeBSelection<'_>,
     ) -> (Option<ProxyToken>, Option<(String, std::time::Instant)>) {
-        if rotate || quota_group == "image_gen" || !use_sticky_mode {
+        if req.rotate || req.quota_group == "image_gen" || !req.use_sticky_mode {
             return (None, None);
         }
-        if let Some((account_id, last_time)) = last_used_account_id {
-            if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
-                if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
+        if let Some((account_id, last_time)) = req.last_used_account_id {
+            if last_time.elapsed().as_secs() < 60 && !req.attempted.contains(account_id) {
+                if let Some(found) = req
+                    .tokens_snapshot
+                    .iter()
+                    .find(|t| &t.account_id == account_id)
+                {
                     if !self
-                        .is_rate_limited(&found.account_id, Some(normalized_target))
+                        .is_rate_limited(&found.account_id, Some(req.normalized_target))
                         .await
                         && !crate::proxy::token::pool::is_quota_protected(
                             found,
-                            normalized_target,
-                            quota_protection_enabled,
+                            req.normalized_target,
+                            req.quota_protection_enabled,
                         )
                     {
                         tracing::debug!("60s Window: Force reusing last account: {}", found.email);
@@ -123,7 +136,7 @@ impl TokenManager {
                     }
 
                     if self
-                        .is_rate_limited(&found.account_id, Some(normalized_target))
+                        .is_rate_limited(&found.account_id, Some(req.normalized_target))
                         .await
                     {
                         tracing::debug!(
@@ -134,26 +147,26 @@ impl TokenManager {
                         tracing::debug!(
                             "60s Window: Last account {} is quota-protected for model {} [{}], skipping",
                             found.email,
-                            normalized_target,
-                            target_model
+                            req.normalized_target,
+                            req.target_model
                         );
                     }
                 }
             }
         }
         let non_limited = self
-            .collect_non_limited_candidates(tokens_snapshot, normalized_target)
+            .collect_non_limited_candidates(req.tokens_snapshot, req.normalized_target)
             .await;
         if let Some(selected) = crate::proxy::token::pool::select_with_p2c(
             &non_limited,
-            attempted,
-            normalized_target,
-            quota_protection_enabled,
+            req.attempted,
+            req.normalized_target,
+            req.quota_protection_enabled,
         ) {
             let selected = selected.clone();
             let update_last_used = Some((selected.account_id.clone(), std::time::Instant::now()));
 
-            if let Some(sid) = session_id {
+            if let Some(sid) = req.session_id {
                 self.session_accounts
                     .insert(sid.to_string(), selected.account_id.clone());
                 tracing::debug!(

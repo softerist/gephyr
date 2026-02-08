@@ -2,6 +2,6 @@
 mod tests {
     #[test]
     fn test_logging_middleware() {
-        assert!(true);
+        let _ = "logging middleware placeholder";
     }
 }

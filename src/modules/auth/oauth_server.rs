@@ -447,10 +447,12 @@ pub async fn submit_oauth_code(
 
     Ok(())
 }
+type ManualOAuthFlowPreparation = (String, String, mpsc::Receiver<Result<String, String>>);
+
 pub fn prepare_oauth_flow_manually(
     redirect_uri: String,
     state_str: String,
-) -> Result<(String, String, mpsc::Receiver<Result<String, String>>), String> {
+) -> Result<ManualOAuthFlowPreparation, String> {
     let code_verifier = oauth::generate_pkce_verifier();
     let code_challenge = oauth::pkce_challenge_s256(&code_verifier);
     let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, &code_challenge)?;

@@ -26,14 +26,14 @@ pub enum PurificationStrategy {
 pub struct ContextManager;
 
 impl ContextManager {
-    pub fn purify_history(messages: &mut Vec<Message>, strategy: PurificationStrategy) -> bool {
+    pub fn purify_history(messages: &mut [Message], strategy: PurificationStrategy) -> bool {
         let protected_last_n = match strategy {
             PurificationStrategy::Aggressive => 0,
         };
 
         Self::strip_thinking_blocks(messages, protected_last_n)
     }
-    fn strip_thinking_blocks(messages: &mut Vec<Message>, protected_last_n: usize) -> bool {
+    fn strip_thinking_blocks(messages: &mut [Message], protected_last_n: usize) -> bool {
         let total_msgs = messages.len();
         if total_msgs == 0 {
             return false;
@@ -146,7 +146,7 @@ impl ContextManager {
         total
     }
     pub fn compress_thinking_preserve_signature(
-        messages: &mut Vec<Message>,
+        messages: &mut [Message],
         protected_last_n: usize,
     ) -> bool {
         let total_msgs = messages.len();

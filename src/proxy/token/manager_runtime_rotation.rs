@@ -1,51 +1,72 @@
 use super::{ProxyToken, TokenManager};
+use super::manager_selection::{ModeASelection, ModeBSelection};
 use crate::proxy::token::loader::OnDiskAccountState;
 use std::collections::HashSet;
+
+pub(super) struct RotationSelectionRequest<'a> {
+    pub quota_group: &'a str,
+    pub force_rotate: bool,
+    pub session_id: Option<&'a str>,
+    pub target_model: &'a str,
+    pub tokens_snapshot: &'a [ProxyToken],
+    pub total: usize,
+    pub quota_protection_enabled: bool,
+    pub use_sticky_mode: bool,
+}
+
+struct RotationAttemptRequest<'a> {
+    rotate: bool,
+    quota_group: &'a str,
+    use_sticky_mode: bool,
+    session_id: Option<&'a str>,
+    target_model: &'a str,
+    tokens_snapshot: &'a [ProxyToken],
+    attempted: &'a HashSet<String>,
+    normalized_target: &'a str,
+    quota_protection_enabled: bool,
+    total: usize,
+    last_used_account_id: &'a Option<(String, std::time::Instant)>,
+}
 
 impl TokenManager {
     pub(super) async fn select_token_via_rotation(
         &self,
-        quota_group: &str,
-        force_rotate: bool,
-        session_id: Option<&str>,
-        target_model: &str,
-        tokens_snapshot: &[ProxyToken],
-        total: usize,
-        quota_protection_enabled: bool,
-        use_sticky_mode: bool,
+        request: RotationSelectionRequest<'_>,
     ) -> Result<(String, String, String, String, u64), String> {
-        let last_used_account_id = self.snapshot_last_used_account(quota_group).await;
+        let last_used_account_id = self
+            .snapshot_last_used_account(request.quota_group)
+            .await;
 
         let mut attempted: HashSet<String> = HashSet::new();
         let mut last_error: Option<String> = None;
         let mut need_update_last_used: Option<(String, std::time::Instant)> = None;
 
-        for attempt in 0..total {
-            let rotate = force_rotate || attempt > 0;
+        for attempt in 0..request.total {
+            let rotate = request.force_rotate || attempt > 0;
             let normalized_target =
-                crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
-                    .unwrap_or_else(|| target_model.to_string());
+                crate::proxy::common::model_mapping::normalize_to_standard_id(request.target_model)
+                    .unwrap_or_else(|| request.target_model.to_string());
             let (target_token, mode_b_update_last_used) = self
-                .choose_target_token_for_attempt(
+                .choose_target_token_for_attempt(RotationAttemptRequest {
                     rotate,
-                    quota_group,
-                    use_sticky_mode,
-                    session_id,
-                    target_model,
-                    tokens_snapshot,
-                    &attempted,
-                    &normalized_target,
-                    quota_protection_enabled,
-                    total,
-                    &last_used_account_id,
-                )
+                    quota_group: request.quota_group,
+                    use_sticky_mode: request.use_sticky_mode,
+                    session_id: request.session_id,
+                    target_model: request.target_model,
+                    tokens_snapshot: request.tokens_snapshot,
+                    attempted: &attempted,
+                    normalized_target: &normalized_target,
+                    quota_protection_enabled: request.quota_protection_enabled,
+                    total: request.total,
+                    last_used_account_id: &last_used_account_id,
+                })
                 .await;
             if mode_b_update_last_used.is_some() {
                 need_update_last_used = mode_b_update_last_used;
             }
 
             let mut token = self
-                .resolve_candidate_token(target_token, tokens_snapshot, &attempted)
+                .resolve_candidate_token(target_token, request.tokens_snapshot, &attempted)
                 .await?;
             if self
                 .should_skip_selected_token(&token, &mut attempted)
@@ -55,7 +76,7 @@ impl TokenManager {
             }
             if let Err(e) = self.refresh_rotating_token_if_needed(&mut token).await {
                 Self::record_rotation_attempt_failure(
-                    quota_group,
+                    request.quota_group,
                     &last_used_account_id,
                     &token,
                     format!("Token refresh failed: {}", e),
@@ -70,7 +91,7 @@ impl TokenManager {
                 Err(e) => {
                     tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
                     Self::record_rotation_attempt_failure(
-                        quota_group,
+                        request.quota_group,
                         &last_used_account_id,
                         &token,
                         format!("Failed to fetch project_id for {}: {}", token.email, e),
@@ -81,7 +102,7 @@ impl TokenManager {
                     continue;
                 }
             };
-            self.apply_last_used_update(quota_group, need_update_last_used)
+            self.apply_last_used_update(request.quota_group, need_update_last_used)
                 .await;
 
             return Ok((
@@ -123,48 +144,38 @@ impl TokenManager {
 
     async fn choose_target_token_for_attempt(
         &self,
-        rotate: bool,
-        quota_group: &str,
-        use_sticky_mode: bool,
-        session_id: Option<&str>,
-        target_model: &str,
-        tokens_snapshot: &[ProxyToken],
-        attempted: &HashSet<String>,
-        normalized_target: &str,
-        quota_protection_enabled: bool,
-        total: usize,
-        last_used_account_id: &Option<(String, std::time::Instant)>,
+        request: RotationAttemptRequest<'_>,
     ) -> (Option<ProxyToken>, Option<(String, std::time::Instant)>) {
         // Mode A: Sticky session processing (CacheFirst or Balance with session_id)
         let mut target_token = self
-            .try_mode_a_sticky(
-                rotate,
-                use_sticky_mode,
-                session_id,
-                tokens_snapshot,
-                attempted,
-                normalized_target,
-                quota_protection_enabled,
-                target_model,
-            )
+            .try_mode_a_sticky(ModeASelection {
+                rotate: request.rotate,
+                use_sticky_mode: request.use_sticky_mode,
+                session_id: request.session_id,
+                tokens_snapshot: request.tokens_snapshot,
+                attempted: request.attempted,
+                normalized_target: request.normalized_target,
+                quota_protection_enabled: request.quota_protection_enabled,
+                target_model: request.target_model,
+            })
             .await;
         let mut mode_b_update_last_used: Option<(String, std::time::Instant)> = None;
 
         // Mode B: Atomic 60s global lock + P2C fallback
         if target_token.is_none() {
             let (mode_b_token, mode_b_update) = self
-                .try_mode_b_locked_or_p2c(
-                    rotate,
-                    quota_group,
-                    use_sticky_mode,
-                    last_used_account_id,
-                    tokens_snapshot,
-                    attempted,
-                    normalized_target,
-                    quota_protection_enabled,
-                    session_id,
-                    target_model,
-                )
+                .try_mode_b_locked_or_p2c(ModeBSelection {
+                    rotate: request.rotate,
+                    quota_group: request.quota_group,
+                    use_sticky_mode: request.use_sticky_mode,
+                    last_used_account_id: request.last_used_account_id,
+                    tokens_snapshot: request.tokens_snapshot,
+                    attempted: request.attempted,
+                    normalized_target: request.normalized_target,
+                    quota_protection_enabled: request.quota_protection_enabled,
+                    session_id: request.session_id,
+                    target_model: request.target_model,
+                })
                 .await;
             target_token = mode_b_token;
             mode_b_update_last_used = mode_b_update;
@@ -174,12 +185,12 @@ impl TokenManager {
         if target_token.is_none() {
             target_token = self
                 .try_mode_c_p2c(
-                    tokens_snapshot,
-                    attempted,
-                    normalized_target,
-                    quota_protection_enabled,
-                    total,
-                    rotate,
+                    request.tokens_snapshot,
+                    request.attempted,
+                    request.normalized_target,
+                    request.quota_protection_enabled,
+                    request.total,
+                    request.rotate,
                 )
                 .await;
         }

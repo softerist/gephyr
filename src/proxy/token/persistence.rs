@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 fn truncate_reason(reason: &str, max_len: usize) -> String {
     if reason.len() <= max_len {
@@ -8,19 +8,19 @@ fn truncate_reason(reason: &str, max_len: usize) -> String {
     }
 }
 
-fn read_account_json(path: &PathBuf) -> Result<serde_json::Value, String> {
+fn read_account_json(path: &Path) -> Result<serde_json::Value, String> {
     let content =
         std::fs::read_to_string(path).map_err(|e| format!("Failed to read account file: {}", e))?;
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse account JSON: {}", e))
 }
 
-fn write_account_json(path: &PathBuf, account: &serde_json::Value) -> Result<(), String> {
+fn write_account_json(path: &Path, account: &serde_json::Value) -> Result<(), String> {
     let json_str = serde_json::to_string_pretty(account)
         .map_err(|e| format!("Failed to serialize account JSON: {}", e))?;
     std::fs::write(path, json_str).map_err(|e| format!("Failed to write account file: {}", e))
 }
 
-pub(crate) fn disable_account(path: &PathBuf, reason: &str) -> Result<(), String> {
+pub(crate) fn disable_account(path: &Path, reason: &str) -> Result<(), String> {
     let mut content = read_account_json(path)?;
 
     let now = chrono::Utc::now().timestamp();
@@ -31,14 +31,14 @@ pub(crate) fn disable_account(path: &PathBuf, reason: &str) -> Result<(), String
     write_account_json(path, &content)
 }
 
-pub(crate) fn save_project_id(path: &PathBuf, project_id: &str) -> Result<(), String> {
+pub(crate) fn save_project_id(path: &Path, project_id: &str) -> Result<(), String> {
     let mut content = read_account_json(path)?;
     content["token"]["project_id"] = serde_json::Value::String(project_id.to_string());
     write_account_json(path, &content)
 }
 
 pub(crate) fn save_refreshed_token(
-    path: &PathBuf,
+    path: &Path,
     token_response: &crate::modules::auth::oauth::TokenResponse,
 ) -> Result<(), String> {
     let mut content = read_account_json(path)?;
@@ -56,7 +56,7 @@ pub(crate) fn save_refreshed_token(
 }
 
 pub(crate) fn set_validation_block(
-    data_dir: &PathBuf,
+    data_dir: &Path,
     account_id: &str,
     block_until: i64,
     reason: &str,
@@ -77,7 +77,7 @@ pub(crate) fn set_validation_block(
     write_account_json(&path, &account)
 }
 
-pub(crate) fn set_forbidden(data_dir: &PathBuf, account_id: &str) -> Result<(), String> {
+pub(crate) fn set_forbidden(data_dir: &Path, account_id: &str) -> Result<(), String> {
     let path = data_dir
         .join("accounts")
         .join(format!("{}.json", account_id));
@@ -100,7 +100,7 @@ pub(crate) fn set_forbidden(data_dir: &PathBuf, account_id: &str) -> Result<(), 
     write_account_json(&path, &account)
 }
 
-pub(crate) fn get_quota_reset_time(data_dir: &PathBuf, account_id: &str) -> Option<String> {
+pub(crate) fn get_quota_reset_time(data_dir: &Path, account_id: &str) -> Option<String> {
     let account_path = data_dir
         .join("accounts")
         .join(format!("{}.json", account_id));

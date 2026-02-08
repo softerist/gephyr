@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use dashmap::DashMap;
 
@@ -15,7 +15,7 @@ pub(crate) fn truncate_reason(reason: &str, max_len: usize) -> String {
 pub(crate) fn set_validation_block(
     tokens: &DashMap<String, ProxyToken>,
     session_accounts: &DashMap<String, String>,
-    data_dir: &PathBuf,
+    data_dir: &Path,
     account_id: &str,
     block_until: i64,
     reason: &str,
@@ -37,7 +37,7 @@ pub(crate) fn set_validation_block(
 
 pub(crate) fn set_forbidden(
     session_accounts: &DashMap<String, String>,
-    data_dir: &PathBuf,
+    data_dir: &Path,
     account_id: &str,
 ) -> Result<(), String> {
     crate::proxy::token::persistence::set_forbidden(data_dir, account_id)?;

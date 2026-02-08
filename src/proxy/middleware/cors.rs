@@ -24,6 +24,5 @@ mod tests {
     #[test]
     fn test_cors_layer_creation() {
         let _layer = cors_layer();
-        assert!(true);
     }
 }

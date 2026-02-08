@@ -118,7 +118,7 @@ fn compact_browser_snapshot(text: &str, max_chars: usize) -> Option<String> {
         return None;
     }
     let head_len = (budget as f64 * SNAPSHOT_HEAD_RATIO).floor() as usize;
-    let head_len = head_len.min(10_000).max(500);
+    let head_len = head_len.clamp(500, 10_000);
     let tail_len = budget.saturating_sub(head_len).min(3_000);
 
     let head = &text[..head_len.min(text.len())];

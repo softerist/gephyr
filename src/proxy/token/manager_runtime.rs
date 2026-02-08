@@ -61,14 +61,16 @@ impl TokenManager {
         }
         let use_sticky_mode = scheduling.mode != SchedulingMode::PerformanceFirst;
         self.select_token_via_rotation(
-            quota_group,
-            force_rotate,
-            session_id,
-            target_model,
-            &tokens_snapshot,
-            total,
-            quota_protection_enabled,
-            use_sticky_mode,
+            crate::proxy::token::manager_runtime_rotation::RotationSelectionRequest {
+                quota_group,
+                force_rotate,
+                session_id,
+                target_model,
+                tokens_snapshot: &tokens_snapshot,
+                total,
+                quota_protection_enabled,
+                use_sticky_mode,
+            },
         )
         .await
     }

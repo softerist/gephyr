@@ -542,7 +542,7 @@ mod tests {
         let tracker = RateLimitTracker::new();
         tracker.parse_from_error("acc1", 429, Some("1"), "", None, &[]);
         let wait = tracker.get_remaining_wait("acc1", None);
-        assert!(wait >= 1 && wait <= 2);
+        assert!((1..=2).contains(&wait));
     }
 
     #[test]

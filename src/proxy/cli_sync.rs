@@ -181,6 +181,10 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
     let mut all_synced = true;
     let mut has_backup = false;
     let mut current_base_url = None;
+    let codex_base_url_re = regex::Regex::new(r#"(?m)^\s*base_url\s*=\s*['"]([^'"]+)['"]"#)
+        .expect("invalid codex base_url regex");
+    let gemini_base_url_re = regex::Regex::new(r#"(?m)^GOOGLE_GEMINI_BASE_URL=(.*)$"#)
+        .expect("invalid gemini base_url regex");
 
     for file in &files {
         let backup_path = file
@@ -233,9 +237,7 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
             }
             CliApp::Codex => {
                 if file.name == "config.toml" {
-                    let re =
-                        regex::Regex::new(r#"(?m)^\s*base_url\s*=\s*['"]([^'"]+)['"]"#).unwrap();
-                    if let Some(caps) = re.captures(&content) {
+                    if let Some(caps) = codex_base_url_re.captures(&content) {
                         let url = &caps[1];
                         current_base_url = Some(url.to_string());
                         if url.trim_end_matches('/') != proxy_url.trim_end_matches('/') {
@@ -248,8 +250,7 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
             }
             CliApp::Gemini => {
                 if file.name == ".env" {
-                    let re = regex::Regex::new(r#"(?m)^GOOGLE_GEMINI_BASE_URL=(.*)$"#).unwrap();
-                    if let Some(caps) = re.captures(&content) {
+                    if let Some(caps) = gemini_base_url_re.captures(&content) {
                         let url = caps[1].trim();
                         current_base_url = Some(url.to_string());
                         if url.trim_end_matches('/') != proxy_url.trim_end_matches('/') {
