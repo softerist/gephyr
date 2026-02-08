@@ -1,7 +1,7 @@
 use crate::proxy::TokenManager;
 use axum::{extract::DefaultBodyLimit, routing::get, Router};
 use std::collections::HashSet;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::sync::RwLock;
@@ -79,7 +79,7 @@ impl AxumServer {
         port: u16,
         token_manager: Arc<TokenManager>,
         custom_mapping: std::collections::HashMap<String, String>,
-        _request_timeout: u64,
+        request_timeout: u64,
         upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
         user_agent_override: Option<String>,
         security_config: crate::proxy::ProxySecurityConfig,
@@ -109,6 +109,7 @@ impl AxumServer {
         let account_service = Arc::new(crate::modules::auth::account_service::AccountService::new(
             integration.clone(),
         ));
+        let request_timeout_secs = request_timeout.max(5);
         let upstream = {
             let u = Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
                 Some(upstream_proxy.clone()),
@@ -134,7 +135,8 @@ impl AxumServer {
             experimental: experimental_state.clone(),
             debug_logging: debug_logging_state.clone(),
             security: security_state.clone(),
-            request_timeout: 300,
+            request_timeout: Arc::new(AtomicU64::new(request_timeout_secs)),
+            update_lock: Arc::new(tokio::sync::Mutex::new(())),
         });
         let runtime_state = Arc::new(RuntimeState {
             thought_signature_map: thought_signature_map.clone(),

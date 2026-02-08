@@ -159,7 +159,7 @@ pub async fn forward_anthropic_json(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
 
-    let timeout_secs = state.config.request_timeout.max(5);
+    let timeout_secs = state.config.request_timeout_secs().max(5);
     let upstream_proxy = state.config.upstream_proxy.read().await.clone();
     let client = match build_client(Some(upstream_proxy), timeout_secs) {
         Ok(c) => c,

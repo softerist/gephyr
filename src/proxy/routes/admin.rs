@@ -6,7 +6,8 @@ use axum::{
 use crate::proxy::state::AppState;
 
 pub fn build_admin_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    add_legacy_stats_alias_routes(
+        Router::new()
         .route("/health", get(crate::proxy::health::health_check_handler))
         .route(
             "/accounts",
@@ -76,30 +77,6 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
         .route(
             "/accounts/sync/db",
             post(crate::proxy::admin::admin_sync_account_from_db),
-        )
-        .route(
-            "/stats/summary",
-            get(crate::proxy::admin::admin_get_token_stats_summary),
-        )
-        .route(
-            "/stats/hourly",
-            get(crate::proxy::admin::admin_get_token_stats_hourly),
-        )
-        .route(
-            "/stats/daily",
-            get(crate::proxy::admin::admin_get_token_stats_daily),
-        )
-        .route(
-            "/stats/weekly",
-            get(crate::proxy::admin::admin_get_token_stats_weekly),
-        )
-        .route(
-            "/stats/accounts",
-            get(crate::proxy::admin::admin_get_token_stats_by_account),
-        )
-        .route(
-            "/stats/models",
-            get(crate::proxy::admin::admin_get_token_stats_by_model),
         )
         .route(
             "/config",
@@ -456,9 +433,38 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
         .route(
             "/auth/url",
             get(crate::proxy::admin::admin_prepare_oauth_url_web),
-        )
-        .layer(axum::middleware::from_fn_with_state(
+        ),
+    )
+    .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::proxy::middleware::admin_auth_middleware,
         ))
+}
+
+fn add_legacy_stats_alias_routes(router: Router<AppState>) -> Router<AppState> {
+    router
+        .route(
+            "/stats/summary",
+            get(crate::proxy::admin::admin_get_token_stats_summary),
+        )
+        .route(
+            "/stats/hourly",
+            get(crate::proxy::admin::admin_get_token_stats_hourly),
+        )
+        .route(
+            "/stats/daily",
+            get(crate::proxy::admin::admin_get_token_stats_daily),
+        )
+        .route(
+            "/stats/weekly",
+            get(crate::proxy::admin::admin_get_token_stats_weekly),
+        )
+        .route(
+            "/stats/accounts",
+            get(crate::proxy::admin::admin_get_token_stats_by_account),
+        )
+        .route(
+            "/stats/models",
+            get(crate::proxy::admin::admin_get_token_stats_by_model),
+        )
 }

@@ -1,6 +1,6 @@
 use crate::proxy::TokenManager;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -21,7 +21,8 @@ pub struct ConfigState {
     pub experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     pub debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
     pub security: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
-    pub request_timeout: u64,
+    pub request_timeout: Arc<AtomicU64>,
+    pub update_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[derive(Clone)]
@@ -42,6 +43,13 @@ pub struct AppState {
 }
 
 #[derive(Clone)]
+pub struct AdminState {
+    pub core: Arc<CoreServices>,
+    pub config: Arc<ConfigState>,
+    pub runtime: Arc<RuntimeState>,
+}
+
+#[derive(Clone)]
 pub struct OpenAIHandlerState {
     pub token_manager: Arc<TokenManager>,
     pub custom_mapping: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
@@ -53,6 +61,40 @@ pub struct OpenAIHandlerState {
 pub struct ModelCatalogState {
     pub custom_mapping: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
 }
+
+impl ConfigState {
+    pub async fn apply_proxy_config(&self, proxy: &crate::proxy::config::ProxyConfig) {
+        let _guard = self.update_lock.lock().await;
+
+        {
+            let mut mapping = self.custom_mapping.write().await;
+            *mapping = proxy.custom_mapping.clone();
+        }
+        {
+            let mut upstream_proxy = self.upstream_proxy.write().await;
+            *upstream_proxy = proxy.upstream_proxy.clone();
+        }
+        {
+            let mut security = self.security.write().await;
+            *security = crate::proxy::ProxySecurityConfig::from_proxy_config(proxy);
+        }
+        {
+            let mut zai = self.zai.write().await;
+            *zai = proxy.zai.clone();
+        }
+        {
+            let mut experimental = self.experimental.write().await;
+            *experimental = proxy.experimental.clone();
+        }
+        self.request_timeout
+            .store(proxy.request_timeout, Ordering::Relaxed);
+    }
+
+    pub fn request_timeout_secs(&self) -> u64 {
+        self.request_timeout.load(Ordering::Relaxed)
+    }
+}
+
 impl axum::extract::FromRef<AppState> for Arc<RwLock<crate::proxy::ProxySecurityConfig>> {
     fn from_ref(state: &AppState) -> Self {
         state.config.security.clone()
@@ -74,6 +116,16 @@ impl axum::extract::FromRef<AppState> for ConfigState {
 impl axum::extract::FromRef<AppState> for RuntimeState {
     fn from_ref(state: &AppState) -> Self {
         state.runtime.as_ref().clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for AdminState {
+    fn from_ref(state: &AppState) -> Self {
+        Self {
+            core: state.core.clone(),
+            config: state.config.clone(),
+            runtime: state.runtime.clone(),
+        }
     }
 }
 

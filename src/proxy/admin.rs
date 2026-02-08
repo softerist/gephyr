@@ -5,7 +5,7 @@ use crate::modules::{
     stats::token_stats,
     system::{config, logger, migration},
 };
-use crate::proxy::state::AppState;
+use crate::proxy::state::AdminState;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -99,7 +99,7 @@ fn to_account_response(
 }
 
 pub(crate) async fn admin_list_accounts(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let accounts = state.core.account_service.list_accounts().map_err(|e| {
         (
@@ -163,7 +163,7 @@ pub(crate) struct ExportAccountsRequest {
 }
 
 pub(crate) async fn admin_export_accounts(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Json(payload): Json<ExportAccountsRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let response = account::export_accounts_by_ids(&payload.account_ids).map_err(|e| {
@@ -177,7 +177,7 @@ pub(crate) async fn admin_export_accounts(
 }
 
 pub(crate) async fn admin_get_current_account(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let current_id = state.core.account_service.get_current_id().map_err(|e| {
         (
@@ -238,7 +238,7 @@ pub(crate) struct AddAccountRequest {
 }
 
 pub(crate) async fn admin_add_account(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<AddAccountRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
@@ -269,7 +269,7 @@ pub(crate) async fn admin_add_account(
 }
 
 pub(crate) async fn admin_delete_account(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
@@ -299,7 +299,7 @@ pub(crate) struct SwitchRequest {
 }
 
 pub(crate) async fn admin_switch_account(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<SwitchRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     {
@@ -366,7 +366,7 @@ pub(crate) async fn admin_refresh_all_quotas(
 }
 
 pub(crate) async fn admin_prepare_oauth_url(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let url = state
         .core
@@ -383,7 +383,7 @@ pub(crate) async fn admin_prepare_oauth_url(
 }
 
 pub(crate) async fn admin_start_oauth_login(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
         .core
@@ -406,7 +406,7 @@ pub(crate) async fn admin_start_oauth_login(
 }
 
 pub(crate) async fn admin_complete_oauth_login(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
         .core
@@ -429,7 +429,7 @@ pub(crate) async fn admin_complete_oauth_login(
 }
 
 pub(crate) async fn admin_cancel_oauth_login(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state.core.account_service.cancel_oauth_login();
     Ok(StatusCode::OK)
@@ -442,7 +442,7 @@ pub(crate) struct SubmitCodeRequest {
 }
 
 pub(crate) async fn admin_submit_oauth_code(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<SubmitCodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
@@ -514,7 +514,7 @@ pub(crate) struct SaveConfigWrapper {
 }
 
 pub(crate) async fn admin_save_config(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<SaveConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let new_config = payload.config;
@@ -524,37 +524,18 @@ pub(crate) async fn admin_save_config(
             Json(ErrorResponse { error: e }),
         )
     })?;
-    {
-        let mut mapping = state.config.custom_mapping.write().await;
-        *mapping = new_config.clone().proxy.custom_mapping;
-    }
-    {
-        let mut proxy = state.config.upstream_proxy.write().await;
-        *proxy = new_config.clone().proxy.upstream_proxy;
-    }
-    {
-        let mut security = state.config.security.write().await;
-        *security = crate::proxy::ProxySecurityConfig::from_proxy_config(&new_config.proxy);
-    }
-    {
-        let mut zai = state.config.zai.write().await;
-        *zai = new_config.clone().proxy.zai;
-    }
-    {
-        let mut exp = state.config.experimental.write().await;
-        *exp = new_config.clone().proxy.experimental;
-    }
+    state.config.apply_proxy_config(&new_config.proxy).await;
 
     Ok(StatusCode::OK)
 }
 pub(crate) async fn admin_get_proxy_pool_config(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = state.runtime.proxy_pool_state.read().await;
     Ok(Json(config.clone()))
 }
 pub(crate) async fn admin_get_all_account_bindings(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let bindings = state.runtime.proxy_pool_manager.get_all_bindings_snapshot();
     Ok(Json(bindings))
@@ -567,7 +548,7 @@ pub(crate) struct BindAccountProxyRequest {
 }
 
 pub(crate) async fn admin_bind_account_proxy(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<BindAccountProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
@@ -590,7 +571,7 @@ pub(crate) struct UnbindAccountProxyRequest {
 }
 
 pub(crate) async fn admin_unbind_account_proxy(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<UnbindAccountProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
@@ -601,7 +582,7 @@ pub(crate) async fn admin_unbind_account_proxy(
     Ok(StatusCode::OK)
 }
 pub(crate) async fn admin_get_account_proxy_binding(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let binding = state
@@ -611,7 +592,7 @@ pub(crate) async fn admin_get_account_proxy_binding(
     Ok(Json(binding))
 }
 pub(crate) async fn admin_trigger_proxy_health_check(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     state
         .runtime
@@ -633,7 +614,7 @@ pub(crate) async fn admin_trigger_proxy_health_check(
 }
 
 pub(crate) async fn admin_get_proxy_status(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let active_accounts = state.core.token_manager.len();
 
@@ -646,7 +627,7 @@ pub(crate) async fn admin_get_proxy_status(
     })))
 }
 
-pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn admin_start_proxy_service(State(state): State<AdminState>) -> impl IntoResponse {
     if let Ok(mut config) = crate::modules::system::config::load_app_config() {
         config.proxy.auto_start = true;
         let _ = crate::modules::system::config::save_app_config(&config);
@@ -664,7 +645,7 @@ pub(crate) async fn admin_start_proxy_service(State(state): State<AppState>) -> 
     StatusCode::OK
 }
 
-pub(crate) async fn admin_stop_proxy_service(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn admin_stop_proxy_service(State(state): State<AdminState>) -> impl IntoResponse {
     if let Ok(mut config) = crate::modules::system::config::load_app_config() {
         config.proxy.auto_start = false;
         let _ = crate::modules::system::config::save_app_config(&config);
@@ -683,7 +664,7 @@ pub(crate) struct UpdateMappingWrapper {
 }
 
 pub(crate) async fn admin_update_model_mapping(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<UpdateMappingWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = payload.config;
@@ -717,7 +698,7 @@ pub(crate) async fn admin_generate_api_key() -> impl IntoResponse {
 }
 
 pub(crate) async fn admin_clear_proxy_session_bindings(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> impl IntoResponse {
     state.core.token_manager.clear_all_sessions();
     logger::log_info("[API] All session bindings cleared");
@@ -725,7 +706,7 @@ pub(crate) async fn admin_clear_proxy_session_bindings(
 }
 
 pub(crate) async fn admin_clear_all_rate_limits(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> impl IntoResponse {
     state.core.token_manager.clear_all_rate_limits();
     logger::log_info("[API] All rate limit records cleared");
@@ -733,7 +714,7 @@ pub(crate) async fn admin_clear_all_rate_limits(
 }
 
 pub(crate) async fn admin_clear_rate_limit(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(account_id): Path<String>,
 ) -> impl IntoResponse {
     let cleared = state.core.token_manager.clear_rate_limit(&account_id);
@@ -749,7 +730,7 @@ pub(crate) async fn admin_clear_rate_limit(
 }
 
 pub(crate) async fn admin_get_preferred_account(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> impl IntoResponse {
     let pref = state.core.token_manager.get_preferred_account().await;
     Json(pref)
@@ -762,7 +743,7 @@ pub(crate) struct SetPreferredAccountRequest {
 }
 
 pub(crate) async fn admin_set_preferred_account(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<SetPreferredAccountRequest>,
 ) -> impl IntoResponse {
     state
@@ -834,7 +815,7 @@ pub(crate) async fn admin_fetch_zai_models(
 }
 
 pub(crate) async fn admin_set_proxy_monitor_enabled(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let enabled = payload
@@ -947,7 +928,7 @@ pub(crate) async fn admin_get_proxy_logs_filtered(
 }
 
 pub(crate) async fn admin_get_proxy_stats(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let stats = state.core.monitor.get_stats().await;
     Ok(Json(stats))
@@ -1426,7 +1407,7 @@ pub(crate) struct ReorderRequest {
 }
 
 pub(crate) async fn admin_reorder_accounts(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<ReorderRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::modules::auth::account::reorder_accounts(&payload.account_ids).map_err(|e| {
@@ -1484,7 +1465,7 @@ pub(crate) struct ToggleProxyRequest {
 }
 
 pub(crate) async fn admin_toggle_proxy_status(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Path(account_id): Path<String>,
     Json(payload): Json<ToggleProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
@@ -1505,7 +1486,7 @@ pub(crate) async fn admin_toggle_proxy_status(
 }
 
 pub(crate) async fn admin_get_device_profiles(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let profiles = account::get_device_profiles(&account_id).map_err(|e| {
@@ -1518,7 +1499,7 @@ pub(crate) async fn admin_get_device_profiles(
 }
 
 pub(crate) async fn admin_list_device_versions(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let profiles = account::get_device_profiles(&account_id).map_err(|e| {
@@ -1568,7 +1549,7 @@ impl From<DeviceProfileApiWrapper> for crate::models::account::DeviceProfile {
 }
 
 pub(crate) async fn admin_bind_device_profile_with_profile(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path(account_id): Path<String>,
     Json(payload): Json<BindDeviceProfileWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
@@ -1602,7 +1583,7 @@ pub(crate) async fn admin_restore_original_device(
 }
 
 pub(crate) async fn admin_restore_device_version(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path((account_id, version_id)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let profile = account::restore_device_version(&account_id, &version_id).map_err(|e| {
@@ -1615,7 +1596,7 @@ pub(crate) async fn admin_restore_device_version(
 }
 
 pub(crate) async fn admin_delete_device_version(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
     Path((account_id, version_id)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     account::delete_device_version(&account_id, &version_id).map_err(|e| {
@@ -1639,7 +1620,7 @@ pub(crate) async fn admin_open_folder(
 }
 
 pub(crate) async fn admin_import_v1_accounts(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let accounts = migration::import_from_v1().await.map_err(|e| {
         (
@@ -1663,7 +1644,7 @@ pub(crate) async fn admin_import_v1_accounts(
 }
 
 pub(crate) async fn admin_import_from_db(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = migration::import_from_db().await.map_err(|e| {
         (
@@ -1688,7 +1669,7 @@ pub(crate) struct CustomDbRequest {
 }
 
 pub(crate) async fn admin_import_custom_db(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<CustomDbRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     if payload.path.contains("..") {
@@ -1720,7 +1701,7 @@ pub(crate) async fn admin_import_custom_db(
 }
 
 pub(crate) async fn admin_sync_account_from_db(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let db_refresh_token = match migration::get_refresh_token_from_db() {
         Ok(token) => token,
@@ -1854,7 +1835,7 @@ pub(crate) struct OAuthParams {
 pub(crate) async fn handle_oauth_callback(
     Query(params): Query<OAuthParams>,
     _headers: HeaderMap,
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
 ) -> Result<Html<String>, StatusCode> {
     let code = params.code;
     let state_param = params.state;
@@ -1926,7 +1907,7 @@ pub(crate) async fn handle_oauth_callback(
 
 pub(crate) async fn admin_prepare_oauth_url_web(
     headers: HeaderMap,
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
     let port = state.config.security.read().await.port;
     let host = headers.get("host").and_then(|h| h.to_str().ok());
@@ -2329,7 +2310,7 @@ pub(crate) async fn admin_check_ip_in_whitelist(
 }
 
 pub(crate) async fn admin_get_security_config(
-    State(_state): State<AppState>,
+    State(_state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let app_config = crate::modules::system::config::load_app_config().map_err(|e| {
         (
@@ -2349,7 +2330,7 @@ pub(crate) struct UpdateSecurityConfigWrapper {
 }
 
 pub(crate) async fn admin_update_security_config(
-    State(state): State<AppState>,
+    State(state): State<AdminState>,
     Json(payload): Json<UpdateSecurityConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let config = payload.config;
