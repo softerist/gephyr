@@ -144,14 +144,14 @@ pub fn transform_openai_request(
         .map(|msg| {
             let role = match msg.role.as_str() {
                 "assistant" => "model",
-                "tool" | "function" => "user", 
+                "tool" | "function" => "user",
                 _ => &msg.role,
             };
 
             let mut parts = Vec::new();
             if let Some(reasoning) = &msg.reasoning_content {
                 let is_invalid_placeholder = reasoning == "[undefined]" || reasoning.is_empty();
-                
+
                 if !is_invalid_placeholder {
                     let thought_part = json!({
                         "text": reasoning,
@@ -168,7 +168,7 @@ pub fn transform_openai_request(
                 if is_gemini_thinking {
                     thought_part["thoughtSignature"] = json!("skip_thought_signature_validator");
                 }
-                
+
                 parts.push(thought_part);
             }
             let is_tool_role = msg.role == "tool" || msg.role == "function";
@@ -191,7 +191,7 @@ pub fn transform_openai_request(
                                             let mime_part = &image_url.url[5..pos];
                                             let mime_type = mime_part.split(';').next().unwrap_or("image/jpeg");
                                             let data = &image_url.url[pos + 1..];
-                                            
+
                                             parts.push(json!({
                                                 "inlineData": { "mimeType": mime_type, "data": data }
                                             }));
@@ -209,7 +209,7 @@ pub fn transform_openai_request(
                                         } else {
                                             image_url.url.clone()
                                         };
-                                        
+
                                         tracing::debug!("[OpenAI-Request] Reading local image: {}", file_path);
                                         if let Ok(file_bytes) = std::fs::read(&file_path) {
                                             use base64::Engine as _;
@@ -223,7 +223,7 @@ pub fn transform_openai_request(
                                             } else {
                                                 "image/jpeg"
                                             };
-                                            
+
                                             parts.push(json!({
                                                 "inlineData": { "mimeType": mime_type, "data": b64 }
                                             }));
@@ -243,7 +243,7 @@ pub fn transform_openai_request(
             }
             if let Some(tool_calls) = &msg.tool_calls {
                 for (_index, tc) in tool_calls.iter().enumerate() {
-                    
+
 
 
                     let mut args = serde_json::from_str::<Value>(&tc.function.arguments).unwrap_or(json!({}));
@@ -272,7 +272,7 @@ pub fn transform_openai_request(
             }
             if msg.role == "tool" || msg.role == "function" {
                 let name = msg.name.as_deref().unwrap_or("unknown");
-                let final_name = if name == "local_shell_call" { "shell" } 
+                let final_name = if name == "local_shell_call" { "shell" }
                                 else if let Some(id) = &msg.tool_call_id { tool_id_to_name.get(id).map(|s| s.as_str()).unwrap_or(name) }
                                 else { name };
 
@@ -362,7 +362,7 @@ pub fn transform_openai_request(
 
                 if is_gemini_limited && user_budget > 24576 {
                     tracing::info!(
-                        "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}", 
+                        "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}",
                         user_budget, mapped_model
                     );
                     24576
@@ -693,9 +693,9 @@ mod tests {
                 role: "user".to_string(),
                 content: Some(OpenAIContent::Array(vec![
                     OpenAIContentBlock::Text { text: "What is in this image?".to_string() },
-                    OpenAIContentBlock::ImageUrl { image_url: OpenAIImageUrl { 
+                    OpenAIContentBlock::ImageUrl { image_url: OpenAIImageUrl {
                         url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".to_string(),
-                        detail: None 
+                        detail: None
                     } }
                 ])),
                 reasoning_content: None,

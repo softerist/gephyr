@@ -140,12 +140,12 @@ pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String>
 
     let mut stmt = conn
         .prepare(
-            "SELECT hour_bucket, 
-                SUM(total_input_tokens) as input, 
+            "SELECT hour_bucket,
+                SUM(total_input_tokens) as input,
                 SUM(total_output_tokens) as output,
                 SUM(total_tokens) as total,
                 SUM(request_count) as count
-         FROM token_stats_hourly 
+         FROM token_stats_hourly
          WHERE hour_bucket >= ?1
          GROUP BY hour_bucket
          ORDER BY hour_bucket ASC",
@@ -177,12 +177,12 @@ pub fn get_daily_stats(days: i64) -> Result<Vec<TokenStatsAggregated>, String> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT substr(hour_bucket, 1, 10) as day_bucket, 
-                SUM(total_input_tokens) as input, 
+            "SELECT substr(hour_bucket, 1, 10) as day_bucket,
+                SUM(total_input_tokens) as input,
                 SUM(total_output_tokens) as output,
                 SUM(total_tokens) as total,
                 SUM(request_count) as count
-         FROM token_stats_hourly 
+         FROM token_stats_hourly
          WHERE substr(hour_bucket, 1, 10) >= ?1
          GROUP BY day_bucket
          ORDER BY day_bucket ASC",
@@ -215,11 +215,11 @@ pub fn get_weekly_stats(weeks: i64) -> Result<Vec<TokenStatsAggregated>, String>
     let mut stmt = conn
         .prepare(
             "SELECT strftime('%Y-W%W', datetime(timestamp, 'unixepoch')) as week_bucket,
-                SUM(input_tokens) as input, 
+                SUM(input_tokens) as input,
                 SUM(output_tokens) as output,
                 SUM(total_tokens) as total,
                 COUNT(*) as count
-         FROM token_usage 
+         FROM token_usage
          WHERE timestamp >= ?1
          GROUP BY week_bucket
          ORDER BY week_bucket ASC",
@@ -252,11 +252,11 @@ pub fn get_account_stats(hours: i64) -> Result<Vec<AccountTokenStats>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT account_email,
-                SUM(total_input_tokens) as input, 
+                SUM(total_input_tokens) as input,
                 SUM(total_output_tokens) as output,
                 SUM(total_tokens) as total,
                 SUM(request_count) as count
-         FROM token_stats_hourly 
+         FROM token_stats_hourly
          WHERE hour_bucket >= ?1
          GROUP BY account_email
          ORDER BY total DESC",
@@ -292,7 +292,7 @@ pub fn get_summary_stats(hours: i64) -> Result<TokenStatsSummary, String> {
                 COALESCE(SUM(total_output_tokens), 0),
                 COALESCE(SUM(total_tokens), 0),
                 COALESCE(SUM(request_count), 0)
-         FROM token_stats_hourly 
+         FROM token_stats_hourly
          WHERE hour_bucket >= ?1",
             [&cutoff_bucket],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),

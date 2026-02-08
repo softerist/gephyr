@@ -211,7 +211,7 @@ impl RateLimitTracker {
                         };
 
                         tracing::warn!(
-                            "Quota exhausted (QUOTA_EXHAUSTED) detected, {} consecutive failures, locking for {} seconds as configured", 
+                            "Quota exhausted (QUOTA_EXHAUSTED) detected, {} consecutive failures, locking for {} seconds as configured",
                             failure_count, lockout
                         );
                         lockout
@@ -509,9 +509,9 @@ mod tests {
         let body = r#"{
             "error": {
                 "details": [
-                    { 
+                    {
                         "metadata": {
-                            "quotaResetDelay": "42s" 
+                            "quotaResetDelay": "42s"
                         }
                     }
                 ]

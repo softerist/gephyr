@@ -101,11 +101,11 @@ pub fn get_logs_summary(limit: usize, offset: usize) -> Result<Vec<ProxyRequestL
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, timestamp, method, url, status, duration, model, error, 
+            "SELECT id, timestamp, method, url, status, duration, model, error,
                 NULL as request_body, NULL as response_body,
                 input_tokens, output_tokens, account_email, mapped_model, protocol, client_ip
-         FROM request_logs 
-         ORDER BY timestamp DESC 
+         FROM request_logs
+         ORDER BY timestamp DESC
          LIMIT ?1 OFFSET ?2",
         )
         .map_err(|e| e.to_string())?;
@@ -148,7 +148,7 @@ pub fn get_stats() -> Result<crate::proxy::monitor::ProxyStats, String> {
     let conn = connect_db()?;
     let (total_requests, success_count, error_count): (u64, u64, u64) = conn
         .query_row(
-            "SELECT 
+            "SELECT
             COUNT(*) as total,
             COALESCE(SUM(CASE WHEN status >= 200 AND status < 400 THEN 1 ELSE 0 END), 0) as success,
             COALESCE(SUM(CASE WHEN status < 200 OR status >= 400 THEN 1 ELSE 0 END), 0) as error

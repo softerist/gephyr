@@ -6,9 +6,9 @@
                 { "name": "web_search", "parameters": {} }
             ]
         })]);
-        
+
         let config = resolve_request_config("gemini-3-pro", "gemini-3-pro", &tools);
-        
+
         assert_eq!(config.request_type, "web_search");
         assert_eq!(config.final_model, "gemini-3-flash");
         assert!(config.inject_google_search);

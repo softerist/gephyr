@@ -138,7 +138,7 @@ pub fn wrap_request(
                         crate::proxy::config::ThinkingBudgetMode::Auto => {
                             if budget > 24576 {
                                 tracing::info!(
-                                    "[Gemini-Wrap] Auto mode: capping thinking_budget from {} to 24576 for model {}", 
+                                    "[Gemini-Wrap] Auto mode: capping thinking_budget from {} to 24576 for model {}",
                                     budget, final_model_name
                                 );
                                 24576

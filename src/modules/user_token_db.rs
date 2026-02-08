@@ -405,10 +405,10 @@ pub fn record_token_usage_and_ip(
         .map_err(|e| format!("Failed to create transaction: {}", e))?;
     let now = Utc::now().timestamp();
     tx.execute(
-        "UPDATE user_tokens SET 
-            last_used_at = ?1, 
-            total_requests = total_requests + 1, 
-            total_tokens_used = total_tokens_used + ?2 
+        "UPDATE user_tokens SET
+            last_used_at = ?1,
+            total_requests = total_requests + 1,
+            total_tokens_used = total_tokens_used + ?2
         WHERE id = ?3",
         params![now, input_tokens + output_tokens, token_id],
     )
@@ -421,8 +421,8 @@ pub fn record_token_usage_and_ip(
 
     if binding_exists {
         tx.execute(
-            "UPDATE token_ip_bindings SET 
-                last_seen_at = ?1, 
+            "UPDATE token_ip_bindings SET
+                last_seen_at = ?1,
                 request_count = request_count + 1,
                 user_agent = COALESCE(?2, user_agent)
             WHERE token_id = ?3 AND ip_address = ?4",
@@ -526,11 +526,11 @@ pub fn get_username_for_ip(ip: &str) -> Result<Option<String>, String> {
     let conn = connect_db()?;
     let result: Option<String> = conn
         .query_row(
-            "SELECT t.username 
-         FROM token_ip_bindings b 
-         JOIN user_tokens t ON b.token_id = t.id 
-         WHERE b.ip_address = ?1 
-         ORDER BY b.last_seen_at DESC 
+            "SELECT t.username
+         FROM token_ip_bindings b
+         JOIN user_tokens t ON b.token_id = t.id
+         WHERE b.ip_address = ?1
+         ORDER BY b.last_seen_at DESC
          LIMIT 1",
             params![ip],
             |row| row.get(0),

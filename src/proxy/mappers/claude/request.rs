@@ -1369,7 +1369,7 @@ fn build_generation_config(
                     || model_lower.ends_with("-thinking");
                 if is_gemini_limited && budget_tokens > 24576 {
                     tracing::info!(
-                        "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}", 
+                        "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}",
                         budget_tokens, mapped_model
                     );
                     24576
@@ -1415,7 +1415,7 @@ fn build_generation_config(
             if current <= budget as i64 {
                 final_max_tokens = Some((budget + 8192) as i64);
                 tracing::info!(
-                    "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}", 
+                    "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}",
                     final_max_tokens.unwrap(), budget
                 );
             }
