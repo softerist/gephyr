@@ -32,7 +32,7 @@ src/.env
 
 # Environment
 .env
-.env.*
+.env.local
 environment/
 
 # Python virtual environments and test files

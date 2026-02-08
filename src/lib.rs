@@ -6,7 +6,7 @@ mod modules;
 mod proxy;
 mod utils;
 
-use modules::logger;
+use modules::system::logger;
 use tracing::{error, info, warn};
 #[cfg(target_os = "macos")]
 fn increase_nofile_limit() {
@@ -106,12 +106,12 @@ fn apply_security_hardening(config: &mut crate::models::AppConfig) {
 
 async fn start_headless_runtime() -> Result<(), String> {
     let proxy_state = commands::proxy::ProxyServiceState::new();
-    let mut config = modules::config::load_app_config()
+    let mut config = modules::system::config::load_app_config()
         .map_err(|e| format!("failed_to_load_config_for_headless_mode: {}", e))?;
 
     apply_headless_env_overrides(&mut config);
     apply_security_hardening(&mut config);
-    modules::validation::validate_app_config(&config).map_err(|errors| {
+    modules::system::validation::validate_app_config(&config).map_err(|errors| {
         format!(
             "configuration_validation_failed:\n{}",
             errors
@@ -140,7 +140,7 @@ async fn start_headless_runtime() -> Result<(), String> {
     .await
     .map_err(|e| format!("failed_to_start_headless_proxy_service: {}", e))?;
 
-    modules::scheduler::start_scheduler(proxy_state.clone());
+    modules::system::scheduler::start_scheduler(proxy_state.clone());
     info!("Headless scheduler started");
     Ok(())
 }
@@ -151,13 +151,13 @@ pub fn run() {
 
     logger::init_logger();
 
-    if let Err(e) = modules::token_stats::init_db() {
+    if let Err(e) = modules::stats::token_stats::init_db() {
         error!("Failed to initialize token stats database: {}", e);
     }
-    if let Err(e) = modules::security_db::init_db() {
+    if let Err(e) = modules::persistence::security_db::init_db() {
         error!("Failed to initialize security database: {}", e);
     }
-    if let Err(e) = modules::user_token_db::init_db() {
+    if let Err(e) = modules::persistence::user_token_db::init_db() {
         error!("Failed to initialize user token database: {}", e);
     }
 

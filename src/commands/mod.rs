@@ -3,12 +3,12 @@ pub mod user_token;
 
 use crate::modules;
 
-pub use modules::account::RefreshStats;
+pub use modules::auth::account::RefreshStats;
 
 pub async fn refresh_all_quotas_internal(
     proxy_state: &crate::commands::proxy::ProxyServiceState,
 ) -> Result<RefreshStats, String> {
-    let stats = modules::account::refresh_all_quotas_logic().await?;
+    let stats = modules::auth::account::refresh_all_quotas_logic().await?;
 
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
@@ -19,15 +19,15 @@ pub async fn refresh_all_quotas_internal(
 }
 
 pub async fn clear_log_cache() -> Result<(), String> {
-    modules::logger::clear_logs()
+    modules::system::logger::clear_logs()
 }
 
-pub async fn clear_antigravity_cache() -> Result<modules::cache::ClearResult, String> {
-    modules::cache::clear_antigravity_cache(None)
+pub async fn clear_antigravity_cache() -> Result<modules::system::cache::ClearResult, String> {
+    modules::system::cache::clear_antigravity_cache(None)
 }
 
 pub async fn get_antigravity_cache_paths() -> Result<Vec<String>, String> {
-    Ok(modules::cache::get_existing_cache_paths()
+    Ok(modules::system::cache::get_existing_cache_paths()
         .into_iter()
         .map(|p| p.to_string_lossy().to_string())
         .collect())

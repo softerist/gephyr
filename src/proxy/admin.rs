@@ -1448,7 +1448,7 @@ pub(crate) async fn admin_reorder_accounts(
 pub(crate) async fn admin_fetch_account_quota(
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let mut account = crate::modules::load_account(&account_id).map_err(|e| {
+    let mut account = crate::modules::auth::account::load_account(&account_id).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
@@ -1466,7 +1466,7 @@ pub(crate) async fn admin_fetch_account_quota(
             )
         })?;
 
-    crate::modules::update_account_quota(&account_id, quota.clone()).map_err(|e| {
+    crate::modules::auth::account::update_account_quota(&account_id, quota.clone()).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
