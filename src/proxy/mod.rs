@@ -21,7 +21,6 @@ pub mod signature_cache;
 pub mod state;
 pub mod sticky_config;
 pub mod token;
-pub mod token_manager;
 pub mod upstream;
 
 #[allow(unused_imports)]
