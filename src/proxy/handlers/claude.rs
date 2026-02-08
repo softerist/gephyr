@@ -711,15 +711,17 @@ pub async fn handle_messages(
 
                 let current_message_count = request_with_mapped.messages.len();
                 let mut claude_stream = create_claude_sse_stream(
-                    gemini_stream,
-                    trace_id.clone(),
-                    email.clone(),
-                    Some(session_id_str.clone()),
-                    scaling_enabled,
-                    context_limit,
-                    Some(raw_estimated),
-                    current_message_count,
-                    client_adapter.clone(),
+                    crate::proxy::mappers::claude::ClaudeSseStreamInput {
+                        gemini_stream,
+                        trace_id: trace_id.clone(),
+                        email: email.clone(),
+                        session_id: Some(session_id_str.clone()),
+                        scaling_enabled,
+                        context_limit,
+                        estimated_prompt_tokens: Some(raw_estimated),
+                        message_count: current_message_count,
+                        client_adapter: client_adapter.clone(),
+                    },
                 );
 
                 let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(

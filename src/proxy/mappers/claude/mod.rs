@@ -21,21 +21,35 @@ pub use thinking_utils::{
 use bytes::Bytes;
 use futures::Stream;
 use std::pin::Pin;
-#[allow(clippy::too_many_arguments)]
+pub struct ClaudeSseStreamInput {
+    pub gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    pub trace_id: String,
+    pub email: String,
+    pub session_id: Option<String>,
+    pub scaling_enabled: bool,
+    pub context_limit: u32,
+    pub estimated_prompt_tokens: Option<u32>,
+    pub message_count: usize,
+    pub client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>,
+}
+
 pub fn create_claude_sse_stream(
-    mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
-    trace_id: String,
-    email: String,
-    session_id: Option<String>,
-    scaling_enabled: bool,
-    context_limit: u32,
-    estimated_prompt_tokens: Option<u32>,
-    message_count: usize,
-    client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>,
+    input: ClaudeSseStreamInput,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     use async_stream::stream;
     use bytes::BytesMut;
     use futures::StreamExt;
+    let ClaudeSseStreamInput {
+        mut gemini_stream,
+        trace_id,
+        email,
+        session_id,
+        scaling_enabled,
+        context_limit,
+        estimated_prompt_tokens,
+        message_count,
+        client_adapter,
+    } = input;
 
     Box::pin(stream! {
         let mut state = StreamingState::new();
@@ -404,17 +418,17 @@ mod tests {
             });
             yield Ok(bytes::Bytes::from(format!("data: {}\n\n", thinking_json)));
         };
-        let mut claude_stream = create_claude_sse_stream(
-            Box::pin(mock_stream),
-            "trace_test".to_string(),
-            "test@example.com".to_string(),
-            None,
-            false,
-            1_000,
-            None,
-            1,
-            None,
-        );
+        let mut claude_stream = create_claude_sse_stream(ClaudeSseStreamInput {
+            gemini_stream: Box::pin(mock_stream),
+            trace_id: "trace_test".to_string(),
+            email: "test@example.com".to_string(),
+            session_id: None,
+            scaling_enabled: false,
+            context_limit: 1_000,
+            estimated_prompt_tokens: None,
+            message_count: 1,
+            client_adapter: None,
+        });
         let mut all_chunks = Vec::new();
         while let Some(result) = claude_stream.next().await {
             if let Ok(bytes) = result {

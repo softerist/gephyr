@@ -262,7 +262,7 @@ pub(crate) async fn mark_rate_limited_async(
     {
         tracing::info!(
             "Account {} has been locked with real-time quota precision",
-            email
+            event.email
         );
         return;
     }
