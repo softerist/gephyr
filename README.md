@@ -152,6 +152,10 @@ Practical notes:
 
 - Keep `scheduling.mode` as `balance` or `cache_first` to use sticky session behavior.
 - `performance_first` intentionally disables sticky session reuse.
+- `scheduling.max_wait_seconds` keeps sticky binding during short bound-account rate-limit windows; long windows release/rebind.
+- For maximum stickiness from clients, send a stable explicit session id:
+- Header: `x-session-id` (or `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
+- Payload: `session_id` / `sessionId` (also `conversation_id` / `conversationId`, `thread_id` / `threadId`)
 
 ### Console Commands
 

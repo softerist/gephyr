@@ -187,6 +187,157 @@ async fn test_sticky_session_skips_bound_account_when_disabled_on_disk_without_r
 }
 
 #[tokio::test]
+async fn test_sticky_session_keeps_binding_within_wait_window() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "antigravity-token-manager-test-sticky-wait-window-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let accounts_dir = tmp_root.join("accounts");
+    std::fs::create_dir_all(&accounts_dir).unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    let write_account = |id: &str, email: &str, quota_percentage: i64| {
+        let account_path = accounts_dir.join(format!("{}.json", id));
+        let json = serde_json::json!({
+            "id": id,
+            "email": email,
+            "token": {
+                "access_token": format!("atk-{}", id),
+                "refresh_token": format!("rtk-{}", id),
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600,
+                "project_id": format!("pid-{}", id)
+            },
+            "quota": {
+                "models": [
+                    { "name": "gemini-3-flash", "percentage": quota_percentage }
+                ]
+            },
+            "disabled": false,
+            "proxy_disabled": false,
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(&account_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    };
+
+    write_account("acc1", "a@test.com", 90);
+    write_account("acc2", "b@test.com", 10);
+
+    let manager = TokenManager::new(tmp_root.clone());
+    manager.load_accounts().await.unwrap();
+    manager
+        .update_sticky_config(crate::proxy::sticky_config::StickySessionConfig {
+            mode: crate::proxy::sticky_config::SchedulingMode::Balance,
+            max_wait_seconds: 60,
+        })
+        .await;
+    manager
+        .session_accounts
+        .insert("sid-keep".to_string(), "acc1".to_string());
+
+    manager.rate_limit_tracker.set_lockout_until(
+        "acc1",
+        std::time::SystemTime::now() + std::time::Duration::from_secs(5),
+        crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+        Some("gemini-3-flash".to_string()),
+    );
+
+    let (_token, _project_id, _email, account_id, _wait_ms) = manager
+        .get_token("gemini", false, Some("sid-keep"), "gemini-3-flash")
+        .await
+        .unwrap();
+    assert_eq!(account_id, "acc2");
+    assert_eq!(
+        manager.session_accounts.get("sid-keep").map(|v| v.clone()),
+        Some("acc1".to_string())
+    );
+
+    manager.rate_limit_tracker.clear_all();
+
+    let (_token, _project_id, _email, account_id, _wait_ms) = manager
+        .get_token("gemini", false, Some("sid-keep"), "gemini-3-flash")
+        .await
+        .unwrap();
+    assert_eq!(account_id, "acc1");
+
+    let _ = std::fs::remove_dir_all(&tmp_root);
+}
+
+#[tokio::test]
+async fn test_sticky_session_rebinds_when_wait_exceeds_window() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "antigravity-token-manager-test-sticky-rebind-window-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let accounts_dir = tmp_root.join("accounts");
+    std::fs::create_dir_all(&accounts_dir).unwrap();
+    let now = chrono::Utc::now().timestamp();
+
+    let write_account = |id: &str, email: &str, quota_percentage: i64| {
+        let account_path = accounts_dir.join(format!("{}.json", id));
+        let json = serde_json::json!({
+            "id": id,
+            "email": email,
+            "token": {
+                "access_token": format!("atk-{}", id),
+                "refresh_token": format!("rtk-{}", id),
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600,
+                "project_id": format!("pid-{}", id)
+            },
+            "quota": {
+                "models": [
+                    { "name": "gemini-3-flash", "percentage": quota_percentage }
+                ]
+            },
+            "disabled": false,
+            "proxy_disabled": false,
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(&account_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    };
+
+    write_account("acc1", "a@test.com", 90);
+    write_account("acc2", "b@test.com", 10);
+
+    let manager = TokenManager::new(tmp_root.clone());
+    manager.load_accounts().await.unwrap();
+    manager
+        .update_sticky_config(crate::proxy::sticky_config::StickySessionConfig {
+            mode: crate::proxy::sticky_config::SchedulingMode::Balance,
+            max_wait_seconds: 2,
+        })
+        .await;
+    manager
+        .session_accounts
+        .insert("sid-rebind".to_string(), "acc1".to_string());
+
+    manager.rate_limit_tracker.set_lockout_until(
+        "acc1",
+        std::time::SystemTime::now() + std::time::Duration::from_secs(15),
+        crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+        Some("gemini-3-flash".to_string()),
+    );
+
+    let (_token, _project_id, _email, account_id, _wait_ms) = manager
+        .get_token("gemini", false, Some("sid-rebind"), "gemini-3-flash")
+        .await
+        .unwrap();
+    assert_eq!(account_id, "acc2");
+    assert_eq!(
+        manager
+            .session_accounts
+            .get("sid-rebind")
+            .map(|v| v.clone()),
+        Some("acc2".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp_root);
+}
+
+#[tokio::test]
 async fn test_session_bindings_persist_and_restore_across_restart() {
     let tmp_root = std::env::temp_dir().join(format!(
         "antigravity-token-manager-test-session-persist-{}",

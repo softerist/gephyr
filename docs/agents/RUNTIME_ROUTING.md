@@ -53,6 +53,10 @@ Shared behavior:
 
 - Non-stream client requests are often converted to internal stream calls and collected back to JSON.
 - Model routing uses custom mappings + wildcard rules + defaults: `src/proxy/common/model_mapping.rs`.
+- Session identity precedence for OpenAI/Gemini requests:
+- explicit session headers (`x-session-id`, `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
+- explicit payload fields (`session_id`/`sessionId`, `conversation_id`/`conversationId`, `thread_id`/`threadId`, metadata session/user id fields)
+- fallback content-derived hash when explicit id is absent
 
 ## Token/Account Scheduling
 
@@ -66,6 +70,9 @@ From `src/proxy/token/*`:
 - fallback delay + optimistic reset path
 - model-scoped rate-limit checks are applied in sticky reuse, preferred selection, and rotation fallback paths
 - sticky session bindings can be persisted to disk and restored on startup when `persist_session_bindings=true`
+- `scheduling.max_wait_seconds` controls sticky binding retention on bound-account rate limits:
+- if wait is `<= max_wait_seconds`, binding is retained and current request may use fallback account without rebinding
+- if wait is `> max_wait_seconds`, binding is released and a new binding may be established
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
 

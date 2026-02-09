@@ -28,6 +28,7 @@ Use this when starting a new task quickly and safely.
 5. For session-stickiness/restart issues, verify proxy config uses:
    - `persist_session_bindings: true`
    - `scheduling.mode: balance` or `cache_first` (not `performance_first`)
+6. For client-driven stickiness, verify requests provide a stable explicit session id (`x-session-id` or payload `session_id`/`sessionId`).
 
 ## Session Persistence Quick Config
 

@@ -62,10 +62,22 @@ impl TokenManager {
                 .rate_limit_tracker
                 .get_remaining_wait(&key, Some(req.normalized_target));
             if reset_sec > 0 {
+                let max_wait_seconds = self.sticky_config.read().await.max_wait_seconds;
+                if reset_sec <= max_wait_seconds {
+                    tracing::debug!(
+                        "Sticky Session: Bound account {} is rate-limited ({}s <= max_wait_seconds={}s), keeping binding and using fallback for this request.",
+                        bound_token.email,
+                        reset_sec,
+                        max_wait_seconds
+                    );
+                    return None;
+                }
+
                 tracing::debug!(
-                    "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",
+                    "Sticky Session: Bound account {} is rate-limited ({}s > max_wait_seconds={}s), unbinding and switching.",
                     bound_token.email,
-                    reset_sec
+                    reset_sec,
+                    max_wait_seconds
                 );
                 self.session_accounts.remove(sid);
                 self.persist_session_bindings_internal();
@@ -172,14 +184,28 @@ impl TokenManager {
             let update_last_used = Some((selected.account_id.clone(), std::time::Instant::now()));
 
             if let Some(sid) = req.session_id {
-                self.session_accounts
-                    .insert(sid.to_string(), selected.account_id.clone());
-                self.persist_session_bindings_internal();
-                tracing::debug!(
-                    "Sticky Session: Bound new account {} to session {}",
-                    selected.email,
-                    sid
-                );
+                let existing_binding = self.session_accounts.get(sid).map(|v| v.clone());
+                match existing_binding.as_deref() {
+                    Some(existing) if existing != selected.account_id.as_str() => {
+                        tracing::debug!(
+                            "Sticky Session: Keeping existing binding {} for session {} while current request uses fallback account {}",
+                            existing,
+                            sid,
+                            selected.account_id
+                        );
+                    }
+                    Some(_) => {}
+                    None => {
+                        self.session_accounts
+                            .insert(sid.to_string(), selected.account_id.clone());
+                        self.persist_session_bindings_internal();
+                        tracing::debug!(
+                            "Sticky Session: Bound new account {} to session {}",
+                            selected.email,
+                            sid
+                        );
+                    }
+                }
             }
 
             return (Some(selected), update_last_used);

@@ -107,7 +107,11 @@ pub async fn handle_generate(
             None,
             Some(&body),
         );
-        let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
+        let session_id = SessionManager::extract_gemini_session_id_with_overrides(
+            &body,
+            &model_name,
+            Some(&headers),
+        );
         let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
             .get_token(
                 &config.request_type,

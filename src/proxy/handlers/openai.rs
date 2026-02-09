@@ -135,7 +135,11 @@ pub async fn handle_chat_completions(
             None,
             None,
         );
-        let session_id = SessionManager::extract_openai_session_id(&openai_req);
+        let session_id = SessionManager::extract_openai_session_id_with_overrides(
+            &openai_req,
+            Some(&headers),
+            Some(&original_body),
+        );
         let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
             .get_token(
                 &config.request_type,
@@ -517,8 +521,11 @@ pub async fn handle_chat_completions(
 }
 pub async fn handle_completions(
     State(state): State<OpenAIHandlerState>,
+    headers: HeaderMap,
     Json(mut body): Json<Value>,
 ) -> Response {
+    let original_body = body.clone();
+
     debug!(
         "Received /v1/completions or /v1/responses payload: {:?}",
         body
@@ -866,7 +873,11 @@ pub async fn handle_completions(
             None,
             None,
         );
-        let session_id_str = SessionManager::extract_openai_session_id(&openai_req);
+        let session_id_str = SessionManager::extract_openai_session_id_with_overrides(
+            &openai_req,
+            Some(&headers),
+            Some(&original_body),
+        );
         let session_id = Some(session_id_str.as_str());
         let force_rotate = attempt > 0;
 
