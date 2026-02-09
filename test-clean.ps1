@@ -1,3 +1,4 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$SkipBuild,
     [switch]$UseBuildCache,
@@ -8,7 +9,9 @@ param(
     [int]$Port = 8045,
     [string]$Image = "gephyr:latest",
     [string]$Model = "gpt-5.3-codex",
-    [string]$Prompt = "hello from gephyr"
+    [string]$Prompt = "hello from gephyr",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$CommandArgs
 )
 
 Set-StrictMode -Version Latest
@@ -22,6 +25,30 @@ function Test-DockerAvailable {
     } catch {
         return $false
     }
+}
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$consoleScript = Join-Path $scriptDir "console.ps1"
+$allowGuardScript = Join-Path $scriptDir "scripts/check-allow-attributes.ps1"
+
+if (-not (Test-Path $consoleScript)) {
+    throw "Missing script: $consoleScript"
+}
+if (-not (Test-Path $allowGuardScript)) {
+    throw "Missing script: $allowGuardScript"
+}
+
+if ($CommandArgs -and $CommandArgs.Count -gt 0) {
+    $firstArg = $CommandArgs[0].ToLowerInvariant()
+    $passthroughCommands = @("status", "health", "accounts", "login", "restart", "api-test")
+
+    if ($passthroughCommands -contains $firstArg) {
+        Write-Host "Forwarding to console.ps1: $($CommandArgs -join ' ')"
+        & $consoleScript @CommandArgs
+        exit $LASTEXITCODE
+    }
+
+    throw "Unknown positional argument(s): $($CommandArgs -join ' '). Use named flags for test-clean.ps1 or call .\console.ps1 <command>."
 }
 
 if (-not (Test-DockerAvailable)) {
@@ -41,17 +68,6 @@ if (-not (Test-DockerAvailable)) {
     Write-Host "╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
     Write-Host ""
     exit 1
-}
-
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$consoleScript = Join-Path $scriptDir "console.ps1"
-$allowGuardScript = Join-Path $scriptDir "scripts/check-allow-attributes.ps1"
-
-if (-not (Test-Path $consoleScript)) {
-    throw "Missing script: $consoleScript"
-}
-if (-not (Test-Path $allowGuardScript)) {
-    throw "Missing script: $allowGuardScript"
 }
 
 function Invoke-Step {
