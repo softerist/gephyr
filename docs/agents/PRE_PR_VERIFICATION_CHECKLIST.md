@@ -64,12 +64,8 @@ Use this before opening a PR. It is aligned to:
 
 Before PR, explicitly re-test these areas if related code changed:
 
-- `/api/zai/models/fetch` route/handler extractor alignment.
-- `/health` vs `/healthz` behavior under service-status middleware.
-- blacklist/whitelist clear endpoint behavior (remove-by-id correctness).
-- user token enabled-state enforcement.
-- monitor accounting double-write and disabled-state behavior.
-- security logs query safety and pagination totals.
+- model-scoped availability checks in fallback path (`src/proxy/token/availability.rs`).
+- CIDR behavior and validation boundaries in security DB/middleware (`src/modules/persistence/security_db.rs`).
 
 ## 8) Test and Validation
 

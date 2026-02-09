@@ -146,7 +146,7 @@ Main admin groups include:
 - `Random`
 - `Priority`
 - `LeastConnections`
-- `WeightedRoundRobin` enum (implemented as priority selection currently)
+- `WeightedRoundRobin` (weighted random selection using priority-derived weights)
 - Supports account-to-proxy bindings with max-accounts enforcement
 - Persists bindings to app config
 - Health checks run in loop and on-demand
@@ -221,27 +221,10 @@ Main admin groups include:
 - `GEPHYR_GOOGLE_OAUTH_CLIENT_ID`, `ABV_GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`
 - `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET`, `ABV_GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`
 
-## Confirmed High-Impact Edge Cases / Defects
+## Open Edge Cases / Defects
 
-- Route extractor mismatch likely breaking endpoint:
-- Route: `/api/zai/models/fetch` (no path param): `src/proxy/routes/admin.rs`
-- Handler expects `Path<String>`: `src/proxy/admin/runtime/service_control.rs`
-- Health bypass inconsistency:
-- service-status middleware bypasses `/health` but not `/healthz`
-- both routes are exposed in proxy routes
-- Blacklist/whitelist clear logic mismatch:
-- clear handlers pass `ip_pattern` into remove functions
-- remove functions delete by `id`
-- User token `enabled` flag not enforced in `validate_token` path (`src/modules/persistence/user_token_db.rs`)
-- In auth `Off` mode, user token identity attachment can occur via `get_token_by_value` without full validation checks
-- Monitor path can double-record token usage stats when enabled (`src/proxy/monitor.rs`)
-- Monitor records token usage even when monitor is disabled (record call happens before `is_enabled` check)
-- Security logs API pagination total uses page-size result length (`total = logs.len()`) instead of full count
-- Security DB query builder uses `format!` with `ip_filter` in SQL string assembly (unsafe construction pattern)
 - CIDR matcher is IPv4-only and uses simplistic split/parse logic
 - Availability fallback check uses rate-limit check without model-scoped key in one path (`model=None`), which can miss model-specific locks
-- Weighted proxy strategy currently aliases to priority strategy
-- User token summary returns `today_requests: 0` hardcoded
 
 ## Notable Implementation Limits
 

@@ -78,4 +78,4 @@ Routing order:
 Pool strategies:
 
 - `RoundRobin`, `Random`, `Priority`, `LeastConnections`, `WeightedRoundRobin`
-- weighted currently delegates to priority logic.
+- weighted uses weighted random selection derived from proxy priority.
