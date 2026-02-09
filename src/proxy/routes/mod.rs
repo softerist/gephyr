@@ -61,5 +61,3 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
             ip_filter_middleware,
         ))
 }
-
-

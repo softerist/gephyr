@@ -94,4 +94,3 @@ pub(crate) async fn admin_update_user_token(
         })?;
     Ok(StatusCode::OK)
 }
-

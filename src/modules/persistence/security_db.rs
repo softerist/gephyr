@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 fn map_ip_access_log_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<IpAccessLog> {
@@ -201,7 +202,10 @@ pub fn get_ip_access_logs(
                 .map_err(|e| e.to_string())?;
             let pattern = format!("%{}%", ip);
             let logs_iter = stmt
-                .query_map(params![pattern, limit as i64, offset as i64], map_ip_access_log_row)
+                .query_map(
+                    params![pattern, limit as i64, offset as i64],
+                    map_ip_access_log_row,
+                )
                 .map_err(|e| e.to_string())?;
             for log in logs_iter {
                 logs.push(log.map_err(|e| e.to_string())?);
@@ -238,7 +242,10 @@ pub fn get_ip_access_logs(
             .map_err(|e| e.to_string())?;
         let pattern = format!("%{}%", ip);
         let logs_iter = stmt
-            .query_map(params![pattern, limit as i64, offset as i64], map_ip_access_log_row)
+            .query_map(
+                params![pattern, limit as i64, offset as i64],
+                map_ip_access_log_row,
+            )
             .map_err(|e| e.to_string())?;
         for log in logs_iter {
             logs.push(log.map_err(|e| e.to_string())?);
@@ -263,7 +270,10 @@ pub fn get_ip_access_logs(
     Ok(logs)
 }
 
-pub fn get_ip_access_logs_count(ip_filter: Option<&str>, blocked_only: bool) -> Result<usize, String> {
+pub fn get_ip_access_logs_count(
+    ip_filter: Option<&str>,
+    blocked_only: bool,
+) -> Result<usize, String> {
     let conn = connect_db()?;
     let normalized_filter = ip_filter.map(str::trim).filter(|s| !s.is_empty());
 
@@ -506,34 +516,52 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
     Ok(None)
 }
 fn cidr_match(ip: &str, cidr: &str) -> bool {
-    let parts: Vec<&str> = cidr.split('/').collect();
-    if parts.len() != 2 {
+    let Some((network, prefix_str)) = cidr.split_once('/') else {
         return false;
-    }
-
-    let network = parts[0];
-    let prefix_len: u8 = match parts[1].parse() {
+    };
+    let prefix_len: u8 = match prefix_str.parse() {
         Ok(p) => p,
         Err(_) => return false,
     };
 
-    let ip_parts: Vec<u8> = ip.split('.').filter_map(|s| s.parse().ok()).collect();
-    let net_parts: Vec<u8> = network.split('.').filter_map(|s| s.parse().ok()).collect();
+    let ip_addr: IpAddr = match ip.parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    let net_addr: IpAddr = match network.parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
 
-    if ip_parts.len() != 4 || net_parts.len() != 4 {
+    match (ip_addr, net_addr) {
+        (IpAddr::V4(ipv4), IpAddr::V4(netv4)) => {
+            cidr_bytes_match(&ipv4.octets(), &netv4.octets(), prefix_len, 32)
+        }
+        (IpAddr::V6(ipv6), IpAddr::V6(netv6)) => {
+            cidr_bytes_match(&ipv6.octets(), &netv6.octets(), prefix_len, 128)
+        }
+        _ => false,
+    }
+}
+
+fn cidr_bytes_match(ip: &[u8], network: &[u8], prefix_len: u8, total_bits: u8) -> bool {
+    if prefix_len > total_bits {
         return false;
     }
 
-    let ip_u32 = u32::from_be_bytes([ip_parts[0], ip_parts[1], ip_parts[2], ip_parts[3]]);
-    let net_u32 = u32::from_be_bytes([net_parts[0], net_parts[1], net_parts[2], net_parts[3]]);
+    let full_bytes = (prefix_len / 8) as usize;
+    let remaining_bits = prefix_len % 8;
 
-    let mask = if prefix_len == 0 {
-        0
-    } else {
-        !0u32 << (32 - prefix_len)
-    };
+    if ip[..full_bytes] != network[..full_bytes] {
+        return false;
+    }
 
-    (ip_u32 & mask) == (net_u32 & mask)
+    if remaining_bits == 0 {
+        return true;
+    }
+
+    let mask = u8::MAX << (8 - remaining_bits);
+    (ip[full_bytes] & mask) == (network[full_bytes] & mask)
 }
 pub fn add_to_whitelist(
     ip_pattern: &str,

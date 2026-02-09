@@ -588,4 +588,3 @@ fn test_p2c_all_attempted() {
         crate::proxy::token::pool::select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
     assert!(result.is_none());
 }
-

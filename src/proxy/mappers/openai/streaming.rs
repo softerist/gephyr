@@ -13,11 +13,7 @@ pub fn store_thought_signature(sig: &str, session_id: &str, message_count: usize
         return;
     }
     crate::proxy::mappers::signature_store::store_thought_signature(sig);
-    SignatureCache::global().cache_session_signature(
-        session_id,
-        sig.to_string(),
-        message_count,
-    );
+    SignatureCache::global().cache_session_signature(session_id, sig.to_string(), message_count);
 
     tracing::debug!(
         "[ThoughtSig] Storing Session signature (sid: {}, len: {}, msg_count: {})",
@@ -455,4 +451,3 @@ pub fn create_codex_sse_stream(
     };
     Box::pin(stream)
 }
-

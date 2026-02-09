@@ -1,8 +1,8 @@
 use serde_json;
 use std::fs;
 
-use crate::modules::auth::account::get_data_dir;
 use crate::models::AppConfig;
+use crate::modules::auth::account::get_data_dir;
 
 const CONFIG_FILE: &str = "config.json";
 pub fn load_app_config() -> Result<AppConfig, String> {

@@ -64,8 +64,7 @@ Use this before opening a PR. It is aligned to:
 
 Before PR, explicitly re-test these areas if related code changed:
 
-- model-scoped availability checks in fallback path (`src/proxy/token/availability.rs`).
-- CIDR behavior and validation boundaries in security DB/middleware (`src/modules/persistence/security_db.rs`).
+- No currently open known defects. Re-run focused tests for any touched risk areas.
 
 ## 8) Test and Validation
 

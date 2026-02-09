@@ -124,4 +124,3 @@ pub(crate) async fn admin_trigger_proxy_health_check(
         "proxies": config.proxies,
     })))
 }
-

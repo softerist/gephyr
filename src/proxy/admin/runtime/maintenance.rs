@@ -82,4 +82,3 @@ pub(crate) async fn admin_clear_log_cache(
     })?;
     Ok(StatusCode::OK)
 }
-

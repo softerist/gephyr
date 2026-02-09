@@ -8,7 +8,8 @@ use tracing::{debug, error, info};
 
 use crate::proxy::debug_logger;
 use crate::proxy::mappers::openai::{
-    transform_openai_request, transform_openai_response, OpenAIContent, OpenAIMessage, OpenAIRequest,
+    transform_openai_request, transform_openai_response, OpenAIContent, OpenAIMessage,
+    OpenAIRequest,
 };
 use crate::proxy::state::{ModelCatalogState, OpenAIHandlerState};
 
@@ -70,18 +71,14 @@ pub async fn handle_chat_completions(
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid request: {}", e)))?;
     if openai_req.messages.is_empty() {
         debug!("Received request with empty messages, injecting fallback...");
-        openai_req
-            .messages
-            .push(OpenAIMessage {
-                role: "user".to_string(),
-                content: Some(OpenAIContent::String(
-                    " ".to_string(),
-                )),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-                name: None,
-            });
+        openai_req.messages.push(OpenAIMessage {
+            role: "user".to_string(),
+            content: Some(OpenAIContent::String(" ".to_string())),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        });
     }
 
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
@@ -282,7 +279,8 @@ pub async fn handle_chat_completions(
                         timeout_message: "Timeout waiting for first data",
                     },
                 )
-                .await {
+                .await
+                {
                     Ok(chunk) => chunk,
                     Err(err) => {
                         last_error = err;
@@ -308,16 +306,14 @@ pub async fn handle_chat_completions(
                     match collect_stream_to_json(Box::pin(combined_stream)).await {
                         Ok(full_response) => {
                             info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
-                            return Ok(
-                                super::streaming::build_json_response_with_headers(
-                                    StatusCode::OK,
-                                    &full_response,
-                                    Some(&email),
-                                    Some(&mapped_model),
-                                    &[],
-                                )
-                                .into_response(),
-                            );
+                            return Ok(super::streaming::build_json_response_with_headers(
+                                StatusCode::OK,
+                                &full_response,
+                                Some(&email),
+                                Some(&mapped_model),
+                                &[],
+                            )
+                            .into_response());
                         }
                         Err(e) => {
                             error!("[{}] Stream collection error: {}", trace_id, e);
@@ -336,16 +332,14 @@ pub async fn handle_chat_completions(
 
             let openai_response =
                 transform_openai_response(&gemini_resp, Some(&session_id), message_count);
-            return Ok(
-                super::streaming::build_json_response_with_headers(
-                    StatusCode::OK,
-                    &openai_response,
-                    Some(&email),
-                    Some(&mapped_model),
-                    &[],
-                )
-                .into_response(),
-            );
+            return Ok(super::streaming::build_json_response_with_headers(
+                StatusCode::OK,
+                &openai_response,
+                Some(&email),
+                Some(&mapped_model),
+                &[],
+            )
+            .into_response());
         }
         let status_code = status.as_u16();
         let _retry_after = response
@@ -839,18 +833,14 @@ pub async fn handle_completions(
         }
     };
     if openai_req.messages.is_empty() {
-        openai_req
-            .messages
-            .push(OpenAIMessage {
-                role: "user".to_string(),
-                content: Some(OpenAIContent::String(
-                    " ".to_string(),
-                )),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-                name: None,
-            });
+        openai_req.messages.push(OpenAIMessage {
+            role: "user".to_string(),
+            content: Some(OpenAIContent::String(" ".to_string())),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        });
     }
 
     let upstream = state.upstream.clone();
@@ -989,7 +979,8 @@ pub async fn handle_completions(
                             timeout_message: "Timeout waiting for first data",
                         },
                     )
-                    .await {
+                    .await
+                    {
                         Ok(chunk) => chunk,
                         Err(err) => {
                             last_error = err;
@@ -997,10 +988,9 @@ pub async fn handle_completions(
                         }
                     };
 
-                    let combined_stream = futures::stream::once(async move {
-                        Ok::<Bytes, String>(first_data_chunk)
-                    })
-                    .chain(openai_stream);
+                    let combined_stream =
+                        futures::stream::once(async move { Ok::<Bytes, String>(first_data_chunk) })
+                            .chain(openai_stream);
 
                     return super::streaming::build_sse_response(
                         Body::from_stream(combined_stream),
@@ -1032,7 +1022,8 @@ pub async fn handle_completions(
                             timeout_message: "Timeout peek internal",
                         },
                     )
-                    .await {
+                    .await
+                    {
                         Ok(chunk) => chunk,
                         Err(err) => {
                             last_error = err;
@@ -1040,24 +1031,27 @@ pub async fn handle_completions(
                         }
                     };
 
-                    let combined_stream = futures::stream::once(async move {
-                        Ok::<Bytes, String>(first_data_chunk)
-                    })
-                    .chain(openai_stream);
+                    let combined_stream =
+                        futures::stream::once(async move { Ok::<Bytes, String>(first_data_chunk) })
+                            .chain(openai_stream);
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
                     match collect_stream_to_json(Box::pin(combined_stream)).await {
                         Ok(chat_resp) => {
-                            let choices = chat_resp.choices.iter().map(|c| {
-                                json!({
-                                    "text": match &c.message.content {
-                                        Some(OpenAIContent::String(s)) => s.clone(),
-                                        _ => "".to_string()
-                                    },
-                                    "index": c.index,
-                                    "logprobs": null,
-                                    "finish_reason": c.finish_reason
+                            let choices = chat_resp
+                                .choices
+                                .iter()
+                                .map(|c| {
+                                    json!({
+                                        "text": match &c.message.content {
+                                            Some(OpenAIContent::String(s)) => s.clone(),
+                                            _ => "".to_string()
+                                        },
+                                        "index": c.index,
+                                        "logprobs": null,
+                                        "finish_reason": c.finish_reason
+                                    })
                                 })
-                            }).collect::<Vec<_>>();
+                                .collect::<Vec<_>>();
 
                             let legacy_resp = json!({
                                 "id": chat_resp.id,
@@ -1077,9 +1071,7 @@ pub async fn handle_completions(
                             );
                         }
                         Err(e) => {
-                            return super::errors::stream_collection_error_response(
-                                &e.to_string(),
-                            );
+                            return super::errors::stream_collection_error_response(&e.to_string());
                         }
                     }
                 }
@@ -1097,17 +1089,21 @@ pub async fn handle_completions(
 
             let chat_resp =
                 transform_openai_response(&gemini_resp, Some(&session_id), message_count);
-            let choices = chat_resp.choices.iter().map(|c| {
-                json!({
-                    "text": match &c.message.content {
-                        Some(OpenAIContent::String(s)) => s.clone(),
-                        _ => "".to_string()
-                    },
-                    "index": c.index,
-                    "logprobs": null,
-                    "finish_reason": c.finish_reason
+            let choices = chat_resp
+                .choices
+                .iter()
+                .map(|c| {
+                    json!({
+                        "text": match &c.message.content {
+                            Some(OpenAIContent::String(s)) => s.clone(),
+                            _ => "".to_string()
+                        },
+                        "index": c.index,
+                        "logprobs": null,
+                        "finish_reason": c.finish_reason
+                    })
                 })
-            }).collect::<Vec<_>>();
+                .collect::<Vec<_>>();
 
             let legacy_resp = json!({
                 "id": chat_resp.id,
@@ -1177,4 +1173,3 @@ pub async fn handle_completions(
 pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
     build_models_list_response(&state).await
 }
-

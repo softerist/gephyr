@@ -1,7 +1,4 @@
-use crate::modules::{
-    auth::account,
-    system::logger,
-};
+use crate::modules::{auth::account, system::logger};
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
@@ -423,12 +420,14 @@ pub(crate) async fn admin_fetch_account_quota(
             )
         })?;
 
-    crate::modules::auth::account::update_account_quota(&account_id, quota.clone()).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    crate::modules::auth::account::update_account_quota(&account_id, quota.clone()).map_err(
+        |e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        },
+    )?;
 
     Ok(Json(quota))
 }
@@ -460,4 +459,3 @@ pub(crate) async fn admin_toggle_proxy_status(
 
     Ok(StatusCode::OK)
 }
-

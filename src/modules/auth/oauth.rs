@@ -201,9 +201,14 @@ pub async fn refresh_access_token(
         params.push(("client_secret", s));
     }
     if let Some(id) = account_id {
-        crate::modules::system::logger::log_info(&format!("Refreshing Token for account: {}...", id));
+        crate::modules::system::logger::log_info(&format!(
+            "Refreshing Token for account: {}...",
+            id
+        ));
     } else {
-        crate::modules::system::logger::log_info("Refreshing Token for generic request (no account_id)...");
+        crate::modules::system::logger::log_info(
+            "Refreshing Token for generic request (no account_id)...",
+        );
     }
 
     let response = client

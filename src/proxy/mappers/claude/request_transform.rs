@@ -49,7 +49,10 @@ mod tests {
         let out = transform_claude_request_in(&req, "proj-1", false).unwrap();
 
         assert_eq!(out["project"], json!("proj-1"));
-        assert!(out["requestId"].as_str().unwrap_or_default().starts_with("agent-"));
+        assert!(out["requestId"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("agent-"));
         assert!(out["request"].get("contents").is_some());
         assert!(out["request"].get("safetySettings").is_some());
     }

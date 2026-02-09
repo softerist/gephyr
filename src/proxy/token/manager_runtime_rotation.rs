@@ -1,5 +1,5 @@
-use super::{ProxyToken, TokenManager};
 use super::manager_selection::{ModeASelection, ModeBSelection};
+use super::{ProxyToken, TokenManager};
 use crate::proxy::token::loader::OnDiskAccountState;
 use std::collections::HashSet;
 
@@ -33,9 +33,7 @@ impl TokenManager {
         &self,
         request: RotationSelectionRequest<'_>,
     ) -> Result<(String, String, String, String, u64), String> {
-        let last_used_account_id = self
-            .snapshot_last_used_account(request.quota_group)
-            .await;
+        let last_used_account_id = self.snapshot_last_used_account(request.quota_group).await;
 
         let mut attempted: HashSet<String> = HashSet::new();
         let mut last_error: Option<String> = None;
@@ -136,9 +134,10 @@ impl TokenManager {
     ) -> Result<ProxyToken, String> {
         match target_token {
             Some(t) => Ok(t),
-            None => self
-                .select_via_rate_limited_fallback(tokens_snapshot, attempted)
-                .await,
+            None => {
+                self.select_via_rate_limited_fallback(tokens_snapshot, attempted)
+                    .await
+            }
         }
     }
 
@@ -234,7 +233,10 @@ impl TokenManager {
         });
 
         if let Some(t) = retry_token {
-            tracing::info!("✅ Buffer delay successful! Found available account: {}", t.email);
+            tracing::info!(
+                "✅ Buffer delay successful! Found available account: {}",
+                t.email
+            );
             Ok(t.clone())
         } else {
             self.try_optimistic_reset_pick(tokens_snapshot, attempted)

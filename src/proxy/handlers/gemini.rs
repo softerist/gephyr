@@ -217,30 +217,29 @@ pub async fn handle_generate(
                     );
                 let mut buffer = BytesMut::new();
                 let s_id = session_id.clone();
-                let first_chunk =
-                    match crate::proxy::handlers::streaming::peek_first_data_chunk(
-                        &mut response_stream,
-                        &crate::proxy::handlers::streaming::StreamPeekOptions {
-                            timeout: std::time::Duration::from_secs(30),
-                            context: "Gemini:stream",
-                            fail_on_empty_chunk: true,
-                            empty_chunk_message: "Empty first chunk received",
-                            skip_data_colon_heartbeat: false,
-                            detect_error_events: false,
-                            error_event_message: "Error event during peek",
-                            stream_error_prefix: "Stream error",
-                            empty_stream_message: "Empty response",
-                            timeout_message: "Timeout",
-                        },
-                    )
-                    .await
-                    {
-                        Ok(chunk) => chunk,
-                        Err(err) => {
-                            last_error = err;
-                            continue;
-                        }
-                    };
+                let first_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                    &mut response_stream,
+                    &crate::proxy::handlers::streaming::StreamPeekOptions {
+                        timeout: std::time::Duration::from_secs(30),
+                        context: "Gemini:stream",
+                        fail_on_empty_chunk: true,
+                        empty_chunk_message: "Empty first chunk received",
+                        skip_data_colon_heartbeat: false,
+                        detect_error_events: false,
+                        error_event_message: "Error event during peek",
+                        stream_error_prefix: "Stream error",
+                        empty_stream_message: "Empty response",
+                        timeout_message: "Timeout",
+                    },
+                )
+                .await
+                {
+                    Ok(chunk) => chunk,
+                    Err(err) => {
+                        last_error = err;
+                        continue;
+                    }
+                };
 
                 let s_id_for_stream = s_id.clone();
                 let model_name_for_stream = mapped_model.clone();
@@ -356,9 +355,11 @@ pub async fn handle_generate(
                         }
                         Err(e) => {
                             error!("Stream collection error: {}", e);
-                            return Ok(crate::proxy::handlers::errors::stream_collection_error_response(
-                                &e.to_string(),
-                            ));
+                            return Ok(
+                                crate::proxy::handlers::errors::stream_collection_error_response(
+                                    &e.to_string(),
+                                ),
+                            );
                         }
                     }
                 }
@@ -490,19 +491,23 @@ pub async fn handle_generate(
             "Gemini Upstream non-retryable error {}: {}",
             status_code, error_text
         );
-        return Ok(crate::proxy::handlers::errors::gemini_upstream_error_response(
-            status,
-            &error_text,
-            Some(&email),
-            Some(&mapped_model),
-        ));
+        return Ok(
+            crate::proxy::handlers::errors::gemini_upstream_error_response(
+                status,
+                &error_text,
+                Some(&email),
+                Some(&mapped_model),
+            ),
+        );
     }
 
-    Ok(crate::proxy::handlers::errors::accounts_exhausted_text_response(
-        &last_error,
-        last_email.as_deref(),
-        None,
-    ))
+    Ok(
+        crate::proxy::handlers::errors::accounts_exhausted_text_response(
+            &last_error,
+            last_email.as_deref(),
+            None,
+        ),
+    )
 }
 
 pub async fn handle_list_models(

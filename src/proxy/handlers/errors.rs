@@ -5,7 +5,10 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-pub fn claude_invalid_request_response(message: impl Into<String>, suggestion: Option<String>) -> Response {
+pub fn claude_invalid_request_response(
+    message: impl Into<String>,
+    suggestion: Option<String>,
+) -> Response {
     let mut body = json!({
         "type": "error",
         "error": {

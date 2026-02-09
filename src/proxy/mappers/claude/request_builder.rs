@@ -170,7 +170,9 @@ mod tests {
         assert!(inner.get("systemInstruction").is_none());
         assert_eq!(inner["generationConfig"]["imageConfig"], image_cfg);
         assert!(inner["generationConfig"].get("responseMimeType").is_none());
-        assert!(inner["generationConfig"].get("responseModalities").is_none());
+        assert!(inner["generationConfig"]
+            .get("responseModalities")
+            .is_none());
         assert_eq!(inner["generationConfig"]["temperature"], json!(0.2));
     }
 

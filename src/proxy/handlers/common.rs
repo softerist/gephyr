@@ -14,10 +14,11 @@ pub async fn handle_detect_model(
     let active_protocol = crate::proxy::handlers::traits::protocol_name(
         &crate::proxy::handlers::traits::HandlerProtocol::Claude,
     );
-    let supported_protocols: Vec<&'static str> = crate::proxy::handlers::traits::all_handler_protocols()
-        .iter()
-        .map(crate::proxy::handlers::traits::protocol_name)
-        .collect();
+    let supported_protocols: Vec<&'static str> =
+        crate::proxy::handlers::traits::all_handler_protocols()
+            .iter()
+            .map(crate::proxy::handlers::traits::protocol_name)
+            .collect();
     trace!(
         protocol = active_protocol,
         supported = ?supported_protocols,

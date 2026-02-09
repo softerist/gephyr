@@ -119,7 +119,9 @@ fn compact_browser_snapshot(text: &str, max_chars: usize) -> Option<String> {
     let requested_head_len = (budget as f64 * SNAPSHOT_HEAD_RATIO).floor() as usize;
     let requested_tail_len = (budget as f64 * SNAPSHOT_TAIL_RATIO).floor() as usize;
     let head_len = requested_head_len.clamp(500, 10_000);
-    let tail_len = requested_tail_len.min(budget.saturating_sub(head_len)).min(3_000);
+    let tail_len = requested_tail_len
+        .min(budget.saturating_sub(head_len))
+        .min(3_000);
 
     let head = &text[..head_len.min(text.len())];
     let tail = if tail_len > 0 && text.len() > head_len {

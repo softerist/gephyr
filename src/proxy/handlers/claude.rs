@@ -710,8 +710,8 @@ pub async fn handle_messages(
                 );
 
                 let current_message_count = request_with_mapped.messages.len();
-                let mut claude_stream = create_claude_sse_stream(
-                    crate::proxy::mappers::claude::ClaudeSseStreamInput {
+                let mut claude_stream =
+                    create_claude_sse_stream(crate::proxy::mappers::claude::ClaudeSseStreamInput {
                         gemini_stream,
                         trace_id: trace_id.clone(),
                         email: email.clone(),
@@ -721,62 +721,63 @@ pub async fn handle_messages(
                         estimated_prompt_tokens: Some(raw_estimated),
                         message_count: current_message_count,
                         client_adapter: client_adapter.clone(),
-                    },
-                );
+                    });
 
-                let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
-                    &mut claude_stream,
-                    &crate::proxy::handlers::streaming::StreamPeekOptions {
-                        timeout: Duration::from_secs(60),
-                        context: "Claude:stream",
-                        fail_on_empty_chunk: false,
-                        empty_chunk_message: "Empty response stream during peek",
-                        skip_data_colon_heartbeat: false,
-                        detect_error_events: false,
-                        error_event_message: "Error event during peek",
-                        stream_error_prefix: "Stream error during peek",
-                        empty_stream_message: "Empty response stream during peek",
-                        timeout_message: "Timeout waiting for first data",
-                    },
-                )
-                .await {
-                    Ok(chunk) => chunk,
-                    Err(err) => {
-                        last_error = err;
-                        continue;
-                    }
-                };
+                let first_data_chunk =
+                    match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                        &mut claude_stream,
+                        &crate::proxy::handlers::streaming::StreamPeekOptions {
+                            timeout: Duration::from_secs(60),
+                            context: "Claude:stream",
+                            fail_on_empty_chunk: false,
+                            empty_chunk_message: "Empty response stream during peek",
+                            skip_data_colon_heartbeat: false,
+                            detect_error_events: false,
+                            error_event_message: "Error event during peek",
+                            stream_error_prefix: "Stream error during peek",
+                            empty_stream_message: "Empty response stream during peek",
+                            timeout_message: "Timeout waiting for first data",
+                        },
+                    )
+                    .await
+                    {
+                        Ok(chunk) => chunk,
+                        Err(err) => {
+                            last_error = err;
+                            continue;
+                        }
+                    };
 
                 let stream_rest = claude_stream;
-                let combined_stream =
-                    Box::pin(futures::stream::once(async move { Ok(first_data_chunk) }).chain(
+                let combined_stream = Box::pin(
+                    futures::stream::once(async move { Ok(first_data_chunk) }).chain(
                         stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
                             match result {
                                 Ok(b) => Ok(b),
-                                Err(e) => Ok(Bytes::from(format!(
-                                    "data: {{\"error\":\"{}\"}}\n\n",
-                                    e
-                                ))),
+                                Err(e) => {
+                                    Ok(Bytes::from(format!("data: {{\"error\":\"{}\"}}\n\n", e)))
+                                }
                             }
                         }),
-                    ));
+                    ),
+                );
                 if client_wants_stream {
                     return crate::proxy::handlers::streaming::build_sse_response_with_headers(
                         Body::from_stream(combined_stream),
                         Some(&email),
                         Some(&request_with_mapped.model),
                         true,
-                        &[("X-Context-Purified", if is_purified { "true" } else { "false" })],
+                        &[(
+                            "X-Context-Purified",
+                            if is_purified { "true" } else { "false" },
+                        )],
                     );
                 } else {
                     use crate::proxy::mappers::claude::collect_stream_to_json;
 
                     match collect_stream_to_json(combined_stream).await {
                         Ok(full_response) => {
-                            info!(
-                                "[{}] ✓ Stream collected and converted to JSON",
-                                trace_id
-                            );
+                            info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
                             return crate::proxy::handlers::streaming::build_json_response_with_headers(
                                 StatusCode::OK,
                                 &full_response,

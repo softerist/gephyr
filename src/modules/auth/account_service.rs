@@ -26,11 +26,8 @@ impl AccountService {
             project_id,
             None,
         );
-        let mut account = account::upsert_account(
-            user_info.email.clone(),
-            user_info.get_display_name(),
-            token,
-        )?;
+        let mut account =
+            account::upsert_account(user_info.email.clone(), user_info.get_display_name(), token)?;
         let email_for_log = account.email.clone();
         let access_token = token_res.access_token.clone();
         match quota::fetch_quota(&access_token, &email_for_log, Some(&account.id)).await {

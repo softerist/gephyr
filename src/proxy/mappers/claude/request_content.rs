@@ -127,8 +127,8 @@ fn build_contents(
 
                             match cached_family {
                                 Some(family) => {
-                                    let compatible =
-                                        !ctx.is_retry && is_model_compatible(&family, ctx.mapped_model);
+                                    let compatible = !ctx.is_retry
+                                        && is_model_compatible(&family, ctx.mapped_model);
 
                                     if !compatible {
                                         tracing::warn!(
@@ -278,7 +278,8 @@ fn build_contents(
                         }
                         *state.previous_was_tool_result = true;
                     }
-                    ContentBlock::ServerToolUse { .. } | ContentBlock::WebSearchToolResult { .. } => {
+                    ContentBlock::ServerToolUse { .. }
+                    | ContentBlock::WebSearchToolResult { .. } => {
                         continue;
                     }
                 }

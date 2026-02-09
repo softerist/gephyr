@@ -1,8 +1,5 @@
 use super::accounts_core::{to_account_response, AccountResponse};
-use crate::modules::{
-    auth::account,
-    system::migration,
-};
+use crate::modules::{auth::account, system::migration};
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
@@ -215,4 +212,3 @@ pub(crate) async fn admin_get_cli_config_content(
             )
         })
 }
-

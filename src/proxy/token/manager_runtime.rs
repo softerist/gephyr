@@ -60,18 +60,16 @@ impl TokenManager {
             return Ok(result);
         }
         let use_sticky_mode = scheduling.mode != SchedulingMode::PerformanceFirst;
-        self.select_token_via_rotation(
-            super::manager_runtime_rotation::RotationSelectionRequest {
-                quota_group,
-                force_rotate,
-                session_id,
-                target_model,
-                tokens_snapshot: &tokens_snapshot,
-                total,
-                quota_protection_enabled,
-                use_sticky_mode,
-            },
-        )
+        self.select_token_via_rotation(super::manager_runtime_rotation::RotationSelectionRequest {
+            quota_group,
+            force_rotate,
+            session_id,
+            target_model,
+            tokens_snapshot: &tokens_snapshot,
+            total,
+            quota_protection_enabled,
+            use_sticky_mode,
+        })
         .await
     }
     async fn sync_pending_account_changes(&self) {

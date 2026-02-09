@@ -114,7 +114,9 @@ impl ProxyMonitor {
                     username: log_to_save.username.clone(),
                 };
 
-                if let Err(e) = crate::modules::persistence::security_db::save_ip_access_log(&security_log) {
+                if let Err(e) =
+                    crate::modules::persistence::security_db::save_ip_access_log(&security_log)
+                {
                     tracing::error!("Failed to save security log: {}", e);
                 }
             }
@@ -137,8 +139,10 @@ impl ProxyMonitor {
     }
 
     pub async fn get_logs(&self, limit: usize) -> Vec<ProxyRequestLog> {
-        let db_result =
-            tokio::task::spawn_blocking(move || crate::modules::persistence::proxy_db::get_logs(limit)).await;
+        let db_result = tokio::task::spawn_blocking(move || {
+            crate::modules::persistence::proxy_db::get_logs(limit)
+        })
+        .await;
 
         match db_result {
             Ok(Ok(logs)) => logs,
@@ -156,7 +160,8 @@ impl ProxyMonitor {
     }
 
     pub async fn get_stats(&self) -> ProxyStats {
-        let db_result = tokio::task::spawn_blocking(crate::modules::persistence::proxy_db::get_stats).await;
+        let db_result =
+            tokio::task::spawn_blocking(crate::modules::persistence::proxy_db::get_stats).await;
 
         match db_result {
             Ok(Ok(stats)) => stats,
@@ -183,7 +188,12 @@ impl ProxyMonitor {
         let search = search_text.unwrap_or_default();
 
         let res = tokio::task::spawn_blocking(move || {
-            crate::modules::persistence::proxy_db::get_logs_filtered(&search, errors_only, page_size, offset)
+            crate::modules::persistence::proxy_db::get_logs_filtered(
+                &search,
+                errors_only,
+                page_size,
+                offset,
+            )
         })
         .await;
 

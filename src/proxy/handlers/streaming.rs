@@ -1,8 +1,4 @@
-use axum::{
-    body::Body,
-    http::StatusCode,
-    response::Response,
-};
+use axum::{body::Body, http::StatusCode, response::Response};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde::Serialize;

@@ -441,7 +441,8 @@ pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<Devi
     let mut account = load_account(account_id)?;
 
     let target_profile = if version_id == "baseline" {
-        crate::modules::system::device::load_global_original().ok_or("Global original profile not found")?
+        crate::modules::system::device::load_global_original()
+            .ok_or("Global original profile not found")?
     } else if let Some(v) = account.device_history.iter().find(|v| v.id == version_id) {
         v.profile.clone()
     } else if version_id == "current" {
@@ -693,11 +694,11 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     }
     let result: crate::error::AppResult<(QuotaData, Option<String>)> =
         crate::modules::system::quota::fetch_quota(
-        &account.token.access_token,
-        &account.email,
-        Some(&account.id),
-    )
-    .await;
+            &account.token.access_token,
+            &account.email,
+            Some(&account.id),
+        )
+        .await;
     if let Ok((ref _q, ref project_id)) = result {
         if project_id.is_some() && *project_id != account.token.project_id {
             crate::modules::system::logger::log_info(&format!(
@@ -878,7 +879,10 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                             crate::modules::system::logger::log_error(&msg);
                             Err(msg)
                         } else {
-                            crate::modules::system::logger::log_info(&format!("    ✅ {} Success", email));
+                            crate::modules::system::logger::log_info(&format!(
+                                "    ✅ {} Success",
+                                email
+                            ));
                             Ok(())
                         }
                     }

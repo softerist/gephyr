@@ -53,7 +53,8 @@ pub(crate) async fn get_token_by_email(
 
     tracing::info!("[Warmup] Token for {} is expiring, refreshing...", email);
 
-    match crate::modules::auth::oauth::refresh_access_token(&refresh_token, Some(&account_id)).await {
+    match crate::modules::auth::oauth::refresh_access_token(&refresh_token, Some(&account_id)).await
+    {
         Ok(token_response) => {
             tracing::info!("[Warmup] Token refresh successful for {}", email);
             let new_now = chrono::Utc::now().timestamp();

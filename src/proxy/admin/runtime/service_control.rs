@@ -21,7 +21,9 @@ pub(crate) async fn admin_get_proxy_status(
     })))
 }
 
-pub(crate) async fn admin_start_proxy_service(State(state): State<AdminState>) -> impl IntoResponse {
+pub(crate) async fn admin_start_proxy_service(
+    State(state): State<AdminState>,
+) -> impl IntoResponse {
     if let Ok(mut config) = crate::modules::system::config::load_app_config() {
         config.proxy.auto_start = true;
         let _ = crate::modules::system::config::save_app_config(&config);
@@ -222,4 +224,3 @@ pub(crate) async fn admin_set_proxy_monitor_enabled(
 
     StatusCode::OK
 }
-

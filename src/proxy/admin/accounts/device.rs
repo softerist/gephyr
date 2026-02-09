@@ -169,4 +169,3 @@ pub(crate) async fn admin_open_folder(
     })?;
     Ok(StatusCode::OK)
 }
-

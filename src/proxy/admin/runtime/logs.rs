@@ -53,9 +53,10 @@ pub(crate) async fn admin_clear_proxy_logs() -> impl IntoResponse {
 pub(crate) async fn admin_get_proxy_log_detail(
     Path(log_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let res =
-        tokio::task::spawn_blocking(move || crate::modules::persistence::proxy_db::get_log_detail(&log_id))
-            .await;
+    let res = tokio::task::spawn_blocking(move || {
+        crate::modules::persistence::proxy_db::get_log_detail(&log_id)
+    })
+    .await;
 
     match res {
         Ok(Ok(log)) => Ok(Json(log)),
@@ -119,4 +120,3 @@ pub(crate) async fn admin_get_proxy_stats(
     let stats = state.core.monitor.get_stats().await;
     Ok(Json(stats))
 }
-

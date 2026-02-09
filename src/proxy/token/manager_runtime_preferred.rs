@@ -106,16 +106,17 @@ impl TokenManager {
         target_model: &str,
         quota_protection_enabled: bool,
     ) -> bool {
-        let normalized_target = crate::proxy::common::model_mapping::normalize_to_standard_id(
-            target_model,
-        )
-        .unwrap_or_else(|| target_model.to_string());
+        let normalized_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
 
         let is_rate_limited = self
             .is_rate_limited(&preferred_token.account_id, Some(&normalized_target))
             .await;
-        let is_quota_protected =
-            quota_protection_enabled && preferred_token.protected_models.contains(&normalized_target);
+        let is_quota_protected = quota_protection_enabled
+            && preferred_token
+                .protected_models
+                .contains(&normalized_target);
 
         if !is_rate_limited && !is_quota_protected {
             return true;

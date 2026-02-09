@@ -230,11 +230,7 @@ impl ProxyPoolManager {
         use rand::distributions::WeightedIndex;
         use rand::prelude::Distribution;
 
-        let max_priority = proxies
-            .iter()
-            .map(|p| p.priority as i64)
-            .max()
-            .unwrap_or(0);
+        let max_priority = proxies.iter().map(|p| p.priority as i64).max().unwrap_or(0);
         let weights: Vec<u64> = proxies
             .iter()
             .map(|p| (max_priority - (p.priority as i64) + 1).max(1) as u64)

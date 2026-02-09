@@ -275,6 +275,41 @@ mod security_db_tests {
     }
 
     #[test]
+    fn test_ipv6_cidr_blacklist_and_whitelist() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        let _ = init_db();
+        cleanup_test_data();
+
+        let _ = add_to_blacklist("2001:db8::/32", Some("Block IPv6 range"), None, "test");
+        assert!(is_ip_in_blacklist("2001:db8::1").unwrap());
+        assert!(is_ip_in_blacklist("2001:db8:abcd::42").unwrap());
+        assert!(!is_ip_in_blacklist("2001:db9::1").unwrap());
+
+        cleanup_test_data();
+        let _ = add_to_whitelist("2001:db8:abcd::/48", Some("Allow IPv6 subnet"));
+        assert!(is_ip_in_whitelist("2001:db8:abcd::99").unwrap());
+        assert!(!is_ip_in_whitelist("2001:db8:abce::99").unwrap());
+
+        cleanup_test_data();
+    }
+
+    #[test]
+    fn test_invalid_cidr_prefix_does_not_match() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        let _ = init_db();
+        cleanup_test_data();
+
+        let _ = add_to_blacklist("10.0.0.0/33", Some("Invalid IPv4 CIDR"), None, "test");
+        assert!(!is_ip_in_blacklist("10.0.0.1").unwrap());
+
+        cleanup_test_data();
+        let _ = add_to_blacklist("2001:db8::/129", Some("Invalid IPv6 CIDR"), None, "test");
+        assert!(!is_ip_in_blacklist("2001:db8::1").unwrap());
+
+        cleanup_test_data();
+    }
+
+    #[test]
     fn test_access_log_save_and_retrieve() {
         let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();

@@ -1,9 +1,5 @@
 use crate::proxy::admin::ErrorResponse;
-use axum::{
-    extract::Json,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::Json, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 
 pub(crate) async fn admin_enable_debug_console() -> impl IntoResponse {
@@ -120,5 +116,3 @@ pub(crate) async fn admin_get_opencode_config_content(
         )
     })
 }
-
-

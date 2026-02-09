@@ -281,7 +281,9 @@ mod tests {
                 type_: None,
                 name: Some("mcp__fs_read".to_string()),
                 description: Some("read files".to_string()),
-                input_schema: Some(json!({"type":"object","properties":{"path":{"type":"string"}}})),
+                input_schema: Some(
+                    json!({"type":"object","properties":{"path":{"type":"string"}}}),
+                ),
             },
         ]);
 

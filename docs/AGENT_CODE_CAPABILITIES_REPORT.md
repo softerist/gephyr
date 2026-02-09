@@ -223,8 +223,7 @@ Main admin groups include:
 
 ## Open Edge Cases / Defects
 
-- CIDR matcher is IPv4-only and uses simplistic split/parse logic
-- Availability fallback check uses rate-limit check without model-scoped key in one path (`model=None`), which can miss model-specific locks
+- None currently open (as of 2026-02-09).
 
 ## Notable Implementation Limits
 

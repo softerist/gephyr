@@ -24,7 +24,10 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
         }
 
         found_index = true;
-        crate::modules::system::logger::log_info(&format!("V1 data discovered: {:?}", v1_accounts_path));
+        crate::modules::system::logger::log_info(&format!(
+            "V1 data discovered: {:?}",
+            v1_accounts_path
+        ));
 
         let content = match fs::read_to_string(&v1_accounts_path) {
             Ok(c) => c,
@@ -37,7 +40,10 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
         let v1_index: Value = match serde_json::from_str(&content) {
             Ok(v) => v,
             Err(e) => {
-                crate::modules::system::logger::log_warn(&format!("Failed to parse index JSON: {}", e));
+                crate::modules::system::logger::log_warn(&format!(
+                    "Failed to parse index JSON: {}",
+                    e
+                ));
                 continue;
             }
         };
@@ -212,7 +218,10 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
 
     let email = user_info.email;
 
-    crate::modules::system::logger::log_info(&format!("Successfully retrieved account info: {}", email));
+    crate::modules::system::logger::log_info(&format!(
+        "Successfully retrieved account info: {}",
+        email
+    ));
 
     let token_data = TokenData::new(
         token_resp.access_token,

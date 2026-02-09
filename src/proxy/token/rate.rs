@@ -125,7 +125,8 @@ pub(crate) async fn fetch_and_lock_with_realtime_quota(
     };
 
     tracing::info!("Account {} is refreshing quota in real-time...", email);
-    match crate::modules::system::quota::fetch_quota(&access_token, email, Some(&account_id)).await {
+    match crate::modules::system::quota::fetch_quota(&access_token, email, Some(&account_id)).await
+    {
         Ok((quota_data, _project_id)) => {
             let earliest_reset = quota_data
                 .models

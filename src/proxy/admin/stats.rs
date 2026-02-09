@@ -1,7 +1,4 @@
-use crate::modules::{
-    stats::token_stats,
-    system::logger,
-};
+use crate::modules::{stats::token_stats, system::logger};
 use crate::proxy::admin::ErrorResponse;
 use axum::{
     extract::Query,
@@ -288,5 +285,3 @@ pub(crate) async fn admin_save_update_settings(
         StatusCode::BAD_REQUEST
     }
 }
-
-

@@ -4,10 +4,7 @@ Fixed defects were removed from this list after code updates on 2026-02-09. This
 
 ## Open Defects
 
-- CIDR implementation limits:
-- IPv4-only split/parse logic in matcher (`src/modules/persistence/security_db.rs`)
-- Model-scoped availability blind spot:
-- availability check uses rate-limit check with `model=None` in one path (`src/proxy/token/availability.rs`)
+- None currently open (as of 2026-02-09).
 
 ## Operational Limitations
 

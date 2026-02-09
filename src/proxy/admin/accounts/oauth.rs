@@ -265,7 +265,10 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                 }
             }
             Some(Err(e)) => {
-                crate::modules::system::logger::log_error(&format!("Background OAuth flow error: {}", e));
+                crate::modules::system::logger::log_error(&format!(
+                    "Background OAuth flow error: {}",
+                    e
+                ));
             }
             None => {
                 crate::modules::system::logger::log_info("Background OAuth flow channel closed");
@@ -286,4 +289,3 @@ fn get_oauth_redirect_uri(port: u16, _host: Option<&str>, _proto: Option<&str>) 
         format!("http://localhost:{}/auth/callback", port)
     }
 }
-
