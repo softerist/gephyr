@@ -37,6 +37,7 @@ Primary groups:
 - status/start/stop
 - model mapping update
 - api-key generation
+- session bindings debug snapshot (bindings + recent sticky decisions)
 - clear session bindings
 - clear rate limits (all or account)
 - preferred account get/set
@@ -68,3 +69,4 @@ Primary groups:
 
 - `/api/*` routes are not exposed unless `ABV_ENABLE_ADMIN_API=true`: `src/proxy/server.rs`.
 - `/auth/callback` is also only mounted when admin API is enabled: `src/proxy/server.rs`.
+- Sticky debug endpoint is `GET /api/proxy/session-bindings`; clear endpoint is `POST /api/proxy/session-bindings/clear`.

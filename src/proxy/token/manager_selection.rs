@@ -70,6 +70,16 @@ impl TokenManager {
                         reset_sec,
                         max_wait_seconds
                     );
+                    self.record_sticky_event(
+                        "kept_binding_short_wait",
+                        sid,
+                        Some(&bound_token.account_id),
+                        None,
+                        Some(req.normalized_target),
+                        Some(reset_sec),
+                        Some(max_wait_seconds),
+                        Some("bound_account_rate_limited_short_window"),
+                    );
                     return None;
                 }
 
@@ -80,6 +90,16 @@ impl TokenManager {
                     max_wait_seconds
                 );
                 self.session_accounts.remove(sid);
+                self.record_sticky_event(
+                    "unbound_long_wait",
+                    sid,
+                    Some(&bound_token.account_id),
+                    None,
+                    Some(req.normalized_target),
+                    Some(reset_sec),
+                    Some(max_wait_seconds),
+                    Some("bound_account_rate_limited_long_window"),
+                );
                 self.persist_session_bindings_internal();
                 return None;
             }
@@ -96,6 +116,16 @@ impl TokenManager {
                     bound_token.email,
                     sid
                 );
+                self.record_sticky_event(
+                    "reused_bound_account",
+                    sid,
+                    Some(&bound_token.account_id),
+                    Some(&bound_token.account_id),
+                    Some(req.normalized_target),
+                    None,
+                    None,
+                    Some("bound_account_eligible_and_reused"),
+                );
                 return Some(bound_token.clone());
             }
 
@@ -111,6 +141,16 @@ impl TokenManager {
                     req.target_model
                 );
                 self.session_accounts.remove(sid);
+                self.record_sticky_event(
+                    "unbound_quota_protected",
+                    sid,
+                    Some(&bound_token.account_id),
+                    None,
+                    Some(req.normalized_target),
+                    None,
+                    None,
+                    Some("bound_account_quota_protected_for_target_model"),
+                );
                 self.persist_session_bindings_internal();
             }
 
@@ -121,6 +161,16 @@ impl TokenManager {
             sid
         );
         self.session_accounts.remove(sid);
+        self.record_sticky_event(
+            "unbound_missing_account",
+            sid,
+            Some(&bound_id),
+            None,
+            Some(req.normalized_target),
+            None,
+            None,
+            Some("bound_account_not_present_in_snapshot"),
+        );
         self.persist_session_bindings_internal();
         None
     }
@@ -193,11 +243,31 @@ impl TokenManager {
                             sid,
                             selected.account_id
                         );
+                        self.record_sticky_event(
+                            "kept_existing_binding_fallback_selected",
+                            sid,
+                            Some(existing),
+                            Some(&selected.account_id),
+                            Some(req.normalized_target),
+                            None,
+                            None,
+                            Some("sticky_binding_retained_while_serving_fallback_request"),
+                        );
                     }
                     Some(_) => {}
                     None => {
                         self.session_accounts
                             .insert(sid.to_string(), selected.account_id.clone());
+                        self.record_sticky_event(
+                            "bound_new_session",
+                            sid,
+                            None,
+                            Some(&selected.account_id),
+                            Some(req.normalized_target),
+                            None,
+                            None,
+                            Some("new_binding_established"),
+                        );
                         self.persist_session_bindings_internal();
                         tracing::debug!(
                             "Sticky Session: Bound new account {} to session {}",

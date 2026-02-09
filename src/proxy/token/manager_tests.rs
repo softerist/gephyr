@@ -252,6 +252,14 @@ async fn test_sticky_session_keeps_binding_within_wait_window() {
         manager.session_accounts.get("sid-keep").map(|v| v.clone()),
         Some("acc1".to_string())
     );
+    let snapshot_after_fallback = manager.get_sticky_debug_snapshot();
+    assert!(snapshot_after_fallback
+        .recent_events
+        .iter()
+        .any(|e| { e.session_id == "sid-keep" && e.action == "kept_binding_short_wait" }));
+    assert!(snapshot_after_fallback.recent_events.iter().any(|e| {
+        e.session_id == "sid-keep" && e.action == "kept_existing_binding_fallback_selected"
+    }));
 
     manager.rate_limit_tracker.clear_all();
 
@@ -260,6 +268,11 @@ async fn test_sticky_session_keeps_binding_within_wait_window() {
         .await
         .unwrap();
     assert_eq!(account_id, "acc1");
+    let snapshot_after_reuse = manager.get_sticky_debug_snapshot();
+    assert!(snapshot_after_reuse
+        .recent_events
+        .iter()
+        .any(|e| { e.session_id == "sid-keep" && e.action == "reused_bound_account" }));
 
     let _ = std::fs::remove_dir_all(&tmp_root);
 }
@@ -333,6 +346,15 @@ async fn test_sticky_session_rebinds_when_wait_exceeds_window() {
             .map(|v| v.clone()),
         Some("acc2".to_string())
     );
+    let snapshot = manager.get_sticky_debug_snapshot();
+    assert!(snapshot
+        .recent_events
+        .iter()
+        .any(|e| e.session_id == "sid-rebind" && e.action == "unbound_long_wait"));
+    assert!(snapshot
+        .recent_events
+        .iter()
+        .any(|e| e.session_id == "sid-rebind" && e.action == "bound_new_session"));
 
     let _ = std::fs::remove_dir_all(&tmp_root);
 }

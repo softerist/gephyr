@@ -2,10 +2,36 @@ use crate::proxy::rate_limit::RateLimitTracker;
 use crate::proxy::sticky_config::StickySessionConfig;
 pub use crate::proxy::token::types::ProxyToken;
 use dashmap::DashMap;
+use serde::Serialize;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
+
+const STICKY_EVENT_BUFFER_SIZE: usize = 256;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StickyDecisionEvent {
+    pub timestamp_unix: i64,
+    pub action: String,
+    pub session_id: String,
+    pub bound_account_id: Option<String>,
+    pub selected_account_id: Option<String>,
+    pub model: Option<String>,
+    pub wait_seconds: Option<u64>,
+    pub max_wait_seconds: Option<u64>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StickyDebugSnapshot {
+    pub persist_session_bindings: bool,
+    pub scheduling: StickySessionConfig,
+    pub session_bindings: HashMap<String, String>,
+    pub recent_events: Vec<StickyDecisionEvent>,
+}
+
 pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>,
     current_index: Arc<AtomicUsize>,
@@ -18,6 +44,7 @@ pub struct TokenManager {
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>,
     health_scores: Arc<DashMap<String, f32>>,
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>,
+    sticky_events: Arc<std::sync::Mutex<VecDeque<StickyDecisionEvent>>>,
     auto_cleanup_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     cancel_token: CancellationToken,
 }
@@ -37,8 +64,40 @@ impl TokenManager {
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
                 crate::models::CircuitBreakerConfig::default(),
             )),
+            sticky_events: Arc::new(std::sync::Mutex::new(VecDeque::new())),
             auto_cleanup_handle: Arc::new(tokio::sync::Mutex::new(None)),
             cancel_token: CancellationToken::new(),
+        }
+    }
+
+    pub(super) fn record_sticky_event(
+        &self,
+        action: &str,
+        session_id: &str,
+        bound_account_id: Option<&str>,
+        selected_account_id: Option<&str>,
+        model: Option<&str>,
+        wait_seconds: Option<u64>,
+        max_wait_seconds: Option<u64>,
+        reason: Option<&str>,
+    ) {
+        let event = StickyDecisionEvent {
+            timestamp_unix: chrono::Utc::now().timestamp(),
+            action: action.to_string(),
+            session_id: session_id.to_string(),
+            bound_account_id: bound_account_id.map(|v| v.to_string()),
+            selected_account_id: selected_account_id.map(|v| v.to_string()),
+            model: model.map(|v| v.to_string()),
+            wait_seconds,
+            max_wait_seconds,
+            reason: reason.map(|v| v.to_string()),
+        };
+
+        if let Ok(mut queue) = self.sticky_events.lock() {
+            queue.push_back(event);
+            while queue.len() > STICKY_EVENT_BUFFER_SIZE {
+                queue.pop_front();
+            }
         }
     }
     pub(super) fn set_persist_session_bindings_enabled(&self, enabled: bool) {

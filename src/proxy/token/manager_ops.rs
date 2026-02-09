@@ -151,7 +151,44 @@ impl TokenManager {
     }
     pub fn clear_all_sessions(&self) {
         crate::proxy::token::control::clear_all_sessions(self.session_accounts.as_ref());
+        self.record_sticky_event(
+            "cleared_all_bindings",
+            "*",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("admin_clear_or_runtime_clear"),
+        );
         self.persist_session_bindings_internal();
+    }
+    pub fn get_sticky_debug_snapshot(&self) -> super::StickyDebugSnapshot {
+        let session_bindings = self
+            .session_accounts
+            .iter()
+            .map(|kv| (kv.key().clone(), kv.value().clone()))
+            .collect::<std::collections::HashMap<String, String>>();
+        let recent_events = self
+            .sticky_events
+            .lock()
+            .map(|q| q.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        let scheduling = self
+            .sticky_config
+            .try_read()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
+        super::StickyDebugSnapshot {
+            persist_session_bindings: self
+                .persist_session_bindings
+                .load(std::sync::atomic::Ordering::Relaxed),
+            scheduling,
+            session_bindings,
+            recent_events,
+        }
     }
     pub async fn set_preferred_account(&self, account_id: Option<String>) {
         crate::proxy::token::control::set_preferred_account(&self.preferred_account_id, account_id)

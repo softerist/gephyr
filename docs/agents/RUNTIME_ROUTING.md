@@ -73,6 +73,7 @@ From `src/proxy/token/*`:
 - `scheduling.max_wait_seconds` controls sticky binding retention on bound-account rate limits:
 - if wait is `<= max_wait_seconds`, binding is retained and current request may use fallback account without rebinding
 - if wait is `> max_wait_seconds`, binding is released and a new binding may be established
+- admin visibility endpoint for sticky behavior: `GET /api/proxy/session-bindings` (current bindings + recent sticky decision events)
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
 

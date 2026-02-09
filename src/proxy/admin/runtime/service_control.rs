@@ -101,6 +101,12 @@ pub(crate) async fn admin_clear_proxy_session_bindings(
     StatusCode::OK
 }
 
+pub(crate) async fn admin_get_proxy_session_bindings(
+    State(state): State<AdminState>,
+) -> impl IntoResponse {
+    Json(state.core.token_manager.get_sticky_debug_snapshot())
+}
+
 pub(crate) async fn admin_clear_all_rate_limits(
     State(state): State<AdminState>,
 ) -> impl IntoResponse {

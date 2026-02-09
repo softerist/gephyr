@@ -118,6 +118,10 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
                 post(admin::admin_clear_proxy_session_bindings),
             )
             .route(
+                "/proxy/session-bindings",
+                get(admin::admin_get_proxy_session_bindings),
+            )
+            .route(
                 "/proxy/rate-limits",
                 delete(admin::admin_clear_all_rate_limits),
             )
