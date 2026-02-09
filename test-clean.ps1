@@ -81,6 +81,23 @@ function Invoke-Step {
     Write-Host ""
 }
 
+function Invoke-DockerBuildWithGuidance {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Args
+    )
+
+    & docker @Args
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "Docker build failed." -ForegroundColor Red
+        Write-Host "Try repairing builder cache, then retry:" -ForegroundColor Yellow
+        Write-Host "  .\console.ps1 docker-repair" -ForegroundColor Yellow
+        Write-Host "If still failing, use aggressive mode:" -ForegroundColor Yellow
+        Write-Host "  .\console.ps1 docker-repair -Aggressive" -ForegroundColor Yellow
+        throw "Docker build failed with exit code $LASTEXITCODE"
+    }
+}
+
 function Wait-OAuthAccountLink {
     param(
         [int]$TimeoutSec = 180,
@@ -153,7 +170,7 @@ if (-not $SkipBuild) {
         if (-not $UseBuildCache) {
             $buildArgs = @("build", "--no-cache", "-t", $Image, "-f", "docker/Dockerfile", ".")
         }
-        & docker @buildArgs
+        Invoke-DockerBuildWithGuidance -Args $buildArgs
     }
 }
 

@@ -72,6 +72,20 @@ step() {
   echo
 }
 
+build_with_guidance() {
+  if "$@"; then
+    return 0
+  fi
+
+  echo ""
+  echo "Docker build failed."
+  echo "Try repairing builder cache, then retry:"
+  echo "  ./console.sh docker-repair"
+  echo "If still failing, use aggressive mode:"
+  echo "  ./console.sh docker-repair --aggressive"
+  exit 1
+}
+
 wait_oauth_account_link() {
   local timeout_sec="${1:-180}"
   local poll_sec="${2:-2}"
@@ -178,9 +192,9 @@ step "Running allow-attribute guard" bash "$ALLOW_GUARD_SCRIPT"
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
   if [[ "$USE_BUILD_CACHE" == "true" ]]; then
-    step "Building image $IMAGE (with cache)" docker build -t "$IMAGE" -f docker/Dockerfile .
+    step "Building image $IMAGE (with cache)" build_with_guidance docker build -t "$IMAGE" -f docker/Dockerfile .
   else
-    step "Building image $IMAGE (--no-cache)" docker build --no-cache -t "$IMAGE" -f docker/Dockerfile .
+    step "Building image $IMAGE (--no-cache)" build_with_guidance docker build --no-cache -t "$IMAGE" -f docker/Dockerfile .
   fi
 fi
 
