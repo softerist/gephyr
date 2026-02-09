@@ -126,6 +126,33 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
 | `ABV_MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
 
+### Persistent Session Bindings (Sticky Sessions Across Restart)
+
+`persist_session_bindings` is a config-file setting (not an env var).  
+It controls whether sticky session bindings (`session_id -> account_id`) survive process/container restarts.
+
+- Default: `true`
+- Config file: `config.json` under your data dir (for example `~/.gephyr/config.json` or `%USERPROFILE%\.gephyr\config.json`)
+
+Example:
+
+```json
+{
+  "proxy": {
+    "persist_session_bindings": true,
+    "scheduling": {
+      "mode": "balance",
+      "max_wait_seconds": 60
+    }
+  }
+}
+```
+
+Practical notes:
+
+- Keep `scheduling.mode` as `balance` or `cache_first` to use sticky session behavior.
+- `performance_first` intentionally disables sticky session reuse.
+
 ### Console Commands
 
 ```powershell

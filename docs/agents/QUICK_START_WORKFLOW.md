@@ -25,3 +25,22 @@ Use this when starting a new task quickly and safely.
 2. Confirm whether headless-only startup assumptions apply (`src/lib.rs` path).
 3. Validate middleware interaction order before changing handlers.
 4. Re-check known defect list before finalizing any fix (or confirm it is still empty).
+5. For session-stickiness/restart issues, verify proxy config uses:
+   - `persist_session_bindings: true`
+   - `scheduling.mode: balance` or `cache_first` (not `performance_first`)
+
+## Session Persistence Quick Config
+
+Use this `config.json` shape when validating sticky sessions across restart:
+
+```json
+{
+  "proxy": {
+    "persist_session_bindings": true,
+    "scheduling": {
+      "mode": "balance",
+      "max_wait_seconds": 60
+    }
+  }
+}
+```
