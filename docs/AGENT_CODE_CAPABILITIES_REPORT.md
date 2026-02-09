@@ -1,0 +1,251 @@
+# Gephyr Agent Capability Report (Code-Derived)
+
+This report is derived from **source code only** under `src/` (no `.md` docs used as primary inputs).
+
+## Runtime and Boot Model
+
+- Entrypoint starts headless runtime: `src/main.rs`, `src/lib.rs`
+- Headless startup initializes:
+- Token stats DB: `src/modules/stats/token_stats.rs`
+- Security DB: `src/modules/persistence/security_db.rs`
+- User token DB: `src/modules/persistence/user_token_db.rs`
+- Security hardening forces proxy auth mode to `Strict` when configured as `Off`/`Auto`: `src/lib.rs`
+- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
+- Opening data folder is disabled in headless mode: `src/commands/mod.rs`
+
+## Public Proxy API Surface
+
+Defined in `src/proxy/routes/mod.rs`:
+
+- `GET /health`
+- `GET /healthz`
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/completions`
+- `POST /v1/responses`
+- `POST /v1/messages`
+- `POST /v1/messages/count_tokens`
+- `GET /v1/models/claude`
+- `GET /v1beta/models`
+- `GET|POST /v1beta/models/:model`
+- `POST /v1beta/models/:model/countTokens`
+- `POST /v1/models/detect`
+
+Proxy middleware order:
+
+- IP filter
+- Auth
+- Monitor
+
+## Admin API Surface
+
+Admin routes are defined in `src/proxy/routes/admin.rs` and mounted under `/api` only when `ABV_ENABLE_ADMIN_API=true` (`src/proxy/server.rs`).
+
+Main admin groups include:
+
+- Accounts CRUD/switch/import/export/reorder/quota/proxy-toggle
+- OAuth prepare/start/complete/cancel/manual-code
+- Proxy start/stop/status/mapping/api-key/session/rate-limit/preferred-account
+- Proxy pool config/bindings/bind/unbind/health-check
+- Logs and proxy stats
+- Token stats (hourly/daily/weekly/by-account/by-model/trends/summary/clear)
+- Security logs/stats/blacklist/whitelist/config/token-stats
+- User tokens CRUD/renew/summary
+- CLI sync status/sync/restore/config (Claude/Codex/Gemini)
+- OpenCode sync status/sync/restore/config
+- System data-dir/update settings/check/cache clear/debug console controls
+- OAuth callback route `/auth/callback` (only mounted with admin API enabled)
+
+## Auth and Security Behavior
+
+- Auth modes: `Off`, `Strict`, `AllExceptHealth`, `Auto` (resolves to `Strict`) in `src/proxy/config.rs`, `src/proxy/security.rs`
+- `OPTIONS` requests bypass auth in middleware: `src/proxy/middleware/auth.rs`
+- `/internal/*` bypass exists in auth/monitor middleware logic (no mounted internal routes were found)
+- API key sources:
+- `Authorization: Bearer ...`
+- `x-api-key`
+- `x-goog-api-key`
+- Admin strict auth checks admin password first (if configured), then API key fallback: `src/proxy/middleware/auth.rs`
+- IP filter supports whitelist mode, whitelist-priority mode, blacklist exact/CIDR matching, blocked-request JSON responses, and blocked log persistence: `src/proxy/middleware/ip_filter.rs`, `src/modules/persistence/security_db.rs`
+
+## Service Status, CORS, Body Limits
+
+- Service-status middleware can return `503` when service disabled: `src/proxy/middleware/service_status.rs`
+- CORS allows any origin/headers and common methods, with credentials disabled: `src/proxy/middleware/cors.rs`
+- Body limit defaults to 100MB via `DefaultBodyLimit::max`, configurable by `ABV_MAX_BODY_SIZE`: `src/proxy/server.rs`
+
+## Protocol Handling and Transformations
+
+### OpenAI (`src/proxy/handlers/openai.rs`)
+
+- Supports chat/completions/responses style payloads
+- Supports Codex-like `input` + `instructions` normalization
+- Converts many non-stream requests into internal stream flow, then collects to JSON
+- Handles signature-related recovery logic
+- Handles 401/403 with account block/forbidden handling via token manager
+- Handles tool calls and tool outputs normalization
+
+### Gemini (`src/proxy/handlers/gemini.rs`)
+
+- Supports `generateContent` and `streamGenerateContent`
+- Wraps requests and unwraps responses via mappers
+- Injects anthropic beta headers when mapped model is Claude-like
+- Stream path extracts/caches thought signatures and can collect stream to JSON
+
+### Claude (`src/proxy/handlers/claude.rs`)
+
+- Supports ZAI dispatch modes: `Off`, `Exclusive`, `Fallback`, `Pooled`
+- Warmup detection/interception returns synthetic stream/non-stream response
+- Background task detection routes to internal background model
+- Context compression pipeline:
+- Layer 1 tool-round trimming
+- Layer 2 thinking compression with signature preservation
+- Layer 3 XML summary fallback flow
+- Signature family checks and tool-loop closure logic
+- `count_tokens` is placeholder unless routed through ZAI provider path
+
+## Model Routing and Mapping
+
+- Extensive static + alias + wildcard custom mapping engine in `src/proxy/common/model_mapping.rs`
+- `resolve_model_route` applies:
+- exact custom mapping
+- most-specific wildcard mapping
+- system fallback mapping
+- Supports canonicalization helpers and compatibility checks for signature families
+
+## Token and Account Orchestration
+
+- Token manager loads account JSONs from data dir
+- Skips disabled/proxy-disabled/forbidden/validation-blocked accounts
+- Auto-clears expired validation-block flags on disk
+- Token acquisition timeout: 5 seconds (`src/proxy/token/manager_runtime.rs`)
+- Selection strategy combines:
+- preferred-account mode
+- sticky sessions
+- 60s last-used lock behavior
+- P2C selection
+- fallback delay and optimistic global reset
+- Refreshes access tokens near expiry and persists updates
+- On `invalid_grant`, disables account and removes it from active in-memory pool
+- Project ID resolution from upstream with fallback generation path
+- Periodic rate-limit cleanup task runs every 15s
+
+## Rate Limiting and Circuit Breaker
+
+- Account-level and model-level lock keys
+- Parses retry from headers and multiple body patterns (including `quotaResetDelay`)
+- Distinguishes reasons (`QUOTA_EXHAUSTED`, `RATE_LIMIT_EXCEEDED`, `MODEL_CAPACITY_EXHAUSTED`, `ServerError`)
+- Uses configurable backoff steps from app config
+- Supports precise lockout from reset timestamps and realtime quota fetch attempts
+- Circuit breaker can disable RL enforcement globally
+
+## Proxy Pool and Upstream Routing
+
+- Proxy pool manager supports:
+- `RoundRobin`
+- `Random`
+- `Priority`
+- `LeastConnections`
+- `WeightedRoundRobin` enum (implemented as priority selection currently)
+- Supports account-to-proxy bindings with max-accounts enforcement
+- Persists bindings to app config
+- Health checks run in loop and on-demand
+- Upstream client routing order:
+- account-bound proxy
+- pool-selected proxy
+- app upstream proxy fallback
+- direct
+- Internal endpoint fallback chain for `v1internal` across sandbox/daily/prod
+
+## Monitoring and Persistence
+
+- Monitor middleware captures request/response metadata and bodies
+- Stream responses are reconstructed/parsing-attempted for usage and content
+- Excludes `/api/*`, `/internal/*`, and `event_logging` from monitor middleware
+- Persistence stores:
+- `proxy_logs.db` (`request_logs`)
+- `security.db` (`ip_access_logs`, `ip_blacklist`, `ip_whitelist`)
+- `user_tokens.db` (`user_tokens`, `token_ip_bindings`, `token_usage_logs`)
+- `token_stats.db` (`token_usage`, `token_stats_hourly`)
+
+## User Token Capabilities
+
+- Create/update/delete/renew/list/summary via admin and command layer
+- Per-token fields include:
+- expiry window
+- enable flag
+- max IP cap
+- curfew window
+- usage counters
+- bound IP entries
+- Auth middleware supports user-token-based access when primary API key auth fails and strict admin mode is not in effect
+
+## OAuth, Account Lifecycle, Device Profiles
+
+- OAuth:
+- PKCE verifier/challenge
+- local callback listeners (IPv4/IPv6)
+- CSRF `state` checks
+- browser-driven and manual code-submit paths
+- account service supports add/upsert/switch/delete/list
+- device profile operations:
+- bind/capture/generate
+- version history
+- restore baseline/current/version
+- delete non-current history version
+
+## CLI and OpenCode Integrations
+
+- CLI sync (`src/proxy/cli_sync.rs`):
+- app detection/version probe
+- config patching for Claude/Codex/Gemini
+- backup and restore
+- config content readback
+- OpenCode sync (`src/proxy/opencode_sync.rs`):
+- install detection across OS-specific paths
+- sync/restore/status/config readback
+- optional account export sync into `antigravity-accounts.json`
+
+## Environment Variables Used by Code
+
+- Runtime proxy/auth:
+- `ABV_API_KEY`, `API_KEY`
+- `ABV_WEB_PASSWORD`, `WEB_PASSWORD`
+- `ABV_AUTH_MODE`, `AUTH_MODE`
+- `ABV_ALLOW_LAN_ACCESS`, `ALLOW_LAN_ACCESS`
+- `ABV_MAX_BODY_SIZE`
+- `ABV_ENABLE_ADMIN_API`
+- `ABV_PUBLIC_URL`
+- `ABV_DATA_DIR`
+- OAuth:
+- `GEPHYR_GOOGLE_OAUTH_CLIENT_ID`, `ABV_GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`
+- `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET`, `ABV_GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`
+
+## Confirmed High-Impact Edge Cases / Defects
+
+- Route extractor mismatch likely breaking endpoint:
+- Route: `/api/zai/models/fetch` (no path param): `src/proxy/routes/admin.rs`
+- Handler expects `Path<String>`: `src/proxy/admin/runtime/service_control.rs`
+- Health bypass inconsistency:
+- service-status middleware bypasses `/health` but not `/healthz`
+- both routes are exposed in proxy routes
+- Blacklist/whitelist clear logic mismatch:
+- clear handlers pass `ip_pattern` into remove functions
+- remove functions delete by `id`
+- User token `enabled` flag not enforced in `validate_token` path (`src/modules/persistence/user_token_db.rs`)
+- In auth `Off` mode, user token identity attachment can occur via `get_token_by_value` without full validation checks
+- Monitor path can double-record token usage stats when enabled (`src/proxy/monitor.rs`)
+- Monitor records token usage even when monitor is disabled (record call happens before `is_enabled` check)
+- Security logs API pagination total uses page-size result length (`total = logs.len()`) instead of full count
+- Security DB query builder uses `format!` with `ip_filter` in SQL string assembly (unsafe construction pattern)
+- CIDR matcher is IPv4-only and uses simplistic split/parse logic
+- Availability fallback check uses rate-limit check without model-scoped key in one path (`model=None`), which can miss model-specific locks
+- Weighted proxy strategy currently aliases to priority strategy
+- User token summary returns `today_requests: 0` hardcoded
+
+## Notable Implementation Limits
+
+- No non-headless runtime mode in current boot path
+- No mounted `/internal/*` endpoints found in router definitions
+- Middleware logging module is placeholder test-only (`src/proxy/middleware/logging.rs`)
+- Warmup config exists in app config model but runtime scheduler states warmup disabled in headless mode

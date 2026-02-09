@@ -1,0 +1,81 @@
+# Runtime and Routing (Code-Derived)
+
+## Boot and Runtime Model
+
+- Entrypoint: `src/main.rs` -> `gephyr_lib::run()`.
+- Runtime is headless in current boot path: `src/lib.rs`.
+- Startup does:
+- load and validate config
+- apply env overrides
+- force strict auth hardening
+- start proxy service
+- init scheduler
+- wait for Ctrl+C
+
+## Config and Env Overlays
+
+From `src/lib.rs` and `src/proxy/server.rs`:
+
+- `ABV_API_KEY` / `API_KEY`
+- `ABV_WEB_PASSWORD` / `WEB_PASSWORD`
+- `ABV_AUTH_MODE` / `AUTH_MODE`
+- `ABV_ALLOW_LAN_ACCESS` / `ALLOW_LAN_ACCESS`
+- `ABV_MAX_BODY_SIZE`
+- `ABV_ENABLE_ADMIN_API`
+- `ABV_PUBLIC_URL`
+- `ABV_DATA_DIR`
+
+## Middleware Stack
+
+Proxy routes (`src/proxy/routes/mod.rs`) apply:
+
+- IP filter
+- Auth
+- Monitor
+
+App-wide layers (`src/proxy/server.rs`) apply:
+
+- service-status middleware
+- CORS layer
+- default body limit
+
+## Protocol Routing and Transforms
+
+- OpenAI path: `src/proxy/handlers/openai.rs`
+- Gemini path: `src/proxy/handlers/gemini.rs`
+- Claude path: `src/proxy/handlers/claude.rs`
+
+Shared behavior:
+
+- Non-stream client requests are often converted to internal stream calls and collected back to JSON.
+- Model routing uses custom mappings + wildcard rules + defaults: `src/proxy/common/model_mapping.rs`.
+
+## Token/Account Scheduling
+
+From `src/proxy/token/*`:
+
+- 5s token-acquisition timeout
+- preferred-account mode
+- sticky session reuse
+- 60s last-used lock path
+- P2C candidate selection
+- fallback delay + optimistic reset path
+- near-expiry refresh + persistence
+- account disable/removal on `invalid_grant`
+
+## Upstream and Proxy Pool Routing
+
+- Upstream client: `src/proxy/upstream/client.rs`
+- Proxy pool manager: `src/proxy/proxy_pool.rs`
+
+Routing order:
+
+- account-bound proxy
+- pool-selected proxy
+- app upstream proxy
+- direct
+
+Pool strategies:
+
+- `RoundRobin`, `Random`, `Priority`, `LeastConnections`, `WeightedRoundRobin`
+- weighted currently delegates to priority logic.
