@@ -323,6 +323,64 @@ pub(crate) async fn admin_get_proxy_compliance_debug(
     )
 }
 
+pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> impl IntoResponse {
+    let monitor_stats = state.core.monitor.get_stats().await;
+    let compliance = state
+        .core
+        .token_manager
+        .get_compliance_debug_snapshot()
+        .await;
+    let sticky = state.core.token_manager.get_sticky_debug_snapshot();
+    let active_accounts = state.core.token_manager.len();
+    let request_timeout = state.config.request_timeout_secs();
+    let running = *state.runtime.is_running.read().await;
+
+    let total_account_requests_in_last_minute: usize = compliance
+        .account_requests_in_last_minute
+        .values()
+        .copied()
+        .sum();
+    let total_account_in_flight: usize = compliance.account_in_flight.values().copied().sum();
+
+    Json(serde_json::json!({
+        "timestamp_unix": chrono::Utc::now().timestamp(),
+        "runtime": {
+            "running": running,
+            "port": state.runtime.port,
+            "active_accounts": active_accounts,
+            "request_timeout": request_timeout,
+            "effective_request_timeout": request_timeout.max(5),
+        },
+        "monitor": {
+            "enabled": state.core.monitor.is_enabled(),
+            "total_requests": monitor_stats.total_requests,
+            "success_count": monitor_stats.success_count,
+            "error_count": monitor_stats.error_count,
+        },
+        "sticky": {
+            "persist_session_bindings": sticky.persist_session_bindings,
+            "scheduling_mode": sticky.scheduling.mode,
+            "scheduling_max_wait_seconds": sticky.scheduling.max_wait_seconds,
+            "session_bindings_count": sticky.session_bindings.len(),
+            "recent_events_count": sticky.recent_events.len(),
+        },
+        "compliance": {
+            "enabled": compliance.config.enabled,
+            "max_global_requests_per_minute": compliance.config.max_global_requests_per_minute,
+            "max_account_requests_per_minute": compliance.config.max_account_requests_per_minute,
+            "max_account_concurrency": compliance.config.max_account_concurrency,
+            "risk_cooldown_seconds": compliance.config.risk_cooldown_seconds,
+            "max_retry_attempts": compliance.config.max_retry_attempts,
+            "global_requests_in_last_minute": compliance.global_requests_in_last_minute,
+            "tracked_accounts_last_minute": compliance.account_requests_in_last_minute.len(),
+            "total_account_requests_in_last_minute": total_account_requests_in_last_minute,
+            "tracked_accounts_in_flight": compliance.account_in_flight.len(),
+            "total_account_in_flight": total_account_in_flight,
+            "accounts_in_cooldown": compliance.account_cooldown_seconds_remaining.len(),
+        }
+    }))
+}
+
 pub(crate) async fn admin_update_proxy_compliance(
     State(state): State<AdminState>,
     headers: HeaderMap,

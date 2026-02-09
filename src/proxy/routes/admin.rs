@@ -1,8 +1,6 @@
-use axum::{
-    routing::{delete, get, post},
-    Router,
-};
+use axum::{routing::get, Router};
 
+use crate::proxy::routes::admin_groups;
 use crate::proxy::state::AppState;
 use crate::proxy::{admin, health};
 
@@ -17,6 +15,7 @@ const ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR: &str = "/proxy/session-bindings/c
 const ADMIN_PATH_PROXY_SESSION_BINDINGS: &str = "/proxy/session-bindings";
 const ADMIN_PATH_PROXY_STICKY: &str = "/proxy/sticky";
 const ADMIN_PATH_PROXY_COMPLIANCE: &str = "/proxy/compliance";
+const ADMIN_PATH_PROXY_METRICS: &str = "/proxy/metrics";
 
 const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("GET", ADMIN_PATH_HEALTH),
@@ -34,6 +33,7 @@ const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("POST", ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR),
     ("GET", ADMIN_PATH_PROXY_COMPLIANCE),
     ("POST", ADMIN_PATH_PROXY_COMPLIANCE),
+    ("GET", ADMIN_PATH_PROXY_METRICS),
     ("GET", ADMIN_PATH_PROXY_STATUS),
     ("GET", ADMIN_PATH_VERSION_ROUTES),
 ];
@@ -51,365 +51,19 @@ pub fn admin_version_route_capabilities() -> serde_json::Map<String, serde_json:
 }
 
 pub fn build_admin_routes(state: AppState) -> Router<AppState> {
-    add_legacy_stats_alias_routes(
-        Router::new()
-            .route(ADMIN_PATH_HEALTH, get(health::health_check_handler))
-            .route(
-                ADMIN_PATH_VERSION_ROUTES,
-                get(admin::admin_get_version_routes),
-            )
-            .route(
-                "/accounts",
-                get(admin::admin_list_accounts).post(admin::admin_add_account),
-            )
-            .route("/accounts/current", get(admin::admin_get_current_account))
-            .route("/accounts/switch", post(admin::admin_switch_account))
-            .route("/accounts/refresh", post(admin::admin_refresh_all_quotas))
-            .route("/accounts/:accountId", delete(admin::admin_delete_account))
-            .route(
-                "/accounts/:accountId/bind-device",
-                post(admin::admin_bind_device),
-            )
-            .route(
-                "/accounts/:accountId/device-profiles",
-                get(admin::admin_get_device_profiles),
-            )
-            .route(
-                "/accounts/:accountId/device-versions",
-                get(admin::admin_list_device_versions),
-            )
-            .route(
-                "/accounts/device-preview",
-                post(admin::admin_preview_generate_profile),
-            )
-            .route(
-                "/accounts/:accountId/bind-device-profile",
-                post(admin::admin_bind_device_profile_with_profile),
-            )
-            .route(
-                "/accounts/restore-original",
-                post(admin::admin_restore_original_device),
-            )
-            .route(
-                "/accounts/:accountId/device-versions/:versionId/restore",
-                post(admin::admin_restore_device_version),
-            )
-            .route(
-                "/accounts/:accountId/device-versions/:versionId",
-                delete(admin::admin_delete_device_version),
-            )
-            .route("/accounts/import/v1", post(admin::admin_import_v1_accounts))
-            .route("/accounts/import/db", post(admin::admin_import_from_db))
-            .route(
-                "/accounts/import/db-custom",
-                post(admin::admin_import_custom_db),
-            )
-            .route("/accounts/sync/db", post(admin::admin_sync_account_from_db))
-            .route(
-                ADMIN_PATH_CONFIG,
-                get(admin::admin_get_config).post(admin::admin_save_config),
-            )
-            .route("/proxy/cli/status", post(admin::admin_get_cli_sync_status))
-            .route("/proxy/cli/sync", post(admin::admin_execute_cli_sync))
-            .route("/proxy/cli/restore", post(admin::admin_execute_cli_restore))
-            .route(
-                "/proxy/cli/config",
-                post(admin::admin_get_cli_config_content),
-            )
-            .route(
-                "/proxy/opencode/status",
-                post(admin::admin_get_opencode_sync_status),
-            )
-            .route(
-                "/proxy/opencode/sync",
-                post(admin::admin_execute_opencode_sync),
-            )
-            .route(
-                "/proxy/opencode/restore",
-                post(admin::admin_execute_opencode_restore),
-            )
-            .route(
-                "/proxy/opencode/config",
-                post(admin::admin_get_opencode_config_content),
-            )
-            .route(ADMIN_PATH_PROXY_STATUS, get(admin::admin_get_proxy_status))
-            .route(
-                ADMIN_PATH_PROXY_REQUEST_TIMEOUT,
-                get(admin::admin_get_proxy_request_timeout)
-                    .post(admin::admin_update_proxy_request_timeout),
-            )
-            .route(
-                "/proxy/pool/config",
-                get(admin::admin_get_proxy_pool_config),
-            )
-            .route(
-                ADMIN_PATH_PROXY_POOL_RUNTIME,
-                get(admin::admin_get_proxy_pool_runtime)
-                    .post(admin::admin_update_proxy_pool_runtime),
-            )
-            .route(
-                ADMIN_PATH_PROXY_POOL_STRATEGY,
-                get(admin::admin_get_proxy_pool_strategy)
-                    .post(admin::admin_update_proxy_pool_strategy),
-            )
-            .route(
-                "/proxy/pool/bindings",
-                get(admin::admin_get_all_account_bindings),
-            )
-            .route("/proxy/pool/bind", post(admin::admin_bind_account_proxy))
-            .route(
-                "/proxy/pool/unbind",
-                post(admin::admin_unbind_account_proxy),
-            )
-            .route(
-                "/proxy/pool/binding/:accountId",
-                get(admin::admin_get_account_proxy_binding),
-            )
-            .route(
-                "/proxy/health-check/trigger",
-                post(admin::admin_trigger_proxy_health_check),
-            )
-            .route("/proxy/start", post(admin::admin_start_proxy_service))
-            .route("/proxy/stop", post(admin::admin_stop_proxy_service))
-            .route("/proxy/mapping", post(admin::admin_update_model_mapping))
-            .route(
-                "/proxy/api-key/generate",
-                post(admin::admin_generate_api_key),
-            )
-            .route(
-                ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR,
-                post(admin::admin_clear_proxy_session_bindings),
-            )
-            .route(
-                ADMIN_PATH_PROXY_SESSION_BINDINGS,
-                get(admin::admin_get_proxy_session_bindings),
-            )
-            .route(
-                ADMIN_PATH_PROXY_STICKY,
-                get(admin::admin_get_proxy_sticky_config)
-                    .post(admin::admin_update_proxy_sticky_config),
-            )
-            .route(
-                ADMIN_PATH_PROXY_COMPLIANCE,
-                get(admin::admin_get_proxy_compliance_debug)
-                    .post(admin::admin_update_proxy_compliance),
-            )
-            .route(
-                "/proxy/rate-limits",
-                delete(admin::admin_clear_all_rate_limits),
-            )
-            .route(
-                "/proxy/rate-limits/:accountId",
-                delete(admin::admin_clear_rate_limit),
-            )
-            .route(
-                "/proxy/preferred-account",
-                get(admin::admin_get_preferred_account).post(admin::admin_set_preferred_account),
-            )
-            .route(
-                "/accounts/oauth/prepare",
-                post(admin::admin_prepare_oauth_url),
-            )
-            .route(
-                "/accounts/oauth/start",
-                post(admin::admin_start_oauth_login),
-            )
-            .route(
-                "/accounts/oauth/complete",
-                post(admin::admin_complete_oauth_login),
-            )
-            .route(
-                "/accounts/oauth/cancel",
-                post(admin::admin_cancel_oauth_login),
-            )
-            .route(
-                "/accounts/oauth/submit-code",
-                post(admin::admin_submit_oauth_code),
-            )
-            .route("/zai/models/fetch", post(admin::admin_fetch_zai_models))
-            .route(
-                "/proxy/monitor/toggle",
-                post(admin::admin_set_proxy_monitor_enabled),
-            )
-            .route("/system/open-folder", post(admin::admin_open_folder))
-            .route("/proxy/stats", get(admin::admin_get_proxy_stats))
-            .route("/logs", get(admin::admin_get_proxy_logs_filtered))
-            .route(
-                "/logs/count",
-                get(admin::admin_get_proxy_logs_count_filtered),
-            )
-            .route("/logs/clear", post(admin::admin_clear_proxy_logs))
-            .route("/logs/:logId", get(admin::admin_get_proxy_log_detail))
-            .route("/debug/enable", post(admin::admin_enable_debug_console))
-            .route("/debug/disable", post(admin::admin_disable_debug_console))
-            .route("/debug/enabled", get(admin::admin_is_debug_console_enabled))
-            .route("/debug/logs", get(admin::admin_get_debug_console_logs))
-            .route(
-                "/debug/logs/clear",
-                post(admin::admin_clear_debug_console_logs),
-            )
-            .route("/stats/token/clear", post(admin::admin_clear_token_stats))
-            .route(
-                "/stats/token/hourly",
-                get(admin::admin_get_token_stats_hourly),
-            )
-            .route(
-                "/stats/token/daily",
-                get(admin::admin_get_token_stats_daily),
-            )
-            .route(
-                "/stats/token/weekly",
-                get(admin::admin_get_token_stats_weekly),
-            )
-            .route(
-                "/stats/token/by-account",
-                get(admin::admin_get_token_stats_by_account),
-            )
-            .route(
-                "/stats/token/summary",
-                get(admin::admin_get_token_stats_summary),
-            )
-            .route(
-                "/stats/token/by-model",
-                get(admin::admin_get_token_stats_by_model),
-            )
-            .route(
-                "/stats/token/model-trend/hourly",
-                get(admin::admin_get_token_stats_model_trend_hourly),
-            )
-            .route(
-                "/stats/token/model-trend/daily",
-                get(admin::admin_get_token_stats_model_trend_daily),
-            )
-            .route(
-                "/stats/token/account-trend/hourly",
-                get(admin::admin_get_token_stats_account_trend_hourly),
-            )
-            .route(
-                "/stats/token/account-trend/daily",
-                get(admin::admin_get_token_stats_account_trend_daily),
-            )
-            .route("/accounts/bulk-delete", post(admin::admin_delete_accounts))
-            .route("/accounts/export", post(admin::admin_export_accounts))
-            .route("/accounts/reorder", post(admin::admin_reorder_accounts))
-            .route(
-                "/accounts/:accountId/quota",
-                get(admin::admin_fetch_account_quota),
-            )
-            .route(
-                "/accounts/:accountId/toggle-proxy",
-                post(admin::admin_toggle_proxy_status),
-            )
-            .route("/system/data-dir", get(admin::admin_get_data_dir_path))
-            .route(
-                "/system/updates/settings",
-                get(admin::admin_get_update_settings),
-            )
-            .route(
-                "/system/updates/check-status",
-                get(admin::admin_should_check_updates),
-            )
-            .route(
-                "/system/updates/check",
-                post(admin::admin_check_for_updates),
-            )
-            .route(
-                "/system/updates/touch",
-                post(admin::admin_update_last_check_time),
-            )
-            .route(
-                "/system/updates/save",
-                post(admin::admin_save_update_settings),
-            )
-            .route(
-                "/system/gephyr/path",
-                get(admin::admin_get_antigravity_path),
-            )
-            .route(
-                "/system/gephyr/args",
-                get(admin::admin_get_antigravity_args),
-            )
-            .route(
-                "/system/antigravity/path",
-                get(admin::admin_get_antigravity_path),
-            )
-            .route(
-                "/system/antigravity/args",
-                get(admin::admin_get_antigravity_args),
-            )
-            .route(
-                "/system/cache/clear",
-                post(admin::admin_clear_antigravity_cache),
-            )
-            .route(
-                "/system/cache/paths",
-                get(admin::admin_get_antigravity_cache_paths),
-            )
-            .route(
-                "/system/logs/clear-cache",
-                post(admin::admin_clear_log_cache),
-            )
-            .route("/security/logs", get(admin::admin_get_ip_access_logs))
-            .route(
-                "/security/logs/clear",
-                post(admin::admin_clear_ip_access_logs),
-            )
-            .route("/security/stats", get(admin::admin_get_ip_stats))
-            .route(
-                "/security/token-stats",
-                get(admin::admin_get_ip_token_stats),
-            )
-            .route(
-                "/security/blacklist",
-                get(admin::admin_get_ip_blacklist)
-                    .post(admin::admin_add_ip_to_blacklist)
-                    .delete(admin::admin_remove_ip_from_blacklist),
-            )
-            .route(
-                "/security/blacklist/clear",
-                post(admin::admin_clear_ip_blacklist),
-            )
-            .route(
-                "/security/blacklist/check",
-                get(admin::admin_check_ip_in_blacklist),
-            )
-            .route(
-                "/security/whitelist",
-                get(admin::admin_get_ip_whitelist)
-                    .post(admin::admin_add_ip_to_whitelist)
-                    .delete(admin::admin_remove_ip_from_whitelist),
-            )
-            .route(
-                "/security/whitelist/clear",
-                post(admin::admin_clear_ip_whitelist),
-            )
-            .route(
-                "/security/whitelist/check",
-                get(admin::admin_check_ip_in_whitelist),
-            )
-            .route(
-                "/security/config",
-                get(admin::admin_get_security_config).post(admin::admin_update_security_config),
-            )
-            .route(
-                "/user-tokens",
-                get(admin::admin_list_user_tokens).post(admin::admin_create_user_token),
-            )
-            .route(
-                "/user-tokens/summary",
-                get(admin::admin_get_user_token_summary),
-            )
-            .route(
-                "/user-tokens/:id/renew",
-                post(admin::admin_renew_user_token),
-            )
-            .route(
-                "/user-tokens/:id",
-                delete(admin::admin_delete_user_token).patch(admin::admin_update_user_token),
-            )
-            .route("/auth/url", get(admin::admin_prepare_oauth_url_web)),
-    )
-    .layer(axum::middleware::from_fn_with_state(
+    let router = Router::new()
+        .route(ADMIN_PATH_HEALTH, get(health::health_check_handler))
+        .route(
+            ADMIN_PATH_VERSION_ROUTES,
+            get(admin::admin_get_version_routes),
+        );
+    let router = admin_groups::add_account_routes(router);
+    let router = admin_groups::add_proxy_routes(router);
+    let router = admin_groups::add_logs_stats_debug_routes(router);
+    let router = admin_groups::add_system_routes(router);
+    let router = admin_groups::add_security_routes(router);
+    let router = admin_groups::add_user_token_routes(router);
+    add_legacy_stats_alias_routes(router).layer(axum::middleware::from_fn_with_state(
         state.clone(),
         crate::proxy::middleware::admin_auth_middleware,
     ))

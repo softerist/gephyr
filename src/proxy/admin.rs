@@ -34,7 +34,7 @@ pub(crate) use runtime::{
     admin_get_all_account_bindings, admin_get_antigravity_args, admin_get_antigravity_cache_paths,
     admin_get_antigravity_path, admin_get_config, admin_get_data_dir_path,
     admin_get_preferred_account, admin_get_proxy_compliance_debug, admin_get_proxy_log_detail,
-    admin_get_proxy_logs_count_filtered, admin_get_proxy_logs_filtered,
+    admin_get_proxy_logs_count_filtered, admin_get_proxy_logs_filtered, admin_get_proxy_metrics,
     admin_get_proxy_pool_config, admin_get_proxy_pool_runtime, admin_get_proxy_pool_strategy,
     admin_get_proxy_request_timeout, admin_get_proxy_session_bindings, admin_get_proxy_stats,
     admin_get_proxy_status, admin_get_proxy_sticky_config, admin_get_user_token_summary,

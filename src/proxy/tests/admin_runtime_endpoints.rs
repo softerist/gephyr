@@ -197,7 +197,91 @@ mod tests {
         assert_eq!(body["routes"]["POST /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["GET /api/proxy/compliance"], true);
         assert_eq!(body["routes"]["POST /api/proxy/compliance"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/metrics"], true);
         assert_eq!(body["routes"]["GET /api/version/routes"], true);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_routes_from_each_group_are_registered() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let probes = [
+            "/accounts",
+            "/proxy/status",
+            "/logs",
+            "/system/data-dir",
+            "/security/stats",
+            "/user-tokens/summary",
+            "/stats/token/summary",
+        ];
+
+        for path in probes {
+            let request = Request::builder()
+                .uri(path)
+                .header("Authorization", format!("Bearer {}", api_key))
+                .body(Body::empty())
+                .expect("request");
+            let (status, _) = send(&router, request).await;
+            assert_ne!(
+                status,
+                StatusCode::NOT_FOUND,
+                "route {path} is unexpectedly missing"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_proxy_metrics_returns_stable_shape() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let compliance_update = Request::builder()
+            .method("POST")
+            .uri("/proxy/compliance")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "enabled": true,
+                    "max_global_requests_per_minute": 120,
+                    "max_account_requests_per_minute": 20,
+                    "max_account_concurrency": 2,
+                    "risk_cooldown_seconds": 300,
+                    "max_retry_attempts": 2
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let (update_status, _) = send(&router, compliance_update).await;
+        assert_eq!(update_status, StatusCode::OK);
+
+        let metrics_request = Request::builder()
+            .uri("/proxy/metrics")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (metrics_status, metrics_body) = send(&router, metrics_request).await;
+        assert_eq!(metrics_status, StatusCode::OK);
+
+        assert!(metrics_body["timestamp_unix"].is_number());
+        assert!(metrics_body["runtime"]["running"].is_boolean());
+        assert!(metrics_body["runtime"]["port"].is_number());
+        assert!(metrics_body["runtime"]["active_accounts"].is_number());
+        assert!(metrics_body["monitor"]["enabled"].is_boolean());
+        assert!(metrics_body["monitor"]["total_requests"].is_number());
+        assert!(metrics_body["sticky"]["persist_session_bindings"].is_boolean());
+        assert!(metrics_body["sticky"]["scheduling_mode"].is_string());
+        assert!(metrics_body["sticky"]["session_bindings_count"].is_number());
+        assert_eq!(metrics_body["compliance"]["enabled"], true);
+        assert!(metrics_body["compliance"]["global_requests_in_last_minute"].is_number());
+        assert!(metrics_body["compliance"]["total_account_in_flight"].is_number());
     }
 
     #[tokio::test(flavor = "current_thread")]
