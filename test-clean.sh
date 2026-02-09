@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Check Docker availability early to fail fast with a single message
-if ! docker info >/dev/null 2>&1; then
+check_docker_available() {
+  docker info >/dev/null 2>&1
+}
+
+print_docker_unavailable() {
   echo ""
   echo -e "\033[31m╔══════════════════════════════════════════════════════════════════╗\033[0m"
   echo -e "\033[31m║                     DOCKER IS NOT RUNNING                        ║\033[0m"
@@ -18,8 +21,7 @@ if ! docker info >/dev/null 2>&1; then
   echo -e "\033[33m║  On macOS:   Open Docker Desktop from /Applications              ║\033[0m"
   echo -e "\033[31m╚══════════════════════════════════════════════════════════════════╝\033[0m"
   echo ""
-  exit 1
-fi
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONSOLE_SCRIPT="$SCRIPT_DIR/console.sh"
@@ -137,6 +139,15 @@ if [[ ! -f "$ALLOW_GUARD_SCRIPT" ]]; then
   exit 1
 fi
 
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    status|health|accounts|login|restart|api-test)
+      echo "Forwarding to console.sh: $*"
+      exec bash "$CONSOLE_SCRIPT" "$@"
+      ;;
+  esac
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=true; shift ;;
@@ -157,6 +168,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if ! check_docker_available; then
+  print_docker_unavailable
+  exit 1
+fi
 
 step "Running allow-attribute guard" bash "$ALLOW_GUARD_SCRIPT"
 
