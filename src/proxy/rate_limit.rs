@@ -9,18 +9,10 @@ pub enum RateLimitReason {
     ServerError,
     Unknown,
 }
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct RateLimitInfo {
     pub reset_time: SystemTime,
-    #[allow(dead_code)]
     pub retry_after_sec: u64,
-    #[allow(dead_code)]
-    pub detected_at: SystemTime,
-    #[allow(dead_code)]
-    pub reason: RateLimitReason,
-    #[allow(dead_code)]
-    pub model: Option<String>,
 }
 const FAILURE_COUNT_EXPIRY_SECONDS: u64 = 3600;
 pub struct RateLimitTracker {
@@ -45,6 +37,11 @@ impl RateLimitTracker {
         let now = SystemTime::now();
         if let Some(info) = self.limits.get(account_id) {
             if info.reset_time > now {
+                tracing::trace!(
+                    "Rate limit active for {} (retry_after={}s)",
+                    account_id,
+                    info.retry_after_sec
+                );
                 return info
                     .reset_time
                     .duration_since(now)
@@ -56,6 +53,12 @@ impl RateLimitTracker {
             let key = self.get_limit_key(account_id, Some(m));
             if let Some(info) = self.limits.get(&key) {
                 if info.reset_time > now {
+                    tracing::trace!(
+                        "Model rate limit active for {}:{} (retry_after={}s)",
+                        account_id,
+                        m,
+                        info.retry_after_sec
+                    );
                     return info
                         .reset_time
                         .duration_since(now)
@@ -80,7 +83,7 @@ impl RateLimitTracker {
         &self,
         account_id: &str,
         reset_time: SystemTime,
-        reason: RateLimitReason,
+        _reason: RateLimitReason,
         model: Option<String>,
     ) {
         let now = SystemTime::now();
@@ -92,9 +95,6 @@ impl RateLimitTracker {
         let info = RateLimitInfo {
             reset_time,
             retry_after_sec: retry_sec,
-            detected_at: now,
-            reason,
-            model: model.clone(),
         };
 
         let key = self.get_limit_key(account_id, model.as_deref());
@@ -249,9 +249,6 @@ impl RateLimitTracker {
         let info = RateLimitInfo {
             reset_time: SystemTime::now() + Duration::from_secs(retry_sec),
             retry_after_sec: retry_sec,
-            detected_at: SystemTime::now(),
-            reason,
-            model: model.clone(),
         };
         let use_model_key = matches!(reason, RateLimitReason::QuotaExhausted) && model.is_some();
         let key = if use_model_key {
@@ -452,7 +449,6 @@ impl RateLimitTracker {
             None
         }
     }
-    #[allow(dead_code)]
     pub fn cleanup_expired(&self) -> usize {
         let now = SystemTime::now();
         let mut count = 0;

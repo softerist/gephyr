@@ -52,19 +52,6 @@ pub(crate) fn is_rate_limited_sync(
     rate_limit_tracker.is_rate_limited(account_id, model)
 }
 
-pub(crate) fn get_rate_limit_reset_seconds(
-    rate_limit_tracker: &crate::proxy::rate_limit::RateLimitTracker,
-    account_id: &str,
-) -> Option<u64> {
-    rate_limit_tracker.get_reset_seconds(account_id)
-}
-
-pub(crate) fn clean_expired_rate_limits(
-    rate_limit_tracker: &crate::proxy::rate_limit::RateLimitTracker,
-) {
-    rate_limit_tracker.cleanup_expired();
-}
-
 pub(crate) fn clear_rate_limit(
     rate_limit_tracker: &crate::proxy::rate_limit::RateLimitTracker,
     account_id: &str,

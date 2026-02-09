@@ -106,12 +106,11 @@ pub(crate) async fn admin_submit_oauth_code(
 #[derive(Deserialize)]
 pub(crate) struct OAuthParams {
     code: String,
-    #[allow(dead_code)]
-    scope: Option<String>,
+    #[serde(rename = "scope")]
+    _scope: Option<String>,
     state: Option<String>,
 }
 
-#[allow(clippy::useless_format)]
 pub(crate) async fn handle_oauth_callback(
     Query(params): Query<OAuthParams>,
     _headers: HeaderMap,
@@ -120,7 +119,7 @@ pub(crate) async fn handle_oauth_callback(
     let code = params.code;
     let state_param = params.state;
     match crate::modules::auth::oauth_server::submit_oauth_code(code, state_param).await {
-        Ok(()) => Ok(Html(format!(
+        Ok(()) => Ok(Html(
             r#"
                 <!DOCTYPE html>
                 <html>
@@ -174,7 +173,8 @@ pub(crate) async fn handle_oauth_callback(
                 </body>
                 </html>
             "#
-        ))),
+            .to_string(),
+        )),
         Err(e) => {
             error!("OAuth callback submission failed: {}", e);
             Ok(Html(format!(

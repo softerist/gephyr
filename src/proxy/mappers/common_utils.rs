@@ -76,7 +76,7 @@ pub fn resolve_request_config(
         image_config: None,
     }
 }
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_image_config(model_name: &str) -> (Value, String) {
     parse_image_config_with_params(model_name, None, None)
 }

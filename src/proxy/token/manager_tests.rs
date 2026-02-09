@@ -1,5 +1,3 @@
-#![allow(clippy::useless_vec)]
-
 use super::{ProxyToken, TokenManager};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -356,7 +354,7 @@ fn test_sorting_missing_reset_time() {
 fn test_full_sorting_integration() {
     let now = chrono::Utc::now().timestamp();
 
-    let mut tokens = vec![
+    let mut tokens = [
         create_test_token(
             "free_high@test.com",
             Some("FREE"),
@@ -422,7 +420,7 @@ fn test_realistic_scenario() {
     );
     assert_eq!(compare_tokens(&account_b, &account_a), Ordering::Less);
 
-    let mut tokens = vec![account_a.clone(), account_b.clone()];
+    let mut tokens = [account_a.clone(), account_b.clone()];
     tokens.sort_by(compare_tokens);
 
     assert_eq!(tokens[0].email, "b@test.com");
@@ -506,7 +504,7 @@ fn test_p2c_selects_higher_quota() {
     let low_quota = create_test_token("low@test.com", Some("PRO"), 1.0, None, Some(20));
     let high_quota = create_test_token("high@test.com", Some("PRO"), 1.0, None, Some(80));
 
-    let candidates = vec![low_quota, high_quota];
+    let candidates = [low_quota, high_quota];
     let attempted: HashSet<String> = HashSet::new();
     for _ in 0..10 {
         let result = crate::proxy::token::pool::select_with_p2c(
@@ -525,7 +523,7 @@ fn test_p2c_skips_attempted() {
     let token_a = create_test_token("a@test.com", Some("PRO"), 1.0, None, Some(80));
     let token_b = create_test_token("b@test.com", Some("PRO"), 1.0, None, Some(50));
 
-    let candidates = vec![token_a, token_b];
+    let candidates = [token_a, token_b];
     let mut attempted: HashSet<String> = HashSet::new();
     attempted.insert("a@test.com".to_string());
 
@@ -545,7 +543,7 @@ fn test_p2c_skips_protected_models() {
     let normal_account =
         create_test_token_with_protected("normal@test.com", Some(50), HashSet::new());
 
-    let candidates = vec![protected_account, normal_account];
+    let candidates = [protected_account, normal_account];
     let attempted: HashSet<String> = HashSet::new();
 
     let result =
@@ -557,7 +555,7 @@ fn test_p2c_skips_protected_models() {
 #[test]
 fn test_p2c_single_candidate() {
     let token = create_test_token("single@test.com", Some("PRO"), 1.0, None, Some(50));
-    let candidates = vec![token];
+    let candidates = [token];
     let attempted: HashSet<String> = HashSet::new();
 
     let result =
@@ -568,7 +566,7 @@ fn test_p2c_single_candidate() {
 
 #[test]
 fn test_p2c_empty_candidates() {
-    let candidates: Vec<ProxyToken> = vec![];
+    let candidates: Vec<ProxyToken> = Vec::new();
     let attempted: HashSet<String> = HashSet::new();
 
     let result =
@@ -581,7 +579,7 @@ fn test_p2c_all_attempted() {
     let token_a = create_test_token("a@test.com", Some("PRO"), 1.0, None, Some(80));
     let token_b = create_test_token("b@test.com", Some("PRO"), 1.0, None, Some(50));
 
-    let candidates = vec![token_a, token_b];
+    let candidates = [token_a, token_b];
     let mut attempted: HashSet<String> = HashSet::new();
     attempted.insert("a@test.com".to_string());
     attempted.insert("b@test.com".to_string());
@@ -590,3 +588,4 @@ fn test_p2c_all_attempted() {
         crate::proxy::token::pool::select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
     assert!(result.is_none());
 }
+

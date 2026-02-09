@@ -1,5 +1,4 @@
 #[cfg(test)]
-#[allow(clippy::useless_vec)]
 mod tests {
     use std::path::PathBuf;
 
@@ -101,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_multi_account_quota_protection_filtering() {
-        let tokens = vec![
+        let tokens = [
             create_mock_token(
                 "account-1",
                 "user1@example.com",
@@ -155,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_all_accounts_protected_returns_error() {
-        let tokens = vec![
+        let tokens = [
             create_mock_token(
                 "account-1",
                 "user1@example.com",
@@ -198,7 +197,7 @@ mod tests {
                 "gemini-3-flash".to_string(),
             ],
         };
-        let test_cases = vec![
+        let test_cases = [
             ("claude-opus-4-5-thinking", true),
             ("claude-sonnet-4-5-thinking", true),
             ("claude-sonnet-4-5", true),
@@ -228,7 +227,7 @@ mod tests {
     #[test]
     fn test_quota_threshold_trigger_logic() {
         let threshold = 60;
-        let quota_data = vec![
+        let quota_data = [
             ("claude-opus-4-5-thinking", 50, true),
             ("claude-sonnet-4-5-thinking", 60, true),
             ("gemini-3-flash", 61, false),
@@ -252,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_priority_fallback_when_protected() {
-        let mut tokens = vec![
+        let mut tokens = [
             create_mock_token(
                 "account-high",
                 "high@example.com",
@@ -354,7 +353,7 @@ mod tests {
                 "gemini-3-flash".to_string(),
             ],
         };
-        let accounts = vec![
+        let accounts = [
             create_mock_token(
                 "account-a",
                 "a@example.com",
@@ -458,7 +457,7 @@ mod tests {
         account_a
             .protected_models
             .insert("claude-sonnet-4-5".to_string());
-        let accounts = vec![account_a.clone()];
+        let accounts = [account_a.clone()];
         let bound_id = session_bindings.get(session_id).unwrap();
         let bound_account = accounts.iter().find(|a| &a.account_id == bound_id).unwrap();
         let is_protected = bound_account.protected_models.contains(&normalized_target);
@@ -512,7 +511,7 @@ mod tests {
         account_a
             .protected_models
             .insert("claude-sonnet-4-5".to_string());
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let bound_id = session_bindings.get(session_id).unwrap();
         let bound_account = accounts.iter().find(|a| &a.account_id == bound_id).unwrap();
         let is_protected = bound_account.protected_models.contains(&normalized_target);
@@ -538,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_quota_protection_sync_after_refresh() {
-        let mut tokens_in_memory = vec![create_mock_token(
+        let mut tokens_in_memory = [create_mock_token(
             "account-a",
             "a@example.com",
             vec![],
@@ -592,7 +591,7 @@ mod tests {
             normalize_to_standard_id(target_model).unwrap_or_else(|| target_model.to_string());
         let mut account_a = create_mock_token("account-a", "a@example.com", vec![], Some(70));
         let mut account_b = create_mock_token("account-b", "b@example.com", vec![], Some(80));
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -603,7 +602,7 @@ mod tests {
             .protected_models
             .insert("claude-sonnet-4-5".to_string());
 
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -615,7 +614,7 @@ mod tests {
             .protected_models
             .insert("claude-sonnet-4-5".to_string());
 
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -624,7 +623,7 @@ mod tests {
         account_a.remaining_quota = Some(100);
         account_a.protected_models.remove("claude-sonnet-4-5");
 
-        let accounts = vec![account_a.clone(), account_b.clone()];
+        let accounts = [account_a.clone(), account_b.clone()];
         let available: Vec<_> = accounts
             .iter()
             .filter(|t| !t.protected_models.contains(&normalized_target))
@@ -638,7 +637,7 @@ mod tests {
         let target_model = "claude-opus-4-5-thinking";
         let normalized_target =
             normalize_to_standard_id(target_model).unwrap_or_else(|| target_model.to_string());
-        let all_protected = vec![
+        let all_protected = [
             create_mock_token("a1", "a1@example.com", vec!["claude-sonnet-4-5"], Some(30)),
             create_mock_token("a2", "a2@example.com", vec!["claude-sonnet-4-5"], Some(20)),
         ];
@@ -656,7 +655,7 @@ mod tests {
 
         assert!(error.contains("quota-protected"));
         assert!(error.contains("claude-sonnet-4-5"));
-        let mixed = vec![
+        let mixed = [
             create_mock_token("a1", "a1@example.com", vec!["claude-sonnet-4-5"], Some(30)),
             create_mock_token("a2", "a2@example.com", vec![], Some(20)),
         ];
@@ -744,7 +743,7 @@ mod tests {
         std::fs::write(&path_a, account_a_json.to_string()).unwrap();
         std::fs::write(&path_b, account_b_json.to_string()).unwrap();
         std::fs::write(&path_c, account_c_json.to_string()).unwrap();
-        let mut tokens = vec![
+        let mut tokens = [
             create_mock_token_with_path(
                 "a",
                 "carmelioventori@example.com",
@@ -858,3 +857,4 @@ mod tests {
         }
     }
 }
+

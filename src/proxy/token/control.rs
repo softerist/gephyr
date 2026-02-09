@@ -32,10 +32,6 @@ pub(crate) async fn get_circuit_breaker_config(
     circuit_breaker_config.read().await.clone()
 }
 
-pub(crate) fn clear_session_binding(session_accounts: &DashMap<String, String>, session_id: &str) {
-    session_accounts.remove(session_id);
-}
-
 pub(crate) fn clear_all_sessions(session_accounts: &DashMap<String, String>) {
     session_accounts.clear();
 }

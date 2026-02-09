@@ -5,7 +5,6 @@ const MAX_TOOL_RESULT_CHARS: usize = 200_000;
 const SNAPSHOT_DETECTION_THRESHOLD: usize = 20_000;
 const SNAPSHOT_MAX_CHARS: usize = 16_000;
 const SNAPSHOT_HEAD_RATIO: f64 = 0.7;
-#[allow(dead_code)]
 const SNAPSHOT_TAIL_RATIO: f64 = 0.3;
 pub fn compact_tool_result_text(text: &str, max_chars: usize) -> String {
     if text.is_empty() || text.len() <= max_chars {
@@ -117,9 +116,10 @@ fn compact_browser_snapshot(text: &str, max_chars: usize) -> Option<String> {
     if budget < 1000 {
         return None;
     }
-    let head_len = (budget as f64 * SNAPSHOT_HEAD_RATIO).floor() as usize;
-    let head_len = head_len.clamp(500, 10_000);
-    let tail_len = budget.saturating_sub(head_len).min(3_000);
+    let requested_head_len = (budget as f64 * SNAPSHOT_HEAD_RATIO).floor() as usize;
+    let requested_tail_len = (budget as f64 * SNAPSHOT_TAIL_RATIO).floor() as usize;
+    let head_len = requested_head_len.clamp(500, 10_000);
+    let tail_len = requested_tail_len.min(budget.saturating_sub(head_len)).min(3_000);
 
     let head = &text[..head_len.min(text.len())];
     let tail = if tail_len > 0 && text.len() > head_len {

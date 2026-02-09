@@ -9,7 +9,6 @@ use url::Url;
 
 struct OAuthFlowState {
     auth_url: String,
-    #[allow(dead_code)]
     redirect_uri: String,
     state: String,
     code_verifier: String,
@@ -45,35 +44,35 @@ fn oauth_fail_html() -> &'static str {
     </html>"
 }
 
+#[cfg(target_os = "windows")]
 fn open_browser_url(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn()
-            .map_err(|e| format!("failed_to_open_browser: {}", e))?;
-        return Ok(());
-    }
+    Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn()
+        .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+    Ok(())
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| format!("failed_to_open_browser: {}", e))?;
-        return Ok(());
-    }
+#[cfg(target_os = "macos")]
+fn open_browser_url(url: &str) -> Result<(), String> {
+    Command::new("open")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+    Ok(())
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| format!("failed_to_open_browser: {}", e))?;
-        return Ok(());
-    }
+#[cfg(target_os = "linux")]
+fn open_browser_url(url: &str) -> Result<(), String> {
+    Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("failed_to_open_browser: {}", e))?;
+    Ok(())
+}
 
-    #[allow(unreachable_code)]
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn open_browser_url(_url: &str) -> Result<(), String> {
     Err("unsupported_platform_for_auto_browser_open".to_string())
 }
 

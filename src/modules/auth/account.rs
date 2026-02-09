@@ -619,17 +619,6 @@ pub fn export_accounts_by_ids(
         accounts: export_items,
     })
 }
-#[allow(dead_code)]
-pub fn export_accounts() -> Result<Vec<(String, String)>, String> {
-    let accounts = list_accounts()?;
-    let mut exports = Vec::new();
-
-    for account in accounts {
-        exports.push((account.email, account.token.refresh_token));
-    }
-
-    Ok(exports)
-}
 pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppResult<QuotaData> {
     use crate::error::AppError;
     use crate::modules::auth::oauth;

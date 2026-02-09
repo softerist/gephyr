@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use super::models::V1InternalRequest;
 pub fn wrap_request(
     body: &Value,
     project_id: &str,
@@ -267,16 +268,16 @@ pub fn wrap_request(
         }
     }
 
-    let final_request = json!({
-        "project": project_id,
-        "requestId": format!("agent-{}", uuid::Uuid::new_v4()),
-        "request": inner_request,
-        "model": config.final_model,
-        "userAgent": "antigravity",
-        "requestType": config.request_type
-    });
+    let final_request = V1InternalRequest {
+        project: project_id.to_string(),
+        request_id: format!("agent-{}", uuid::Uuid::new_v4()),
+        request: inner_request,
+        model: config.final_model,
+        user_agent: "antigravity".to_string(),
+        request_type: config.request_type,
+    };
 
-    final_request
+    serde_json::to_value(final_request).unwrap_or_else(|_| json!({}))
 }
 
 #[cfg(test)]

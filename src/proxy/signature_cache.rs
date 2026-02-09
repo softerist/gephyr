@@ -204,7 +204,7 @@ impl SignatureCache {
         }
         None
     }
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn clear(&self) {
         if let Ok(mut cache) = self.tool_signatures.lock() {
             cache.clear();

@@ -40,13 +40,10 @@ struct LoadProjectResponse {
 #[derive(Debug, Deserialize)]
 struct Tier {
     id: Option<String>,
-    #[allow(dead_code)]
     #[serde(rename = "quotaTier")]
-    quota_tier: Option<String>,
-    #[allow(dead_code)]
-    name: Option<String>,
-    #[allow(dead_code)]
-    slug: Option<String>,
+    _quota_tier: Option<String>,
+    _name: Option<String>,
+    _slug: Option<String>,
 }
 async fn create_client(account_id: Option<&str>) -> reqwest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
@@ -226,22 +223,4 @@ pub async fn fetch_quota_with_cache(
     }
 
     Err(last_error.unwrap_or_else(|| AppError::Unknown("Quota fetch failed".to_string())))
-}
-#[allow(dead_code)]
-pub async fn fetch_quota_inner(
-    access_token: &str,
-    email: &str,
-) -> crate::error::AppResult<(QuotaData, Option<String>)> {
-    fetch_quota_with_cache(access_token, email, None, None).await
-}
-#[allow(dead_code)]
-pub async fn fetch_all_quotas(
-    accounts: Vec<(String, String, String)>,
-) -> Vec<(String, crate::error::AppResult<QuotaData>)> {
-    let mut results = Vec::new();
-    for (id, email, access_token) in accounts {
-        let res = fetch_quota(&access_token, &email, Some(&id)).await;
-        results.push((email, res.map(|(q, _)| q)));
-    }
-    results
 }

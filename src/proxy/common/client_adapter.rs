@@ -16,8 +16,6 @@ pub trait ClientAdapter: Send + Sync {
 pub enum SignatureBufferStrategy {
     Default,
     Fifo,
-    #[allow(dead_code)]
-    Lifo,
 }
 pub static CLIENT_ADAPTERS: Lazy<Vec<Arc<dyn ClientAdapter>>> =
     Lazy::new(|| vec![Arc::new(OpencodeAdapter)]);

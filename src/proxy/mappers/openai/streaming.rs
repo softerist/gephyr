@@ -12,6 +12,7 @@ pub fn store_thought_signature(sig: &str, session_id: &str, message_count: usize
     if sig.is_empty() {
         return;
     }
+    crate::proxy::mappers::signature_store::store_thought_signature(sig);
     SignatureCache::global().cache_session_signature(
         session_id,
         sig.to_string(),

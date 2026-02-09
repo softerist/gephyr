@@ -46,17 +46,6 @@ impl TokenManager {
             model,
         )
     }
-    #[allow(dead_code)]
-    pub fn get_rate_limit_reset_seconds(&self, account_id: &str) -> Option<u64> {
-        crate::proxy::token::rate::get_rate_limit_reset_seconds(
-            &self.rate_limit_tracker,
-            account_id,
-        )
-    }
-    #[allow(dead_code)]
-    pub fn clean_expired_rate_limits(&self) {
-        crate::proxy::token::rate::clean_expired_rate_limits(&self.rate_limit_tracker);
-    }
     pub fn clear_rate_limit(&self, account_id: &str) -> bool {
         crate::proxy::token::rate::clear_rate_limit(&self.rate_limit_tracker, account_id)
     }
@@ -150,13 +139,6 @@ impl TokenManager {
     }
     pub async fn get_circuit_breaker_config(&self) -> crate::models::CircuitBreakerConfig {
         crate::proxy::token::control::get_circuit_breaker_config(&self.circuit_breaker_config).await
-    }
-    #[allow(dead_code)]
-    pub fn clear_session_binding(&self, session_id: &str) {
-        crate::proxy::token::control::clear_session_binding(
-            self.session_accounts.as_ref(),
-            session_id,
-        );
     }
     pub fn clear_all_sessions(&self) {
         crate::proxy::token::control::clear_all_sessions(self.session_accounts.as_ref());

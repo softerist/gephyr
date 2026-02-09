@@ -173,10 +173,6 @@ pub struct StreamingState {
     trailing_signature: Option<String>,
     pub web_search_query: Option<String>,
     pub grounding_chunks: Option<Vec<serde_json::Value>>,
-    #[allow(dead_code)]
-    parse_error_count: usize,
-    #[allow(dead_code)]
-    last_valid_state: Option<BlockType>,
     pub model_name: Option<String>,
     pub session_id: Option<String>,
     pub scaling_enabled: bool,
@@ -202,8 +198,6 @@ impl StreamingState {
             trailing_signature: None,
             web_search_query: None,
             grounding_chunks: None,
-            parse_error_count: 0,
-            last_valid_state: None,
             model_name: None,
             session_id: None,
             scaling_enabled: false,
@@ -460,58 +454,6 @@ impl StreamingState {
     }
     pub fn has_trailing_signature(&self) -> bool {
         self.trailing_signature.is_some()
-    }
-    #[allow(dead_code)]
-    pub fn handle_parse_error(&mut self, raw_data: &str) -> Vec<Bytes> {
-        let mut chunks = Vec::new();
-
-        self.parse_error_count += 1;
-
-        tracing::warn!(
-            "[SSE-Parser] Parse error #{} occurred. Raw data length: {} bytes",
-            self.parse_error_count,
-            raw_data.len()
-        );
-        if self.block_type != BlockType::None {
-            self.last_valid_state = Some(self.block_type);
-            chunks.extend(self.end_block());
-        }
-        #[cfg(debug_assertions)]
-        {
-            let preview = if raw_data.len() > 100 {
-                format!("{}...", &raw_data[..100])
-            } else {
-                raw_data.to_string()
-            };
-            tracing::debug!("[SSE-Parser] Failed chunk preview: {}", preview);
-        }
-        if self.parse_error_count > 3 {
-            tracing::error!(
-                "[SSE-Parser] High error rate detected ({} errors). Stream may be corrupted.",
-                self.parse_error_count
-            );
-            chunks.push(self.emit(
-                "error",
-                json!({
-                    "type": "error",
-                    "error": {
-                        "type": "overloaded_error",
-                        "message": "Network connection unstable, please check your network or proxy settings.",
-                    }
-                }),
-            ));
-        }
-
-        chunks
-    }
-    #[allow(dead_code)]
-    pub fn reset_error_state(&mut self) {
-        self.parse_error_count = 0;
-        self.last_valid_state = None;
-    }
-    #[allow(dead_code)]
-    pub fn get_error_count(&self) -> usize {
-        self.parse_error_count
     }
 }
 pub struct PartProcessor<'a> {

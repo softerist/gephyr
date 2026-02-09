@@ -167,17 +167,6 @@ impl Tool {
         }
         false
     }
-    #[allow(dead_code)]
-    pub fn get_name(&self) -> String {
-        self.name.clone().unwrap_or_else(|| {
-            if let Some(ref t) = self.type_ {
-                if t.starts_with("web_search") {
-                    return "web_search".to_string();
-                }
-            }
-            "unknown".to_string()
-        })
-    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metadata {

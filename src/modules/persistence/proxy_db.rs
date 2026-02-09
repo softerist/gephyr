@@ -215,24 +215,6 @@ pub fn cleanup_old_logs(days: i64) -> Result<usize, String> {
 
     Ok(deleted)
 }
-#[allow(dead_code)]
-pub fn limit_max_logs(max_count: usize) -> Result<usize, String> {
-    let conn = connect_db()?;
-
-    let deleted = conn
-        .execute(
-            "DELETE FROM request_logs WHERE id NOT IN (
-            SELECT id FROM request_logs ORDER BY timestamp DESC LIMIT ?1
-        )",
-            [max_count],
-        )
-        .map_err(|e| e.to_string())?;
-
-    conn.execute("VACUUM", []).map_err(|e| e.to_string())?;
-
-    Ok(deleted)
-}
-
 pub fn clear_logs() -> Result<(), String> {
     let conn = connect_db()?;
     conn.execute("DELETE FROM request_logs", [])

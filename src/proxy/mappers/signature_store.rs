@@ -5,7 +5,6 @@ static GLOBAL_THOUGHT_SIG: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 fn get_thought_sig_storage() -> &'static Mutex<Option<String>> {
     GLOBAL_THOUGHT_SIG.get_or_init(|| Mutex::new(None))
 }
-#[allow(dead_code)]
 pub fn store_thought_signature(sig: &str) {
     if let Ok(mut guard) = get_thought_sig_storage().lock() {
         let should_store = match &*guard {
@@ -36,7 +35,7 @@ pub fn get_thought_signature() -> Option<String> {
         None
     }
 }
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn take_thought_signature() -> Option<String> {
     if let Ok(mut guard) = get_thought_sig_storage().lock() {
         guard.take()
@@ -44,7 +43,7 @@ pub fn take_thought_signature() -> Option<String> {
         None
     }
 }
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn clear_thought_signature() {
     if let Ok(mut guard) = get_thought_sig_storage().lock() {
         *guard = None;
