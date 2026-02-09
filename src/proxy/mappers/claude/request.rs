@@ -4,49 +4,15 @@ use crate::proxy::mappers::tool_result_compressor;
 use crate::proxy::session_manager::SessionManager;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+#[path = "request_generation.rs"]
+mod generation;
 #[path = "request_preprocess.rs"]
 mod preprocess;
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SafetyThreshold {
-    Off,
-    BlockLowAndAbove,
-    BlockMediumAndAbove,
-    BlockOnlyHigh,
-    BlockNone,
-}
+#[path = "request_thinking.rs"]
+mod thinking;
 
-impl SafetyThreshold {
-    pub fn from_env() -> Self {
-        match std::env::var("GEMINI_SAFETY_THRESHOLD").as_deref() {
-            Ok("OFF") | Ok("off") => SafetyThreshold::Off,
-            Ok("LOW") | Ok("low") => SafetyThreshold::BlockLowAndAbove,
-            Ok("MEDIUM") | Ok("medium") => SafetyThreshold::BlockMediumAndAbove,
-            Ok("HIGH") | Ok("high") => SafetyThreshold::BlockOnlyHigh,
-            Ok("NONE") | Ok("none") => SafetyThreshold::BlockNone,
-            _ => SafetyThreshold::Off,
-        }
-    }
-    pub fn to_gemini_threshold(self) -> &'static str {
-        match self {
-            SafetyThreshold::Off => "OFF",
-            SafetyThreshold::BlockLowAndAbove => "BLOCK_LOW_AND_ABOVE",
-            SafetyThreshold::BlockMediumAndAbove => "BLOCK_MEDIUM_AND_ABOVE",
-            SafetyThreshold::BlockOnlyHigh => "BLOCK_ONLY_HIGH",
-            SafetyThreshold::BlockNone => "BLOCK_NONE",
-        }
-    }
-}
 fn build_safety_settings() -> Value {
-    let threshold = SafetyThreshold::from_env();
-    let threshold_str = threshold.to_gemini_threshold();
-
-    json!([
-        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": threshold_str },
-        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": threshold_str },
-        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": threshold_str },
-        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": threshold_str },
-        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": threshold_str },
-    ])
+    generation::build_safety_settings()
 }
 pub fn clean_cache_control_from_messages(messages: &mut [Message]) {
     preprocess::clean_cache_control_from_messages(messages);
@@ -281,151 +247,25 @@ pub fn transform_claude_request_in(
     Ok(body)
 }
 fn should_disable_thinking_due_to_history(messages: &[Message]) -> bool {
-    for msg in messages.iter().rev() {
-        if msg.role == "assistant" {
-            if let MessageContent::Array(blocks) = &msg.content {
-                let has_tool_use = blocks
-                    .iter()
-                    .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
-                let has_thinking = blocks
-                    .iter()
-                    .any(|b| matches!(b, ContentBlock::Thinking { .. }));
-                if has_tool_use && !has_thinking {
-                    tracing::info!("[Thinking-Mode] Detected ToolUse without Thinking in history. Requesting disable.");
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
-    false
+    thinking::should_disable_thinking_due_to_history(messages)
 }
 fn should_enable_thinking_by_default(model: &str) -> bool {
-    let should_enable = crate::proxy::common::model_mapping::should_auto_enable_thinking(model);
-    if should_enable {
-        tracing::debug!(
-            "[Thinking-Mode] Auto-enabling thinking for model: {}",
-            model
-        );
-    }
-    should_enable
+    thinking::should_enable_thinking_by_default(model)
 }
-const MIN_SIGNATURE_LENGTH: usize = 50;
+const MIN_SIGNATURE_LENGTH: usize = thinking::MIN_SIGNATURE_LENGTH;
 fn has_valid_signature_for_function_calls(
     messages: &[Message],
     global_sig: &Option<String>,
     session_id: &str,
 ) -> bool {
-    if let Some(sig) = global_sig {
-        if sig.len() >= MIN_SIGNATURE_LENGTH {
-            tracing::debug!(
-                "[Signature-Check] Found valid signature in global store (len: {})",
-                sig.len()
-            );
-            return true;
-        }
-    }
-    if let Some(sig) = crate::proxy::SignatureCache::global().get_session_signature(session_id) {
-        if sig.len() >= MIN_SIGNATURE_LENGTH {
-            tracing::info!(
-                "[Signature-Check] Found valid signature in SESSION cache (session: {}, len: {})",
-                session_id,
-                sig.len()
-            );
-            return true;
-        }
-    }
-    for msg in messages.iter().rev() {
-        if msg.role == "assistant" {
-            if let MessageContent::Array(blocks) = &msg.content {
-                for block in blocks {
-                    if let ContentBlock::Thinking {
-                        signature: Some(sig),
-                        ..
-                    } = block
-                    {
-                        if sig.len() >= MIN_SIGNATURE_LENGTH {
-                            tracing::debug!(
-                                "[Signature-Check] Found valid signature in message history (len: {})",
-                                sig.len()
-                            );
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    tracing::warn!(
-        "[Signature-Check] No valid signature found (session: {}, checked: global store, session cache, message history)",
-        session_id
-    );
-    false
+    thinking::has_valid_signature_for_function_calls(messages, global_sig, session_id)
 }
 fn build_system_instruction(
     system: &Option<SystemPrompt>,
     _model_name: &str,
     has_mcp_tools: bool,
 ) -> Option<Value> {
-    let mut parts = Vec::new();
-    let antigravity_identity = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n\
-    You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n\
-    **Absolute paths only**\n\
-    **Proactiveness**";
-    let mut user_has_antigravity = false;
-    if let Some(sys) = system {
-        match sys {
-            SystemPrompt::String(text) => {
-                if text.contains("You are Antigravity") {
-                    user_has_antigravity = true;
-                }
-            }
-            SystemPrompt::Array(blocks) => {
-                for block in blocks {
-                    if block.block_type == "text" && block.text.contains("You are Antigravity") {
-                        user_has_antigravity = true;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    if !user_has_antigravity {
-        parts.push(json!({"text": antigravity_identity}));
-    }
-    if let Some(sys) = system {
-        match sys {
-            SystemPrompt::String(text) => {
-                parts.push(json!({"text": text}));
-            }
-            SystemPrompt::Array(blocks) => {
-                for block in blocks {
-                    if block.block_type == "text" {
-                        parts.push(json!({"text": block.text}));
-                    }
-                }
-            }
-        }
-    }
-    if has_mcp_tools {
-        let mcp_xml_prompt = "\n\
-        ==== MCP XML Tool Calling Protocol (Workaround) ====\n\
-        When you need to call an MCP tool with a name starting with `mcp__`:\n\
-        1) Try XML format calling first: output `<mcp__tool_name>{\"arg\":\"value\"}</mcp__tool_name>`.\n\
-        2) You must directly output the XML block without markdown wrapping, and the content should be JSON formatted input parameters.\n\
-        3) This method has higher connectivity and fault tolerance, suitable for large result return scenarios.\n\
-        ===========================================";
-        parts.push(json!({"text": mcp_xml_prompt}));
-    }
-    if !user_has_antigravity {
-        parts.push(json!({"text": "\n--- [SYSTEM_PROMPT_END] ---"}));
-    }
-
-    Some(json!({
-        "role": "user",
-        "parts": parts
-    }))
+    thinking::build_system_instruction(system, has_mcp_tools)
 }
 struct BuildContentsContext<'a> {
     is_thinking_enabled: bool,
@@ -1039,64 +879,7 @@ fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
     merged
 }
 fn build_tools(tools: &Option<Vec<Tool>>, has_web_search: bool) -> Result<Option<Value>, String> {
-    if let Some(tools_list) = tools {
-        let mut function_declarations: Vec<Value> = Vec::new();
-        let mut has_google_search = has_web_search;
-
-        for tool in tools_list {
-            if tool.is_web_search() {
-                has_google_search = true;
-                continue;
-            }
-
-            if let Some(t_type) = &tool.type_ {
-                if t_type == "web_search_20250305" {
-                    has_google_search = true;
-                    continue;
-                }
-            }
-            if let Some(name) = &tool.name {
-                if name == "web_search" || name == "google_search" {
-                    has_google_search = true;
-                    continue;
-                }
-                let mut input_schema = tool.input_schema.clone().unwrap_or(json!({
-                    "type": "object",
-                    "properties": {}
-                }));
-                crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
-
-                function_declarations.push(json!({
-                    "name": name,
-                    "description": tool.description,
-                    "parameters": input_schema
-                }));
-            }
-        }
-
-        let mut tool_obj = serde_json::Map::new();
-        if !function_declarations.is_empty() {
-            tool_obj.insert(
-                "functionDeclarations".to_string(),
-                json!(function_declarations),
-            );
-            if has_google_search {
-                tracing::info!(
-                    "[Claude-Request] Skipping googleSearch injection due to {} existing function declarations. \
-                     Gemini v1internal does not support mixed tool types.",
-                    function_declarations.len()
-                );
-            }
-        } else if has_google_search {
-            tool_obj.insert("googleSearch".to_string(), json!({}));
-        }
-
-        if !tool_obj.is_empty() {
-            return Ok(Some(json!([tool_obj])));
-        }
-    }
-
-    Ok(None)
+    generation::build_tools(tools, has_web_search)
 }
 fn build_generation_config(
     claude_req: &ClaudeRequest,
@@ -1104,119 +887,15 @@ fn build_generation_config(
     has_web_search: bool,
     is_thinking_enabled: bool,
 ) -> Value {
-    let mut config = json!({});
-    if is_thinking_enabled {
-        let mut thinking_config = json!({"includeThoughts": true});
-        let budget_tokens = claude_req
-            .thinking
-            .as_ref()
-            .and_then(|t| t.budget_tokens)
-            .unwrap_or(16000);
-
-        let tb_config = crate::proxy::config::get_thinking_budget_config();
-        let budget = match tb_config.mode {
-            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget_tokens,
-            crate::proxy::config::ThinkingBudgetMode::Custom => {
-                let mut custom_value = tb_config.custom_value;
-                let model_lower = mapped_model.to_lowercase();
-                let is_gemini_limited = has_web_search
-                    || model_lower.contains("gemini")
-                    || model_lower.contains("flash")
-                    || model_lower.ends_with("-thinking");
-
-                if is_gemini_limited && custom_value > 24576 {
-                    tracing::warn!(
-                        "[Claude-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                        custom_value, mapped_model
-                    );
-                    custom_value = 24576;
-                }
-                custom_value
-            }
-            crate::proxy::config::ThinkingBudgetMode::Auto => {
-                let model_lower = mapped_model.to_lowercase();
-                let is_gemini_limited = has_web_search
-                    || model_lower.contains("gemini")
-                    || model_lower.contains("flash")
-                    || model_lower.ends_with("-thinking");
-                if is_gemini_limited && budget_tokens > 24576 {
-                    tracing::info!(
-                        "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                        budget_tokens, mapped_model
-                    );
-                    24576
-                } else {
-                    budget_tokens
-                }
-            }
-        };
-        thinking_config["thinkingBudget"] = json!(budget);
-        config["thinkingConfig"] = thinking_config;
-    }
-    if let Some(temp) = claude_req.temperature {
-        config["temperature"] = json!(temp);
-    }
-    if let Some(top_p) = claude_req.top_p {
-        config["topP"] = json!(top_p);
-    }
-    if let Some(top_k) = claude_req.top_k {
-        config["topK"] = json!(top_k);
-    }
-    if let Some(output_config) = &claude_req.output_config {
-        if let Some(effort) = &output_config.effort {
-            config["effortLevel"] = json!(match effort.to_lowercase().as_str() {
-                "high" => "HIGH",
-                "medium" => "MEDIUM",
-                "low" => "LOW",
-                _ => "HIGH",
-            });
-            tracing::debug!(
-                "[Generation-Config] Effort level set: {} -> {}",
-                effort,
-                config["effortLevel"]
-            );
-        }
-    }
-    let mut final_max_tokens: Option<i64> = claude_req.max_tokens.map(|t| t as i64);
-    if let Some(thinking_config) = config.get("thinkingConfig") {
-        if let Some(budget) = thinking_config
-            .get("thinkingBudget")
-            .and_then(|t| t.as_u64())
-        {
-            let current = final_max_tokens.unwrap_or(0);
-            if current <= budget as i64 {
-                final_max_tokens = Some((budget + 8192) as i64);
-                tracing::info!(
-                    "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}",
-                    final_max_tokens.unwrap(), budget
-                );
-            }
-        }
-    }
-
-    if let Some(val) = final_max_tokens {
-        config["maxOutputTokens"] = json!(val);
-    }
-    config["stopSequences"] = json!(["<|user|>", "<|end_of_turn|>", "\n\nHuman:"]);
-
-    config
+    generation::build_generation_config(
+        claude_req,
+        mapped_model,
+        has_web_search,
+        is_thinking_enabled,
+    )
 }
 pub fn clean_thinking_fields_recursive(val: &mut Value) {
-    match val {
-        Value::Object(map) => {
-            map.remove("thought");
-            map.remove("thoughtSignature");
-            for (_, v) in map.iter_mut() {
-                clean_thinking_fields_recursive(v);
-            }
-        }
-        Value::Array(arr) => {
-            for v in arr.iter_mut() {
-                clean_thinking_fields_recursive(v);
-            }
-        }
-        _ => {}
-    }
+    generation::clean_thinking_fields_recursive(val);
 }
 fn is_model_compatible(cached: &str, target: &str) -> bool {
     crate::proxy::common::model_mapping::is_signature_family_compatible(cached, target)
