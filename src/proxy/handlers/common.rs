@@ -10,6 +10,10 @@ pub async fn handle_detect_model(
     State(state): State<ModelCatalogState>,
     Json(body): Json<Value>,
 ) -> Response {
+    let _ = crate::proxy::handlers::traits::all_handler_protocols();
+    let _ = crate::proxy::handlers::traits::protocol_name(
+        &crate::proxy::handlers::traits::HandlerProtocol::Claude,
+    );
     let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
 
     if model_name.is_empty() {

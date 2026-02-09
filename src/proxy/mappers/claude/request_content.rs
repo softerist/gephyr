@@ -4,6 +4,8 @@ use crate::proxy::mappers::tool_result_compressor;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
+const MAX_TOOL_RESULT_CHARS: usize = 200_000;
+
 pub(super) struct GoogleContentsOptions<'a> {
     pub is_thinking_enabled: bool,
     pub allow_dummy_thought: bool,
@@ -244,97 +246,7 @@ fn build_contents(
                             state.pending_tool_use_ids.push(id.clone());
                         }
                         state.tool_id_to_name.insert(id.clone(), name.clone());
-                        let final_sig = signature
-                            .as_ref()
-                            .or(state.last_thought_signature.as_ref())
-                            .cloned()
-                            .or_else(|| {
-                                crate::proxy::SignatureCache::global()
-                                    .get_session_signature(ctx.session_id)
-                                    .inspect(|s| {
-                                        tracing::info!(
-                                            "[Claude-Request] Recovered signature from SESSION cache (session: {}, len: {})",
-                                            ctx.session_id,
-                                            s.len()
-                                        );
-                                    })
-                            })
-                            .or_else(|| {
-                                crate::proxy::SignatureCache::global()
-                                    .get_tool_signature(id)
-                                    .inspect(|_s| {
-                                        tracing::info!("[Claude-Request] Recovered signature from TOOL cache for tool_id: {}", id);
-                                    })
-                            })
-                            .or_else(|| {
-                                let global_sig = get_thought_signature();
-                                if let Some(sig) = &global_sig {
-                                    tracing::warn!(
-                                        "[Claude-Request] Using deprecated GLOBAL thought_signature fallback (length: {}). This indicates session cache miss.",
-                                        sig.len()
-                                    );
-                                }
-                                global_sig
-                            });
-                        if let Some(sig) = final_sig {
-                            if ctx.is_retry && signature.is_none() {
-                                tracing::warn!("[Tool-Signature] Skipping signature backfill for tool_use: {} during retry.", id);
-                            } else if sig.len() < super::thinking::MIN_SIGNATURE_LENGTH {
-                                tracing::warn!(
-                                    "[Tool-Signature] Signature too short for tool_use: {} (len: {} < {}), skipping.",
-                                    id,
-                                    sig.len(),
-                                    super::thinking::MIN_SIGNATURE_LENGTH
-                                );
-                            } else {
-                                let cached_family =
-                                    crate::proxy::SignatureCache::global().get_signature_family(&sig);
-
-                                let should_use_sig = match cached_family {
-                                    Some(family) => {
-                                        if is_model_compatible(&family, ctx.mapped_model) {
-                                            true
-                                        } else {
-                                            tracing::warn!(
-                                                "[Tool-Signature] Incompatible signature for tool_use: {} (Family: {}, Target: {})",
-                                                id,
-                                                family,
-                                                ctx.mapped_model
-                                            );
-                                            false
-                                        }
-                                    }
-                                    None => {
-                                        if sig.len() >= super::thinking::MIN_SIGNATURE_LENGTH {
-                                            tracing::debug!(
-                                                "[Tool-Signature] Unknown signature origin but valid length (len: {}) for tool_use: {}, using as-is for JSON tool calling.",
-                                                sig.len(),
-                                                id
-                                            );
-                                            true
-                                        } else if ctx.is_thinking_enabled {
-                                            tracing::warn!(
-                                                "[Tool-Signature] Unknown signature origin and too short for tool_use: {} (len: {}). Dropping in thinking mode.",
-                                                id,
-                                                sig.len()
-                                            );
-                                            false
-                                        } else {
-                                            true
-                                        }
-                                    }
-                                };
-                                if should_use_sig {
-                                    part["thoughtSignature"] = json!(sig);
-                                }
-                            }
-                        } else {
-                            let is_google_cloud = ctx.mapped_model.starts_with("projects/");
-                            if ctx.is_thinking_enabled && !is_google_cloud {
-                                tracing::debug!("[Tool-Signature] Adding GEMINI_SKIP_SIGNATURE for tool_use: {}", id);
-                                part["thoughtSignature"] = json!("skip_thought_signature_validator");
-                            }
-                        }
+                        apply_tool_use_signature(&mut part, id, signature, ctx, state);
                         parts.push(part);
                     }
                     ContentBlock::ToolResult {
@@ -349,55 +261,8 @@ fn build_contents(
                             .get(tool_use_id)
                             .cloned()
                             .unwrap_or_else(|| tool_use_id.clone());
-                        let mut compacted_content = content.clone();
-                        if let Some(blocks) = compacted_content.as_array_mut() {
-                            tool_result_compressor::sanitize_tool_result_blocks(blocks);
-                        }
-                        let mut merged_content = match &compacted_content {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Array(arr) => arr
-                                .iter()
-                                .filter_map(|block| {
-                                    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                                        Some(text.to_string())
-                                    } else if block.get("source").is_some() {
-                                        if block.get("type").and_then(|v| v.as_str())
-                                            == Some("image")
-                                        {
-                                            Some("[image omitted to save context]".to_string())
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n"),
-                            _ => content.to_string(),
-                        };
-                        const MAX_TOOL_RESULT_CHARS: usize = 200_000;
-                        if merged_content.len() > MAX_TOOL_RESULT_CHARS {
-                            tracing::warn!(
-                                "Truncating tool result from {} chars to {}",
-                                merged_content.len(),
-                                MAX_TOOL_RESULT_CHARS
-                            );
-                            let mut truncated = merged_content
-                                .chars()
-                                .take(MAX_TOOL_RESULT_CHARS)
-                                .collect::<String>();
-                            truncated.push_str("\n...[truncated output]");
-                            merged_content = truncated;
-                        }
-                        if merged_content.trim().is_empty() {
-                            if is_error.unwrap_or(false) {
-                                merged_content =
-                                    "Tool execution failed with no output.".to_string();
-                            } else {
-                                merged_content = "Command executed successfully.".to_string();
-                            }
-                        }
+                        let merged_content =
+                            build_tool_result_content(content, is_error.unwrap_or(false));
 
                         parts.push(json!({
                             "functionResponse": {
@@ -490,6 +355,178 @@ fn build_contents(
     }
 
     Ok(parts)
+}
+
+fn apply_tool_use_signature(
+    part: &mut Value,
+    id: &str,
+    signature: &Option<String>,
+    ctx: &BuildContentsContext<'_>,
+    state: &BuildContentsState<'_>,
+) {
+    let final_sig = resolve_tool_use_signature(id, signature, ctx, state);
+    if let Some(sig) = final_sig {
+        if ctx.is_retry && signature.is_none() {
+            tracing::warn!(
+                "[Tool-Signature] Skipping signature backfill for tool_use: {} during retry.",
+                id
+            );
+            return;
+        }
+        if sig.len() < super::thinking::MIN_SIGNATURE_LENGTH {
+            tracing::warn!(
+                "[Tool-Signature] Signature too short for tool_use: {} (len: {} < {}), skipping.",
+                id,
+                sig.len(),
+                super::thinking::MIN_SIGNATURE_LENGTH
+            );
+            return;
+        }
+        if should_use_tool_signature(&sig, id, ctx) {
+            part["thoughtSignature"] = json!(sig);
+        }
+    } else {
+        let is_google_cloud = ctx.mapped_model.starts_with("projects/");
+        if ctx.is_thinking_enabled && !is_google_cloud {
+            tracing::debug!(
+                "[Tool-Signature] Adding GEMINI_SKIP_SIGNATURE for tool_use: {}",
+                id
+            );
+            part["thoughtSignature"] = json!("skip_thought_signature_validator");
+        }
+    }
+}
+
+fn resolve_tool_use_signature(
+    id: &str,
+    signature: &Option<String>,
+    ctx: &BuildContentsContext<'_>,
+    state: &BuildContentsState<'_>,
+) -> Option<String> {
+    signature
+        .as_ref()
+        .or(state.last_thought_signature.as_ref())
+        .cloned()
+        .or_else(|| {
+            crate::proxy::SignatureCache::global()
+                .get_session_signature(ctx.session_id)
+                .inspect(|s| {
+                    tracing::info!(
+                        "[Claude-Request] Recovered signature from SESSION cache (session: {}, len: {})",
+                        ctx.session_id,
+                        s.len()
+                    );
+                })
+        })
+        .or_else(|| {
+            crate::proxy::SignatureCache::global()
+                .get_tool_signature(id)
+                .inspect(|_s| {
+                    tracing::info!(
+                        "[Claude-Request] Recovered signature from TOOL cache for tool_id: {}",
+                        id
+                    );
+                })
+        })
+        .or_else(|| {
+            let global_sig = get_thought_signature();
+            if let Some(sig) = &global_sig {
+                tracing::warn!(
+                    "[Claude-Request] Using deprecated GLOBAL thought_signature fallback (length: {}). This indicates session cache miss.",
+                    sig.len()
+                );
+            }
+            global_sig
+        })
+}
+
+fn should_use_tool_signature(sig: &str, id: &str, ctx: &BuildContentsContext<'_>) -> bool {
+    let cached_family = crate::proxy::SignatureCache::global().get_signature_family(sig);
+
+    match cached_family {
+        Some(family) => {
+            if is_model_compatible(&family, ctx.mapped_model) {
+                true
+            } else {
+                tracing::warn!(
+                    "[Tool-Signature] Incompatible signature for tool_use: {} (Family: {}, Target: {})",
+                    id,
+                    family,
+                    ctx.mapped_model
+                );
+                false
+            }
+        }
+        None => {
+            if sig.len() >= super::thinking::MIN_SIGNATURE_LENGTH {
+                tracing::debug!(
+                    "[Tool-Signature] Unknown signature origin but valid length (len: {}) for tool_use: {}, using as-is for JSON tool calling.",
+                    sig.len(),
+                    id
+                );
+                true
+            } else if ctx.is_thinking_enabled {
+                tracing::warn!(
+                    "[Tool-Signature] Unknown signature origin and too short for tool_use: {} (len: {}). Dropping in thinking mode.",
+                    id,
+                    sig.len()
+                );
+                false
+            } else {
+                true
+            }
+        }
+    }
+}
+
+fn build_tool_result_content(content: &Value, is_error: bool) -> String {
+    let mut compacted_content = content.clone();
+    if let Some(blocks) = compacted_content.as_array_mut() {
+        tool_result_compressor::sanitize_tool_result_blocks(blocks);
+    }
+    let mut merged_content = match &compacted_content {
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => arr
+            .iter()
+            .filter_map(|block| {
+                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                    Some(text.to_string())
+                } else if block.get("source").is_some() {
+                    if block.get("type").and_then(|v| v.as_str()) == Some("image") {
+                        Some("[image omitted to save context]".to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => content.to_string(),
+    };
+
+    if merged_content.len() > MAX_TOOL_RESULT_CHARS {
+        tracing::warn!(
+            "Truncating tool result from {} chars to {}",
+            merged_content.len(),
+            MAX_TOOL_RESULT_CHARS
+        );
+        let mut truncated = merged_content
+            .chars()
+            .take(MAX_TOOL_RESULT_CHARS)
+            .collect::<String>();
+        truncated.push_str("\n...[truncated output]");
+        merged_content = truncated;
+    }
+    if merged_content.trim().is_empty() {
+        if is_error {
+            merged_content = "Tool execution failed with no output.".to_string();
+        } else {
+            merged_content = "Command executed successfully.".to_string();
+        }
+    }
+    merged_content
 }
 
 fn build_google_content(
@@ -634,4 +671,46 @@ fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
 
 fn is_model_compatible(cached: &str, target: &str) -> bool {
     crate::proxy::common::model_mapping::is_signature_family_compatible(cached, target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn build_tool_result_content_handles_empty_non_error() {
+        let content = json!([]);
+        let result = build_tool_result_content(&content, false);
+        assert_eq!(result, "Command executed successfully.");
+    }
+
+    #[test]
+    fn build_tool_result_content_handles_empty_error() {
+        let content = json!([]);
+        let result = build_tool_result_content(&content, true);
+        assert_eq!(result, "Tool execution failed with no output.");
+    }
+
+    #[test]
+    fn build_tool_result_content_collapses_array_blocks_and_omits_images() {
+        let content = json!([
+            {"type":"text","text":"line 1"},
+            {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},
+            {"type":"text","text":"line 2"}
+        ]);
+        let result = build_tool_result_content(&content, false);
+        assert!(result.contains("line 1"));
+        assert!(result.contains("line 2"));
+        assert!(!result.trim().is_empty());
+    }
+
+    #[test]
+    fn build_tool_result_content_truncates_large_payload() {
+        let long = "x".repeat(MAX_TOOL_RESULT_CHARS + 5000);
+        let content = Value::String(long);
+        let result = build_tool_result_content(&content, false);
+        assert!(result.len() > MAX_TOOL_RESULT_CHARS);
+        assert!(result.contains("...[truncated output]"));
+    }
 }
