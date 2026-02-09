@@ -8,7 +8,6 @@ use crate::models::{
     Account, AccountIndex, AccountSummary, DeviceProfile, DeviceProfileVersion, QuotaData,
     TokenData,
 };
-use crate::modules;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 static ACCOUNT_INDEX_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -310,7 +309,7 @@ pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
 }
 pub async fn switch_account(
     account_id: &str,
-    integration: &(impl modules::integration::SystemIntegration + ?Sized),
+    integration: &(impl crate::modules::system::integration::SystemIntegration + ?Sized),
 ) -> Result<(), String> {
     use crate::modules::auth::oauth;
 
@@ -341,7 +340,7 @@ pub async fn switch_account(
             "Account {} has no bound fingerprint, generating new one for isolation...",
             account.email
         ));
-        let new_profile = modules::device::generate_profile();
+        let new_profile = crate::modules::system::device::generate_profile();
         apply_profile_to_account(
             &mut account,
             new_profile.clone(),
@@ -639,7 +638,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         Ok(t) => t,
         Err(e) => {
             if e.contains("invalid_grant") {
-                modules::logger::log_error(&format!(
+                crate::modules::system::logger::log_error(&format!(
                     "Disabling account {} due to invalid_grant during token refresh (quota check)",
                     account.email
                 ));
@@ -654,7 +653,10 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     };
 
     if token.access_token != account.token.access_token {
-        modules::logger::log_info(&format!("Time-based Token refresh: {}", account.email));
+        crate::modules::system::logger::log_info(&format!(
+            "Time-based Token refresh: {}",
+            account.email
+        ));
         account.token = token.clone();
         let name = if account.name.is_none()
             || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
@@ -671,14 +673,14 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         upsert_account(account.email.clone(), name, token.clone()).map_err(AppError::Account)?;
     }
     if account.name.is_none() || account.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
-        modules::logger::log_info(&format!(
+        crate::modules::system::logger::log_info(&format!(
             "Account {} missing display name, attempting to fetch...",
             account.email
         ));
         match oauth::get_user_info(&account.token.access_token, Some(&account.id)).await {
             Ok(user_info) => {
                 let display_name = user_info.get_display_name();
-                modules::logger::log_info(&format!(
+                crate::modules::system::logger::log_info(&format!(
                     "Successfully fetched display name: {:?}",
                     display_name
                 ));
@@ -686,15 +688,22 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 if let Err(e) =
                     upsert_account(account.email.clone(), display_name, account.token.clone())
                 {
-                    modules::logger::log_warn(&format!("Failed to save display name: {}", e));
+                    crate::modules::system::logger::log_warn(&format!(
+                        "Failed to save display name: {}",
+                        e
+                    ));
                 }
             }
             Err(e) => {
-                modules::logger::log_warn(&format!("Failed to fetch display name: {}", e));
+                crate::modules::system::logger::log_warn(&format!(
+                    "Failed to fetch display name: {}",
+                    e
+                ));
             }
         }
     }
-    let result: crate::error::AppResult<(QuotaData, Option<String>)> = modules::fetch_quota(
+    let result: crate::error::AppResult<(QuotaData, Option<String>)> =
+        crate::modules::system::quota::fetch_quota(
         &account.token.access_token,
         &account.email,
         Some(&account.id),
@@ -702,7 +711,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     .await;
     if let Ok((ref _q, ref project_id)) = result {
         if project_id.is_some() && *project_id != account.token.project_id {
-            modules::logger::log_info(&format!(
+            crate::modules::system::logger::log_info(&format!(
                 "Detected project_id update ({}), saving...",
                 account.email
             ));
@@ -712,14 +721,17 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 account.name.clone(),
                 account.token.clone(),
             ) {
-                modules::logger::log_warn(&format!("Failed to sync project_id: {}", e));
+                crate::modules::system::logger::log_warn(&format!(
+                    "Failed to sync project_id: {}",
+                    e
+                ));
             }
         }
     }
     if let Err(AppError::Network(ref e)) = result {
         if let Some(status) = e.status() {
             if status == StatusCode::UNAUTHORIZED {
-                modules::logger::log_warn(&format!(
+                crate::modules::system::logger::log_warn(&format!(
                     "401 Unauthorized for {}, forcing refresh...",
                     account.email
                 ));
@@ -732,7 +744,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     Ok(t) => t,
                     Err(e) => {
                         if e.contains("invalid_grant") {
-                            modules::logger::log_error(&format!(
+                            crate::modules::system::logger::log_error(&format!(
                                 "Disabling account {} due to invalid_grant during forced refresh (quota check)",
                                 account.email
                             ));
@@ -770,7 +782,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 upsert_account(account.email.clone(), name, new_token.clone())
                     .map_err(AppError::Account)?;
                 let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
-                    modules::fetch_quota(
+                    crate::modules::system::quota::fetch_quota(
                         &new_token.access_token,
                         &account.email,
                         Some(&account.id),
@@ -778,7 +790,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     .await;
                 if let Ok((ref _q, ref project_id)) = retry_result {
                     if project_id.is_some() && *project_id != account.token.project_id {
-                        modules::logger::log_info(&format!(
+                        crate::modules::system::logger::log_info(&format!(
                             "Detected update of project_id after retry ({}), saving...",
                             account.email
                         ));

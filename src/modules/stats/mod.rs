@@ -1,3 +1,1 @@
-#![allow(unused_imports)]
-
-pub use super::token_stats;
+pub mod token_stats;
