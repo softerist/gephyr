@@ -1,0 +1,25 @@
+name: allow-guard
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/check-allow-attributes.sh'
+      - '.github/workflows/allow-guard.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'scripts/check-allow-attributes.sh'
+      - '.github/workflows/allow-guard.yml'
+
+jobs:
+  allow-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce allow-attribute policy
+        run: bash scripts/check-allow-attributes.sh
