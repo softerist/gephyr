@@ -1,9 +1,55 @@
+<#
+.SYNOPSIS
+Guard script to block forbidden Rust allow attributes in src/.
+
+.DESCRIPTION
+Scans src/ for:
+- #[allow(dead_code)] (forbidden in runtime code)
+- non-test #[allow(clippy::...)] attributes
+
+Returns non-zero when violations are found.
+
+.PARAMETER Root
+Repository root path to scan. Defaults to parent of this script.
+
+.PARAMETER Help
+Print usage/examples and exit.
+
+.EXAMPLE
+.\scripts\check-allow-attributes.ps1
+
+.EXAMPLE
+.\scripts\check-allow-attributes.ps1 -Root F:\Git\gephyr
+
+.EXAMPLE
+Get-Help .\scripts\check-allow-attributes.ps1 -Detailed
+#>
 param(
-  [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot ".."))
+  [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot "..")),
+  [Alias("h", "?")]
+  [switch]$Help
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Show-Usage {
+  Write-Host ""
+  Write-Host "Usage:" -ForegroundColor Cyan
+  Write-Host "  .\scripts\check-allow-attributes.ps1 [-Root <path>] [-Help]"
+  Write-Host ""
+  Write-Host "Examples:" -ForegroundColor Cyan
+  Write-Host "  .\scripts\check-allow-attributes.ps1"
+  Write-Host "  .\scripts\check-allow-attributes.ps1 -Root F:\Git\gephyr"
+  Write-Host ""
+  Write-Host "PowerShell native help:" -ForegroundColor Cyan
+  Write-Host "  Get-Help .\scripts\check-allow-attributes.ps1 -Detailed"
+}
+
+if ($Help.IsPresent) {
+  Show-Usage
+  return
+}
 
 Set-Location $Root
 
@@ -71,4 +117,3 @@ if ($fail) {
 }
 
 Write-Host "[allow-guard] ok"
-

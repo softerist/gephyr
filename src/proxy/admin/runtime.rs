@@ -22,8 +22,9 @@ pub(crate) use service_control::{
     admin_clear_all_rate_limits, admin_clear_proxy_session_bindings, admin_clear_rate_limit,
     admin_fetch_zai_models, admin_generate_api_key, admin_get_preferred_account,
     admin_get_proxy_compliance_debug, admin_get_proxy_session_bindings, admin_get_proxy_status,
-    admin_set_preferred_account, admin_set_proxy_monitor_enabled, admin_start_proxy_service,
-    admin_stop_proxy_service, admin_update_model_mapping, admin_update_proxy_compliance,
+    admin_get_version_routes, admin_set_preferred_account, admin_set_proxy_monitor_enabled,
+    admin_start_proxy_service, admin_stop_proxy_service, admin_update_model_mapping,
+    admin_update_proxy_compliance,
 };
 pub(crate) use user_tokens::{
     admin_create_user_token, admin_delete_user_token, admin_get_user_token_summary,

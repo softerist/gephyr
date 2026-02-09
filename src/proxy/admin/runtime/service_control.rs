@@ -21,6 +21,23 @@ pub(crate) async fn admin_get_proxy_status(
     })))
 }
 
+pub(crate) async fn admin_get_version_routes() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "routes": {
+            "GET /api/health": true,
+            "GET /api/config": true,
+            "POST /api/config": true,
+            "GET /api/proxy/session-bindings": true,
+            "POST /api/proxy/session-bindings/clear": true,
+            "GET /api/proxy/compliance": true,
+            "POST /api/proxy/compliance": true,
+            "GET /api/proxy/status": true,
+            "GET /api/version/routes": true
+        }
+    }))
+}
+
 pub(crate) async fn admin_start_proxy_service(
     State(state): State<AdminState>,
 ) -> impl IntoResponse {
@@ -155,7 +172,12 @@ pub(crate) async fn admin_update_proxy_compliance(
         .update_compliance_config(compliance)
         .await;
     logger::log_info("[API] Compliance config updated via API and saved");
-    Ok(StatusCode::OK)
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "saved": true,
+        "message": "Compliance config updated",
+        "compliance": app_config.proxy.compliance
+    })))
 }
 
 pub(crate) async fn admin_clear_all_rate_limits(

@@ -37,6 +37,7 @@ Primary groups:
 - status/start/stop
 - model mapping update
 - api-key generation
+- version/routes capability snapshot (`GET /api/version/routes`)
 - session bindings debug snapshot (bindings + recent sticky decisions)
 - compliance debug snapshot (live RPM/in-flight/cooldown counters)
 - compliance config update (`POST /api/proxy/compliance`) without full `config` round-trip

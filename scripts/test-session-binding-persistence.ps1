@@ -1,3 +1,55 @@
+<#
+.SYNOPSIS
+Validate sticky session binding persistence across container restart.
+
+.DESCRIPTION
+Runs an end-to-end flow:
+1) Starts Gephyr with admin API enabled
+2) Verifies sticky/persistence config prerequisites
+3) Sends a deterministic-session request
+4) Confirms session binding file entry exists
+5) Restarts container
+6) Sends same-session request and confirms binding continuity
+
+.PARAMETER Port
+Proxy port. Default: 8045.
+
+.PARAMETER ContainerName
+Docker container name used by console.ps1. Default: gephyr.
+
+.PARAMETER Image
+Docker image tag used by console.ps1. Default: gephyr:latest.
+
+.PARAMETER DataDir
+Gephyr data directory passed to console.ps1.
+
+.PARAMETER Model
+Primary model to try first.
+
+.PARAMETER FallbackModels
+Fallback models if primary model fails.
+
+.PARAMETER Prompt
+Base prompt used to derive deterministic session_id.
+
+.PARAMETER AutoLogin
+If no accounts linked, starts OAuth login flow automatically.
+
+.PARAMETER NoPause
+Skips interactive "Press Enter" pause before restart step.
+
+.PARAMETER Help
+Print usage/examples and exit.
+
+.EXAMPLE
+.\scripts\test-session-binding-persistence.ps1
+
+.EXAMPLE
+.\scripts\test-session-binding-persistence.ps1 -AutoLogin -NoPause
+
+.EXAMPLE
+Get-Help .\scripts\test-session-binding-persistence.ps1 -Detailed
+#>
 param(
     [int]$Port = 8045,
     [string]$ContainerName = "gephyr",
@@ -7,7 +59,9 @@ param(
     [string[]]$FallbackModels = @("gemini-3-flash", "gemini-3.0-flash", "claude-sonnet-4-5"),
     [string]$Prompt = "Persistent session binding validation prompt for restart testing.",
     [switch]$AutoLogin,
-    [switch]$NoPause
+    [switch]$NoPause,
+    [Alias("h", "?")]
+    [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +70,32 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ConsoleScript = Join-Path $RepoRoot "console.ps1"
 $EnvFile = Join-Path $RepoRoot ".env.local"
 $BaseUrl = "http://127.0.0.1:$Port"
+
+function Show-Usage {
+    Write-Host ""
+    Write-Host "Usage:" -ForegroundColor Cyan
+    Write-Host "  .\scripts\test-session-binding-persistence.ps1 [options]"
+    Write-Host ""
+    Write-Host "Common examples:" -ForegroundColor Cyan
+    Write-Host "  .\scripts\test-session-binding-persistence.ps1"
+    Write-Host "  .\scripts\test-session-binding-persistence.ps1 -AutoLogin -NoPause"
+    Write-Host "  .\scripts\test-session-binding-persistence.ps1 -Model gemini-3-flash -NoPause"
+    Write-Host ""
+    Write-Host "Options:" -ForegroundColor Cyan
+    Write-Host "  -Port <int>                     Default: 8045"
+    Write-Host "  -ContainerName <string>         Default: gephyr"
+    Write-Host "  -Image <string>                 Default: gephyr:latest"
+    Write-Host "  -DataDir <string>               Default: %USERPROFILE%\.gephyr"
+    Write-Host "  -Model <string>                 Default: gpt-5.3-codex"
+    Write-Host "  -FallbackModels <string[]>      Default: gemini-3-flash, gemini-3.0-flash, claude-sonnet-4-5"
+    Write-Host "  -Prompt <string>                Base prompt for deterministic session id"
+    Write-Host "  -AutoLogin                      Starts OAuth flow if no account linked"
+    Write-Host "  -NoPause                        Skips interactive pause before restart"
+    Write-Host "  -Help                           Print this usage"
+    Write-Host ""
+    Write-Host "PowerShell native help:" -ForegroundColor Cyan
+    Write-Host "  Get-Help .\scripts\test-session-binding-persistence.ps1 -Detailed"
+}
 
 function Write-Section {
     param([string]$Title)
@@ -292,6 +372,11 @@ Write-Host "  - session key present in session_bindings.json" -ForegroundColor G
 
 if (-not (Test-Path $ConsoleScript)) {
     throw "console.ps1 not found at $ConsoleScript"
+}
+
+if ($Help.IsPresent) {
+    Show-Usage
+    return
 }
 
 Load-EnvLocal

@@ -1,7 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+show_usage() {
+  cat <<'EOF'
+Usage:
+  ./scripts/check-allow-attributes.sh [--root <path>] [--help]
+
+Description:
+  Scans src/ for forbidden Rust allow attributes:
+  - #[allow(dead_code)] in runtime code
+  - non-test #[allow(clippy::...)] attributes
+
+Examples:
+  ./scripts/check-allow-attributes.sh
+  ./scripts/check-allow-attributes.sh --root /path/to/repo
+EOF
+}
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      show_usage
+      exit 0
+      ;;
+    --root)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --root requires a path argument." >&2
+        exit 2
+      fi
+      ROOT_DIR="$2"
+      shift 2
+      ;;
+    *)
+      echo "ERROR: unknown argument: $1" >&2
+      show_usage
+      exit 2
+      ;;
+  esac
+done
+
 cd "$ROOT_DIR"
 
 fail=0

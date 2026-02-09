@@ -149,6 +149,7 @@ Example:
 ```
 
 Admin visibility:
+- `GET /api/version/routes` returns running version + key route capabilities (useful to detect old images).
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
 

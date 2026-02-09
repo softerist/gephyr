@@ -10,6 +10,7 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
     add_legacy_stats_alias_routes(
         Router::new()
             .route("/health", get(health::health_check_handler))
+            .route("/version/routes", get(admin::admin_get_version_routes))
             .route(
                 "/accounts",
                 get(admin::admin_list_accounts).post(admin::admin_add_account),
