@@ -15,6 +15,7 @@ Scope note:
 
 - Source-of-truth is code under `src/`.
 - These docs summarize behavior and known risks for agent use.
+- Current defect status is tracked in `docs/agents/EDGE_CASES_DEFECTS.md` (currently no open defects).
 
 ## Fast Path
 

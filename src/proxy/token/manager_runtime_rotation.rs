@@ -64,7 +64,12 @@ impl TokenManager {
             }
 
             let mut token = self
-                .resolve_candidate_token(target_token, request.tokens_snapshot, &attempted)
+                .resolve_candidate_token(
+                    target_token,
+                    request.tokens_snapshot,
+                    &attempted,
+                    &normalized_target,
+                )
                 .await?;
             if self
                 .should_skip_selected_token(&token, &mut attempted)
@@ -131,11 +136,12 @@ impl TokenManager {
         target_token: Option<ProxyToken>,
         tokens_snapshot: &[ProxyToken],
         attempted: &HashSet<String>,
+        normalized_target: &str,
     ) -> Result<ProxyToken, String> {
         match target_token {
             Some(t) => Ok(t),
             None => {
-                self.select_via_rate_limited_fallback(tokens_snapshot, attempted)
+                self.select_via_rate_limited_fallback(tokens_snapshot, attempted, normalized_target)
                     .await
             }
         }
@@ -201,14 +207,24 @@ impl TokenManager {
         &self,
         tokens_snapshot: &[ProxyToken],
         attempted: &HashSet<String>,
+        normalized_target: &str,
     ) -> Result<ProxyToken, String> {
         let min_wait = tokens_snapshot
             .iter()
-            .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
+            .filter_map(|t| {
+                let wait = self
+                    .rate_limit_tracker
+                    .get_remaining_wait(&t.account_id, Some(normalized_target));
+                if wait > 0 {
+                    Some(wait)
+                } else {
+                    None
+                }
+            })
             .min();
         match min_wait {
             Some(wait_sec) if wait_sec <= 2 => {
-                self.try_buffer_delay_pick(tokens_snapshot, attempted, wait_sec)
+                self.try_buffer_delay_pick(tokens_snapshot, attempted, wait_sec, normalized_target)
                     .await
             }
             Some(wait_sec) => Err(format!("All accounts limited. Wait {}s.", wait_sec)),
@@ -221,6 +237,7 @@ impl TokenManager {
         tokens_snapshot: &[ProxyToken],
         attempted: &HashSet<String>,
         wait_sec: u64,
+        normalized_target: &str,
     ) -> Result<ProxyToken, String> {
         let wait_ms = (wait_sec as f64 * 1000.0) as u64;
         tracing::warn!(
@@ -229,7 +246,8 @@ impl TokenManager {
         );
         tokio::time::sleep(tokio::time::Duration::from_millis(wait_ms)).await;
         let retry_token = tokens_snapshot.iter().find(|t| {
-            !attempted.contains(&t.account_id) && !self.is_rate_limited_sync(&t.account_id, None)
+            !attempted.contains(&t.account_id)
+                && !self.is_rate_limited_sync(&t.account_id, Some(normalized_target))
         });
 
         if let Some(t) = retry_token {

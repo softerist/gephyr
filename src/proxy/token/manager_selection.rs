@@ -58,7 +58,9 @@ impl TokenManager {
             let key =
                 crate::proxy::token::lookup::account_id_by_email(&self.tokens, &bound_token.email)
                     .unwrap_or_else(|| bound_token.account_id.clone());
-            let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
+            let reset_sec = self
+                .rate_limit_tracker
+                .get_remaining_wait(&key, Some(req.normalized_target));
             if reset_sec > 0 {
                 tracing::debug!(
                     "Sticky Session: Bound account {} is rate-limited ({}s), unbinding and switching.",

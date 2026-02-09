@@ -60,6 +60,7 @@ From `src/proxy/token/*`:
 - 60s last-used lock path
 - P2C candidate selection
 - fallback delay + optimistic reset path
+- model-scoped rate-limit checks are applied in sticky reuse, preferred selection, and rotation fallback paths
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
 

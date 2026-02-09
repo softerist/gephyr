@@ -433,21 +433,8 @@ impl RateLimitTracker {
 
         None
     }
-    pub fn get(&self, account_id: &str) -> Option<RateLimitInfo> {
-        self.limits.get(account_id).map(|r| r.clone())
-    }
     pub fn is_rate_limited(&self, account_id: &str, model: Option<&str>) -> bool {
         self.get_remaining_wait(account_id, model) > 0
-    }
-    pub fn get_reset_seconds(&self, account_id: &str) -> Option<u64> {
-        if let Some(info) = self.get(account_id) {
-            info.reset_time
-                .duration_since(SystemTime::now())
-                .ok()
-                .map(|d| d.as_secs())
-        } else {
-            None
-        }
     }
     pub fn cleanup_expired(&self) -> usize {
         let now = SystemTime::now();

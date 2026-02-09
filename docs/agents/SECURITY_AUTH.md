@@ -56,10 +56,7 @@ From `src/proxy/server.rs`:
 
 From `src/modules/persistence/user_token_db.rs` and auth middleware:
 
-- Tokens support expiry, IP cap, curfew.
+- Tokens enforce `enabled`, expiry, IP cap, and curfew constraints.
 - Usage and IP binding logs are persisted.
 - Auth middleware can attach user token identity and allow request via token path.
-
-Known risk:
-
-- `validate_token` does not enforce `enabled` flag.
+- In auth `Off` mode, identity attachment still uses token validation checks before attaching identity.
