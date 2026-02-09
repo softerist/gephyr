@@ -144,6 +144,7 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `accounts` | List linked accounts |
 | `api-test` | Run a test API completion |
 | `rotate-key` | Generate new API key |
+| `docker-repair` | Repair Docker builder cache for snapshot/export errors |
 | `logout` | Remove all linked accounts |
 
 ---
@@ -201,6 +202,48 @@ See [OAUTH_SETUP.md](OAUTH_SETUP.md) for detailed Google Cloud OAuth configurati
 | Windows | `%USERPROFILE%\.gephyr` |
 
 Override with `ABV_DATA_DIR` environment variable.
+
+---
+
+## Docker Build Troubleshooting
+
+If Docker build fails with an error like:
+
+```text
+failed to prepare extraction snapshot ... parent snapshot ... does not exist
+```
+
+This is typically a Docker BuildKit/builder cache issue on the host (not a Gephyr code issue).
+
+### Fast recovery
+
+```powershell
+.\console.ps1 docker-repair
+docker build -t gephyr:latest -f docker/Dockerfile .
+```
+
+```bash
+./console.sh docker-repair
+docker build -t gephyr:latest -f docker/Dockerfile .
+```
+
+### If it still fails
+
+Use aggressive mode (clears more builder cache; next build will be slower):
+
+```powershell
+.\console.ps1 docker-repair -Aggressive
+```
+
+```bash
+./console.sh docker-repair --aggressive
+```
+
+### Preventive tips
+
+- Avoid force-closing Docker Desktop during builds.
+- Keep sufficient free disk space for image layers and cache.
+- If Docker was updated/restarted mid-build, rerun `docker-repair` before rebuilding.
 
 ---
 
