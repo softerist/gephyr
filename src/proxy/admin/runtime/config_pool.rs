@@ -110,20 +110,26 @@ pub(crate) async fn admin_get_proxy_pool_config(
     Ok(Json(config.clone()))
 }
 
-pub(crate) async fn admin_get_proxy_pool_strategy(
-    State(state): State<AdminState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let config = state.runtime.proxy_pool_state.read().await;
+fn proxy_pool_runtime_snapshot(
+    config: &crate::proxy::config::ProxyPoolConfig,
+) -> serde_json::Value {
     let total = config.proxies.len();
     let enabled = config.proxies.iter().filter(|p| p.enabled).count();
-    Ok(Json(serde_json::json!({
+    serde_json::json!({
         "strategy": config.strategy,
         "enabled": config.enabled,
         "auto_failover": config.auto_failover,
         "health_check_interval": config.health_check_interval,
         "proxies_total": total,
         "proxies_enabled": enabled
-    })))
+    })
+}
+
+pub(crate) async fn admin_get_proxy_pool_strategy(
+    State(state): State<AdminState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let config = state.runtime.proxy_pool_state.read().await;
+    Ok(Json(proxy_pool_runtime_snapshot(&config)))
 }
 
 #[derive(Deserialize)]
@@ -213,6 +219,117 @@ pub(crate) async fn admin_update_proxy_pool_strategy(
             "proxies_total": total,
             "proxies_enabled": enabled
         }
+    })))
+}
+
+pub(crate) async fn admin_get_proxy_pool_runtime(
+    State(state): State<AdminState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let config = state.runtime.proxy_pool_state.read().await;
+    Ok(Json(proxy_pool_runtime_snapshot(&config)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct UpdateProxyPoolRuntimeRequest {
+    #[serde(default, alias = "poolEnabled", alias = "pool_enabled")]
+    enabled: Option<bool>,
+    #[serde(default, alias = "autoFailover")]
+    auto_failover: Option<bool>,
+    #[serde(
+        default,
+        alias = "healthCheckInterval",
+        alias = "healthCheckIntervalSeconds"
+    )]
+    health_check_interval: Option<u64>,
+}
+
+pub(crate) async fn admin_update_proxy_pool_runtime(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateProxyPoolRuntimeRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+    if payload.enabled.is_none()
+        && payload.auto_failover.is_none()
+        && payload.health_check_interval.is_none()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error:
+                    "At least one of enabled, auto_failover, health_check_interval must be provided"
+                        .to_string(),
+            }),
+        ));
+    }
+
+    let mut app_config = config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let before_runtime = proxy_pool_runtime_snapshot(&app_config.proxy.proxy_pool);
+
+    if let Some(enabled) = payload.enabled {
+        app_config.proxy.proxy_pool.enabled = enabled;
+    }
+    if let Some(auto_failover) = payload.auto_failover {
+        app_config.proxy.proxy_pool.auto_failover = auto_failover;
+    }
+    if let Some(health_check_interval) = payload.health_check_interval {
+        app_config.proxy.proxy_pool.health_check_interval = health_check_interval;
+    }
+
+    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
+        let message = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: message }),
+        ));
+    }
+
+    config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    let after_runtime;
+    {
+        let mut runtime_cfg = state.runtime.proxy_pool_state.write().await;
+        if let Some(enabled) = payload.enabled {
+            runtime_cfg.enabled = enabled;
+        }
+        if let Some(auto_failover) = payload.auto_failover {
+            runtime_cfg.auto_failover = auto_failover;
+        }
+        if let Some(health_check_interval) = payload.health_check_interval {
+            runtime_cfg.health_check_interval = health_check_interval;
+        }
+        after_runtime = proxy_pool_runtime_snapshot(&runtime_cfg);
+    }
+
+    audit::log_admin_audit(
+        "update_proxy_pool_runtime",
+        &actor,
+        serde_json::json!({
+            "before": before_runtime,
+            "after": after_runtime
+        }),
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "saved": true,
+        "message": "Proxy pool runtime config updated",
+        "proxy_pool": after_runtime
     })))
 }
 

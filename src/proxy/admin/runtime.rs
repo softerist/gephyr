@@ -7,9 +7,9 @@ mod user_tokens;
 
 pub(crate) use config_pool::{
     admin_bind_account_proxy, admin_get_account_proxy_binding, admin_get_all_account_bindings,
-    admin_get_config, admin_get_proxy_pool_config, admin_get_proxy_pool_strategy,
-    admin_save_config, admin_trigger_proxy_health_check, admin_unbind_account_proxy,
-    admin_update_proxy_pool_strategy,
+    admin_get_config, admin_get_proxy_pool_config, admin_get_proxy_pool_runtime,
+    admin_get_proxy_pool_strategy, admin_save_config, admin_trigger_proxy_health_check,
+    admin_unbind_account_proxy, admin_update_proxy_pool_runtime, admin_update_proxy_pool_strategy,
 };
 pub(crate) use logs::{
     admin_clear_proxy_logs, admin_get_proxy_log_detail, admin_get_proxy_logs_count_filtered,

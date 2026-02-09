@@ -34,6 +34,14 @@ Use this when starting a new task quickly and safely.
 9. Prefer `POST /api/proxy/sticky` for stickiness-only changes (`persist_session_bindings`, `scheduling`) instead of posting full `/api/config`.
 10. Prefer `POST /api/proxy/request-timeout` for timeout-only changes instead of posting full `/api/config`.
 11. Prefer `POST /api/proxy/pool/strategy` for proxy-pool strategy-only changes instead of posting full `/api/config`.
+12. Prefer `POST /api/proxy/pool/runtime` for proxy-pool runtime knobs (`enabled`, `auto_failover`, `health_check_interval`) instead of posting full `/api/config`.
+
+## Smoke Scripts
+
+- `scripts/test-session-binding-persistence.ps1`: validates sticky-session persistence across restart.
+- `scripts/test-compliance-counters.ps1`: validates compliance counters and optional stress in-flight behavior.
+- `scripts/test-proxy-pool-strategy.ps1`: validates `GET|POST /api/proxy/pool/strategy`.
+- `scripts/test-proxy-pool-runtime.ps1`: validates `GET|POST /api/proxy/pool/runtime`.
 
 ## Session Persistence Quick Config
 

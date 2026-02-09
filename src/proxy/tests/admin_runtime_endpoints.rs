@@ -130,6 +130,8 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["routes"]["GET /api/proxy/request-timeout"], true);
         assert_eq!(body["routes"]["POST /api/proxy/request-timeout"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/pool/runtime"], true);
+        assert_eq!(body["routes"]["POST /api/proxy/pool/runtime"], true);
         assert_eq!(body["routes"]["GET /api/proxy/pool/strategy"], true);
         assert_eq!(body["routes"]["POST /api/proxy/pool/strategy"], true);
         assert_eq!(body["routes"]["GET /api/proxy/sticky"], true);
@@ -372,6 +374,72 @@ mod tests {
         let bad_post = Request::builder()
             .method("POST")
             .uri("/proxy/pool/strategy")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .expect("request");
+        let (bad_status, _) = send(&router, bad_post).await;
+        assert_eq!(bad_status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_proxy_pool_runtime_post_updates_runtime_snapshot() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let initial_get = Request::builder()
+            .uri("/proxy/pool/runtime")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (initial_status, initial_body) = send(&router, initial_get).await;
+        assert_eq!(initial_status, StatusCode::OK);
+        assert_eq!(initial_body["enabled"], Value::from(false));
+        assert_eq!(initial_body["auto_failover"], Value::from(true));
+        assert_eq!(initial_body["health_check_interval"], Value::from(300));
+
+        let post_request = Request::builder()
+            .method("POST")
+            .uri("/proxy/pool/runtime")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "enabled": true,
+                    "auto_failover": false,
+                    "health_check_interval": 45
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let (post_status, post_body) = send(&router, post_request).await;
+        assert_eq!(post_status, StatusCode::OK);
+        assert_eq!(post_body["ok"], true);
+        assert_eq!(post_body["saved"], true);
+        assert_eq!(post_body["proxy_pool"]["enabled"], Value::from(true));
+        assert_eq!(post_body["proxy_pool"]["auto_failover"], Value::from(false));
+        assert_eq!(
+            post_body["proxy_pool"]["health_check_interval"],
+            Value::from(45)
+        );
+
+        let get_request = Request::builder()
+            .uri("/proxy/pool/runtime")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (get_status, get_body) = send(&router, get_request).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_eq!(get_body["enabled"], Value::from(true));
+        assert_eq!(get_body["auto_failover"], Value::from(false));
+        assert_eq!(get_body["health_check_interval"], Value::from(45));
+
+        let bad_post = Request::builder()
+            .method("POST")
+            .uri("/proxy/pool/runtime")
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .body(Body::from(json!({}).to_string()))
