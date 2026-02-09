@@ -23,6 +23,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONSOLE_SCRIPT="$SCRIPT_DIR/console.sh"
+ALLOW_GUARD_SCRIPT="$SCRIPT_DIR/scripts/check-allow-attributes.sh"
 
 SKIP_BUILD=false
 USE_BUILD_CACHE=false
@@ -131,6 +132,10 @@ if [[ ! -f "$CONSOLE_SCRIPT" ]]; then
   echo "Missing script: $CONSOLE_SCRIPT" >&2
   exit 1
 fi
+if [[ ! -f "$ALLOW_GUARD_SCRIPT" ]]; then
+  echo "Missing script: $ALLOW_GUARD_SCRIPT" >&2
+  exit 1
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -152,6 +157,8 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+step "Running allow-attribute guard" bash "$ALLOW_GUARD_SCRIPT"
 
 if [[ "$SKIP_BUILD" != "true" ]]; then
   if [[ "$USE_BUILD_CACHE" == "true" ]]; then

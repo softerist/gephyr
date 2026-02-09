@@ -45,9 +45,13 @@ if (-not (Test-DockerAvailable)) {
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $consoleScript = Join-Path $scriptDir "console.ps1"
+$allowGuardScript = Join-Path $scriptDir "scripts/check-allow-attributes.ps1"
 
 if (-not (Test-Path $consoleScript)) {
     throw "Missing script: $consoleScript"
+}
+if (-not (Test-Path $allowGuardScript)) {
+    throw "Missing script: $allowGuardScript"
 }
 
 function Invoke-Step {
@@ -121,6 +125,10 @@ function Wait-OAuthAccountLink {
 
     Write-Warning "Timed out waiting for OAuth account linkage. You can still finish OAuth and rerun .\console.ps1 accounts."
     return $false
+}
+
+Invoke-Step -Name "Running allow-attribute guard" -Action {
+    & $allowGuardScript
 }
 
 if (-not $SkipBuild) {
