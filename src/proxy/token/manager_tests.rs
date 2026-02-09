@@ -440,6 +440,107 @@ async fn test_restore_session_bindings_drops_missing_accounts() {
 
     let _ = std::fs::remove_dir_all(&tmp_root);
 }
+
+#[tokio::test]
+async fn test_compliance_retry_cap_applies_when_enabled() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    let default_attempts = manager.effective_retry_attempts(5).await;
+    assert_eq!(default_attempts, 5);
+
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 20,
+            max_account_concurrency: 2,
+            risk_cooldown_seconds: 60,
+            max_retry_attempts: 1,
+        })
+        .await;
+
+    let capped_attempts = manager.effective_retry_attempts(5).await;
+    assert_eq!(capped_attempts, 1);
+}
+
+#[tokio::test]
+async fn test_compliance_guard_enforces_account_rpm() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 1,
+            max_account_concurrency: 2,
+            risk_cooldown_seconds: 60,
+            max_retry_attempts: 2,
+        })
+        .await;
+
+    let guard = manager
+        .try_acquire_compliance_guard("acc-rpm")
+        .await
+        .expect("first acquire should succeed");
+    assert!(guard.is_some());
+    drop(guard);
+
+    let second = manager.try_acquire_compliance_guard("acc-rpm").await;
+    assert!(second.is_err());
+}
+
+#[tokio::test]
+async fn test_compliance_guard_enforces_account_concurrency() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 20,
+            max_account_concurrency: 1,
+            risk_cooldown_seconds: 60,
+            max_retry_attempts: 2,
+        })
+        .await;
+
+    let guard = manager
+        .try_acquire_compliance_guard("acc-concurrency")
+        .await
+        .expect("first acquire should succeed");
+    assert!(guard.is_some());
+
+    let second = manager
+        .try_acquire_compliance_guard("acc-concurrency")
+        .await;
+    assert!(second.is_err());
+}
+
+#[tokio::test]
+async fn test_compliance_risk_signal_cooldown_expires() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 20,
+            max_account_concurrency: 2,
+            risk_cooldown_seconds: 1,
+            max_retry_attempts: 2,
+        })
+        .await;
+
+    manager
+        .mark_compliance_risk_signal("acc-cooldown", 403)
+        .await;
+    let blocked = manager.try_acquire_compliance_guard("acc-cooldown").await;
+    assert!(blocked.is_err());
+
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let allowed = manager
+        .try_acquire_compliance_guard("acc-cooldown")
+        .await
+        .expect("acquire should succeed after cooldown");
+    assert!(allowed.is_some());
+}
+
 fn create_test_token(
     email: &str,
     tier: Option<&str>,

@@ -7,19 +7,45 @@ $ErrorActionPreference = "Stop"
 
 Set-Location $Root
 
+# Check if ripgrep is available, fallback to Select-String
+$useRipgrep = $null -ne (Get-Command rg -ErrorAction SilentlyContinue)
+
+function Search-Pattern {
+  param(
+    [string]$Pattern,
+    [string]$Path
+  )
+  
+  if ($useRipgrep) {
+    $result = rg -n $Pattern $Path 2>$null
+    if ($LASTEXITCODE -eq 0 -and $result) {
+      return $result
+    }
+    return @()
+  } else {
+    # PowerShell fallback using Select-String
+    $files = Get-ChildItem -Path $Path -Recurse -Filter "*.rs" -File
+    $matches = $files | Select-String -Pattern $Pattern
+    if ($matches) {
+      return $matches | ForEach-Object { "$($_.Path):$($_.LineNumber):$($_.Line)" }
+    }
+    return @()
+  }
+}
+
 $fail = $false
 Write-Host "[allow-guard] scanning src/ for forbidden allow attributes..."
 
-$deadHits = rg -n "#\[allow\(dead_code\)\]" src 2>$null
-if ($LASTEXITCODE -eq 0 -and $deadHits) {
+$deadHits = Search-Pattern -Pattern '#\[allow\(dead_code\)\]' -Path "src"
+if ($deadHits -and $deadHits.Count -gt 0) {
   Write-Host ""
   Write-Host "[allow-guard] ERROR: runtime dead_code allow(s) detected in src/."
   $deadHits | ForEach-Object { Write-Host $_ }
   $fail = $true
 }
 
-$clippyHits = rg -n "#\[allow\([^)]*clippy::[^)]*\)\]" src 2>$null
-if ($LASTEXITCODE -eq 0 -and $clippyHits) {
+$clippyHits = Search-Pattern -Pattern '#\[allow\([^)]*clippy::[^)]*\)\]' -Path "src"
+if ($clippyHits -and $clippyHits.Count -gt 0) {
   $disallowed = @()
   foreach ($line in $clippyHits) {
     $path = ($line -split ":", 2)[0]
@@ -45,3 +71,4 @@ if ($fail) {
 }
 
 Write-Host "[allow-guard] ok"
+

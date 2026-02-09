@@ -116,7 +116,10 @@ pub async fn handle_chat_completions(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
-    let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let base_max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let max_attempts = token_manager
+        .effective_retry_attempts(base_max_attempts)
+        .await;
 
     let mut last_error = String::new();
     let mut last_email: Option<String> = None;
@@ -157,6 +160,16 @@ pub async fn handle_chat_completions(
                     None,
                     Some(&mapped_model),
                 ));
+            }
+        };
+        let compliance_guard = match token_manager
+            .try_acquire_compliance_guard(&account_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(e) => {
+                last_error = e;
+                continue;
             }
         };
 
@@ -296,7 +309,9 @@ pub async fn handle_chat_completions(
                         .chain(openai_stream);
 
                 if client_wants_stream {
-                    let body = Body::from_stream(combined_stream);
+                    let guarded_stream =
+                        super::streaming::attach_guard_to_stream(combined_stream, compliance_guard);
+                    let body = Body::from_stream(guarded_stream);
                     return Ok(super::streaming::build_sse_response(
                         body,
                         &email,
@@ -361,6 +376,9 @@ pub async fn handle_chat_completions(
             status_code,
             error_text
         );
+        token_manager
+            .mark_compliance_risk_signal(&account_id, status_code)
+            .await;
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
                 "kind": "upstream_response_error",
@@ -853,7 +871,10 @@ pub async fn handle_completions(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
-    let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let base_max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let max_attempts = token_manager
+        .effective_retry_attempts(base_max_attempts)
+        .await;
 
     let mut last_error = String::new();
     let mut last_email: Option<String> = None;
@@ -898,6 +919,16 @@ pub async fn handle_completions(
                     format!("Token error: {}", e),
                 )
                     .into_response()
+            }
+        };
+        let compliance_guard = match token_manager
+            .try_acquire_compliance_guard(&account_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(e) => {
+                last_error = e;
+                continue;
             }
         };
 
@@ -1003,8 +1034,10 @@ pub async fn handle_completions(
                         futures::stream::once(async move { Ok::<Bytes, String>(first_data_chunk) })
                             .chain(openai_stream);
 
+                    let guarded_stream =
+                        super::streaming::attach_guard_to_stream(combined_stream, compliance_guard);
                     return super::streaming::build_sse_response(
-                        Body::from_stream(combined_stream),
+                        Body::from_stream(guarded_stream),
                         &email,
                         &mapped_model,
                         false,
@@ -1150,6 +1183,9 @@ pub async fn handle_completions(
             status_code,
             error_text
         );
+        token_manager
+            .mark_compliance_risk_signal(&account_id, status_code)
+            .await;
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
             token_manager
                 .mark_rate_limited_async(

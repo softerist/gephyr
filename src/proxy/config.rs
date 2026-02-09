@@ -276,6 +276,55 @@ pub struct SecurityMonitorConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplianceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_compliance_global_rpm")]
+    pub max_global_requests_per_minute: u32,
+    #[serde(default = "default_compliance_account_rpm")]
+    pub max_account_requests_per_minute: u32,
+    #[serde(default = "default_compliance_account_concurrency")]
+    pub max_account_concurrency: usize,
+    #[serde(default = "default_compliance_cooldown_seconds")]
+    pub risk_cooldown_seconds: u64,
+    #[serde(default = "default_compliance_retry_cap")]
+    pub max_retry_attempts: usize,
+}
+
+impl Default for ComplianceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_global_requests_per_minute: default_compliance_global_rpm(),
+            max_account_requests_per_minute: default_compliance_account_rpm(),
+            max_account_concurrency: default_compliance_account_concurrency(),
+            risk_cooldown_seconds: default_compliance_cooldown_seconds(),
+            max_retry_attempts: default_compliance_retry_cap(),
+        }
+    }
+}
+
+fn default_compliance_global_rpm() -> u32 {
+    120
+}
+
+fn default_compliance_account_rpm() -> u32 {
+    20
+}
+
+fn default_compliance_account_concurrency() -> usize {
+    2
+}
+
+fn default_compliance_cooldown_seconds() -> u64 {
+    300
+}
+
+fn default_compliance_retry_cap() -> usize {
+    2
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     pub enabled: bool,
     #[serde(default)]
@@ -316,6 +365,8 @@ pub struct ProxyConfig {
     pub thinking_budget: ThinkingBudgetConfig,
     #[serde(default)]
     pub proxy_pool: ProxyPoolConfig,
+    #[serde(default)]
+    pub compliance: ComplianceConfig,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpstreamProxyConfig {
@@ -348,6 +399,7 @@ impl Default for ProxyConfig {
             saved_user_agent: None,
             thinking_budget: ThinkingBudgetConfig::default(),
             proxy_pool: ProxyPoolConfig::default(),
+            compliance: ComplianceConfig::default(),
         }
     }
 }

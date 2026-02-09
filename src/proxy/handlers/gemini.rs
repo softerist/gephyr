@@ -73,7 +73,10 @@ pub async fn handle_generate(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
-    let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
+    let base_max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
+    let max_attempts = token_manager
+        .effective_retry_attempts(base_max_attempts)
+        .await;
 
     let mut last_error = String::new();
     let mut last_email: Option<String> = None;
@@ -127,6 +130,16 @@ pub async fn handle_generate(
                     StatusCode::SERVICE_UNAVAILABLE,
                     format!("Token error: {}", e),
                 ));
+            }
+        };
+        let _compliance_guard = match token_manager
+            .try_acquire_compliance_guard(&account_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(e) => {
+                last_error = e;
+                continue;
             }
         };
 
@@ -426,6 +439,9 @@ pub async fn handle_generate(
             .await
             .unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
+        token_manager
+            .mark_compliance_risk_signal(&account_id, status_code)
+            .await;
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
                 "kind": "upstream_response_error",

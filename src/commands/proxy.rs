@@ -88,6 +88,9 @@ pub async fn internal_start_proxy_service(
         .update_sticky_config(config.scheduling.clone())
         .await;
     token_manager.update_session_binding_persistence(config.persist_session_bindings);
+    token_manager
+        .update_compliance_config(config.compliance.clone())
+        .await;
     let app_config = crate::modules::system::config::load_app_config()
         .unwrap_or_else(|_| crate::models::AppConfig::new());
     token_manager

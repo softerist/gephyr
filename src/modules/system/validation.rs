@@ -1,6 +1,7 @@
 use crate::models::AppConfig;
 use crate::proxy::config::{
-    ExperimentalConfig, ProxyConfig, ProxyPoolConfig, UpstreamProxyConfig, ZaiConfig,
+    ComplianceConfig, ExperimentalConfig, ProxyConfig, ProxyPoolConfig, UpstreamProxyConfig,
+    ZaiConfig,
 };
 use std::fmt;
 #[derive(Debug, Clone)]
@@ -105,6 +106,7 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
     validate_zai_config(&config.zai, errors);
     validate_experimental_config(&config.experimental, errors);
     validate_proxy_pool(&config.proxy_pool, errors);
+    validate_compliance_config(&config.compliance, errors);
 }
 fn validate_upstream_proxy(config: &UpstreamProxyConfig, errors: &mut Vec<ConfigError>) {
     if config.enabled && !config.url.is_empty() && !is_valid_proxy_url(&config.url) {
@@ -184,6 +186,36 @@ fn validate_proxy_pool(config: &ProxyPoolConfig, errors: &mut Vec<ConfigError>) 
                 ));
             }
         }
+    }
+}
+fn validate_compliance_config(config: &ComplianceConfig, errors: &mut Vec<ConfigError>) {
+    if !config.enabled {
+        return;
+    }
+
+    if config.max_global_requests_per_minute == 0 {
+        errors.push(ConfigError::new(
+            "proxy.compliance.max_global_requests_per_minute",
+            "must be greater than 0 when compliance is enabled",
+        ));
+    }
+    if config.max_account_requests_per_minute == 0 {
+        errors.push(ConfigError::new(
+            "proxy.compliance.max_account_requests_per_minute",
+            "must be greater than 0 when compliance is enabled",
+        ));
+    }
+    if config.max_account_concurrency == 0 {
+        errors.push(ConfigError::new(
+            "proxy.compliance.max_account_concurrency",
+            "must be greater than 0 when compliance is enabled",
+        ));
+    }
+    if config.max_retry_attempts == 0 {
+        errors.push(ConfigError::new(
+            "proxy.compliance.max_retry_attempts",
+            "must be greater than 0 when compliance is enabled",
+        ));
     }
 }
 fn is_valid_proxy_url(url: &str) -> bool {

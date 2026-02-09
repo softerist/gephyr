@@ -32,6 +32,33 @@ pub struct StickyDebugSnapshot {
     pub recent_events: Vec<StickyDecisionEvent>,
 }
 
+#[derive(Default)]
+pub(super) struct ComplianceRuntimeState {
+    pub global_request_timestamps: VecDeque<std::time::Instant>,
+    pub account_request_timestamps: HashMap<String, VecDeque<std::time::Instant>>,
+    pub account_in_flight: HashMap<String, usize>,
+    pub account_cooldown_until: HashMap<String, std::time::Instant>,
+}
+
+pub struct ComplianceRequestGuard {
+    account_id: String,
+    state: Arc<std::sync::Mutex<ComplianceRuntimeState>>,
+}
+
+impl Drop for ComplianceRequestGuard {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(count) = state.account_in_flight.get_mut(&self.account_id) {
+                if *count > 1 {
+                    *count -= 1;
+                } else {
+                    state.account_in_flight.remove(&self.account_id);
+                }
+            }
+        }
+    }
+}
+
 pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>,
     current_index: Arc<AtomicUsize>,
@@ -47,6 +74,8 @@ pub struct TokenManager {
     sticky_events: Arc<std::sync::Mutex<VecDeque<StickyDecisionEvent>>>,
     auto_cleanup_handle: Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     cancel_token: CancellationToken,
+    compliance_config: Arc<tokio::sync::RwLock<crate::proxy::config::ComplianceConfig>>,
+    compliance_state: Arc<std::sync::Mutex<ComplianceRuntimeState>>,
 }
 impl TokenManager {
     pub fn new(data_dir: PathBuf) -> Self {
@@ -67,6 +96,10 @@ impl TokenManager {
             sticky_events: Arc::new(std::sync::Mutex::new(VecDeque::new())),
             auto_cleanup_handle: Arc::new(tokio::sync::Mutex::new(None)),
             cancel_token: CancellationToken::new(),
+            compliance_config: Arc::new(tokio::sync::RwLock::new(
+                crate::proxy::config::ComplianceConfig::default(),
+            )),
+            compliance_state: Arc::new(std::sync::Mutex::new(ComplianceRuntimeState::default())),
         }
     }
 
@@ -273,6 +306,8 @@ impl TokenManager {
         crate::proxy::token::lifecycle::abort_background_tasks(&self.auto_cleanup_handle).await;
     }
 }
+#[path = "manager_compliance.rs"]
+mod manager_compliance;
 #[path = "manager_ops.rs"]
 mod manager_ops;
 #[path = "manager_runtime.rs"]

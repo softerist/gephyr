@@ -157,6 +157,34 @@ Practical notes:
 - Header: `x-session-id` (or `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
 - Payload: `session_id` / `sessionId` (also `conversation_id` / `conversationId`, `thread_id` / `threadId`)
 
+### Compliance Guardrails (Low-Risk Account Traffic Profile)
+
+`proxy.compliance` applies runtime guardrails to reduce bursty/account-risky traffic patterns.
+
+- `enabled`: turns guardrails on/off (default: `false`)
+- `max_global_requests_per_minute`: global request budget across all accounts
+- `max_account_requests_per_minute`: per-account request budget
+- `max_account_concurrency`: max in-flight requests per account
+- `risk_cooldown_seconds`: temporary cooldown applied after risky upstream statuses (`401`, `403`, `429`, `500`, `503`, `529`)
+- `max_retry_attempts`: hard cap for handler retry loops when compliance mode is enabled
+
+Example:
+
+```json
+{
+  "proxy": {
+    "compliance": {
+      "enabled": true,
+      "max_global_requests_per_minute": 120,
+      "max_account_requests_per_minute": 20,
+      "max_account_concurrency": 2,
+      "risk_cooldown_seconds": 300,
+      "max_retry_attempts": 2
+    }
+  }
+}
+```
+
 ### Console Commands
 
 ```powershell

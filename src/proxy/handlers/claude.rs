@@ -341,7 +341,10 @@ pub async fn handle_messages(
     let token_manager = state.core.token_manager.clone();
 
     let pool_size = token_manager.len();
-    let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let base_max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let max_attempts = token_manager
+        .effective_retry_attempts(base_max_attempts)
+        .await;
 
     let mut last_error = String::new();
     let retried_without_thinking = false;
@@ -403,6 +406,16 @@ pub async fn handle_messages(
                     })),
                 )
                     .into_response();
+            }
+        };
+        let _compliance_guard = match token_manager
+            .try_acquire_compliance_guard(&account_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(e) => {
+                last_error = e;
+                continue;
             }
         };
 
@@ -883,6 +896,9 @@ pub async fn handle_messages(
         }
         let status_code = status.as_u16();
         last_status = status;
+        token_manager
+            .mark_compliance_risk_signal(&account_id, status_code)
+            .await;
         let retry_after = response
             .headers()
             .get("Retry-After")
@@ -1323,10 +1339,14 @@ async fn call_gemini_sync(
     token_manager: &Arc<crate::proxy::TokenManager>,
     trace_id: &str,
 ) -> Result<String, String> {
-    let (access_token, project_id, _, _, _wait_ms) = token_manager
+    let (access_token, project_id, _, account_id, _wait_ms) = token_manager
         .get_token("gemini", false, None, model)
         .await
         .map_err(|e| format!("Failed to get account: {}", e))?;
+    let _compliance_guard = token_manager
+        .try_acquire_compliance_guard(&account_id)
+        .await
+        .map_err(|e| format!("Compliance guard rejected request: {}", e))?;
 
     let gemini_body =
         crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false)
@@ -1348,6 +1368,9 @@ async fn call_gemini_sync(
         .map_err(|e| format!("API call failed: {}", e))?;
 
     if !response.status().is_success() {
+        token_manager
+            .mark_compliance_risk_signal(&account_id, response.status().as_u16())
+            .await;
         return Err(format!(
             "API returned {}: {}",
             response.status(),

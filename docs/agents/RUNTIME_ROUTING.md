@@ -28,6 +28,12 @@ From `src/lib.rs` and `src/proxy/server.rs`:
 From `proxy` config (`src/proxy/config.rs`):
 
 - `persist_session_bindings` (default: `true`) controls whether sticky session bindings are persisted across process restarts.
+- `compliance` (default: disabled) adds runtime request guardrails:
+- `max_global_requests_per_minute`
+- `max_account_requests_per_minute`
+- `max_account_concurrency`
+- `risk_cooldown_seconds` for risky upstream statuses (`401`,`403`,`429`,`500`,`503`,`529`)
+- `max_retry_attempts` cap for handler retry loops
 
 ## Middleware Stack
 
@@ -74,6 +80,10 @@ From `src/proxy/token/*`:
 - if wait is `<= max_wait_seconds`, binding is retained and current request may use fallback account without rebinding
 - if wait is `> max_wait_seconds`, binding is released and a new binding may be established
 - admin visibility endpoint for sticky behavior: `GET /api/proxy/session-bindings` (current bindings + recent sticky decision events)
+- compliance guard path (when enabled):
+- retries are capped by `max_retry_attempts`
+- per-account/global RPM caps and per-account concurrency caps are enforced before upstream attempt
+- risky statuses (`401`,`403`,`429`,`500`,`503`,`529`) place the selected account in temporary cooldown
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
 

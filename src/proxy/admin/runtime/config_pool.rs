@@ -37,6 +37,29 @@ pub(crate) async fn admin_save_config(
         )
     })?;
     state.config.apply_proxy_config(&new_config.proxy).await;
+    state
+        .core
+        .token_manager
+        .update_sticky_config(new_config.proxy.scheduling.clone())
+        .await;
+    state
+        .core
+        .token_manager
+        .update_session_binding_persistence(new_config.proxy.persist_session_bindings);
+    state
+        .core
+        .token_manager
+        .update_compliance_config(new_config.proxy.compliance.clone())
+        .await;
+    if let Some(account_id) = new_config.proxy.preferred_account_id.clone() {
+        state
+            .core
+            .token_manager
+            .set_preferred_account(Some(account_id))
+            .await;
+    } else {
+        state.core.token_manager.set_preferred_account(None).await;
+    }
 
     Ok(StatusCode::OK)
 }

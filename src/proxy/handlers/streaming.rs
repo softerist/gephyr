@@ -138,3 +138,52 @@ pub fn build_json_response_with_headers<T: Serialize>(
         .body(Body::from(serde_json::to_string(payload).unwrap()))
         .unwrap()
 }
+
+pub fn attach_guard_to_stream<S, T, G>(
+    stream: S,
+    guard: Option<G>,
+) -> Pin<Box<dyn Stream<Item = T> + Send>>
+where
+    S: Stream<Item = T> + Send + 'static,
+    T: Send + 'static,
+    G: Send + 'static,
+{
+    Box::pin(async_stream::stream! {
+        let _guard = guard;
+        futures::pin_mut!(stream);
+        while let Some(item) = stream.next().await {
+            yield item;
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attach_guard_to_stream;
+    use futures::StreamExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct DropFlag(Arc<AtomicUsize>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_attach_guard_to_stream_keeps_guard_alive_until_stream_drop() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let guard = DropFlag(drops.clone());
+        let stream = futures::stream::iter(vec![1u8, 2u8]);
+        let mut wrapped = attach_guard_to_stream(stream, Some(guard));
+
+        let first = wrapped.next().await;
+        assert_eq!(first, Some(1u8));
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+        drop(wrapped);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+}

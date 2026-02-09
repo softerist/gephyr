@@ -29,6 +29,7 @@ Use this when starting a new task quickly and safely.
    - `persist_session_bindings: true`
    - `scheduling.mode: balance` or `cache_first` (not `performance_first`)
 6. For client-driven stickiness, verify requests provide a stable explicit session id (`x-session-id` or payload `session_id`/`sessionId`).
+7. For low-risk account traffic profile, verify `proxy.compliance.enabled=true` and sane budgets (`max_global_requests_per_minute`, `max_account_requests_per_minute`, `max_account_concurrency`, `risk_cooldown_seconds`, `max_retry_attempts`).
 
 ## Session Persistence Quick Config
 
@@ -41,6 +42,14 @@ Use this `config.json` shape when validating sticky sessions across restart:
     "scheduling": {
       "mode": "balance",
       "max_wait_seconds": 60
+    },
+    "compliance": {
+      "enabled": true,
+      "max_global_requests_per_minute": 120,
+      "max_account_requests_per_minute": 20,
+      "max_account_concurrency": 2,
+      "risk_cooldown_seconds": 300,
+      "max_retry_attempts": 2
     }
   }
 }
