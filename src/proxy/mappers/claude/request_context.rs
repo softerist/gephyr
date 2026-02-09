@@ -181,3 +181,118 @@ fn inspect_message_history(messages: &[Message]) -> (bool, bool) {
 
     (has_thinking_history, has_function_calls)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn mk_req(model: &str) -> ClaudeRequest {
+        ClaudeRequest {
+            model: model.to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("hello".to_string()),
+            }],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        }
+    }
+
+    #[test]
+    fn detect_web_search_tool_works_for_type_and_name() {
+        let mut req = mk_req("gpt-5");
+        req.tools = Some(vec![Tool {
+            type_: Some("web_search_20250305".to_string()),
+            name: None,
+            description: None,
+            input_schema: None,
+        }]);
+        assert!(detect_web_search_tool(&req));
+
+        req.tools = Some(vec![Tool {
+            type_: None,
+            name: Some("google_search".to_string()),
+            description: None,
+            input_schema: None,
+        }]);
+        assert!(detect_web_search_tool(&req));
+
+        req.tools = None;
+        assert!(!detect_web_search_tool(&req));
+    }
+
+    #[test]
+    fn resolve_mapped_model_uses_web_search_fallback_when_tool_detected() {
+        let fallback = crate::proxy::common::model_mapping::web_search_fallback_model();
+        let mapped = resolve_mapped_model("claude-sonnet-4-5", true);
+        assert_eq!(mapped, fallback);
+    }
+
+    #[test]
+    fn resolve_mapped_model_uses_normal_mapping_without_web_search_tool() {
+        let fallback = crate::proxy::common::model_mapping::web_search_fallback_model();
+        let mapped = resolve_mapped_model("claude-sonnet-4-5", false);
+        assert_eq!(
+            mapped,
+            crate::proxy::common::model_mapping::map_claude_model_to_gemini("claude-sonnet-4-5")
+        );
+        assert_ne!(mapped, fallback);
+    }
+
+    #[test]
+    fn resolve_thinking_enabled_disables_when_target_model_lacks_thinking() {
+        let mut req = mk_req("claude-sonnet-4-5");
+        req.thinking = Some(ThinkingConfig {
+            type_: "enabled".to_string(),
+            budget_tokens: Some(4096),
+        });
+
+        let fallback = crate::proxy::common::model_mapping::web_search_fallback_model();
+        let enabled = resolve_thinking_enabled(&req, fallback, "session-1");
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn prepare_request_context_sets_expected_flags_and_schema_map() {
+        let mut req = mk_req("claude-sonnet-4-5");
+        req.thinking = Some(ThinkingConfig {
+            type_: "enabled".to_string(),
+            budget_tokens: Some(2048),
+        });
+        req.tools = Some(vec![
+            Tool {
+                type_: Some("web_search_20250305".to_string()),
+                name: None,
+                description: None,
+                input_schema: None,
+            },
+            Tool {
+                type_: None,
+                name: Some("mcp__fs_read".to_string()),
+                description: Some("read files".to_string()),
+                input_schema: Some(json!({"type":"object","properties":{"path":{"type":"string"}}})),
+            },
+        ]);
+
+        let ctx = prepare_request_context(&req);
+        assert!(ctx.has_web_search_tool);
+        assert!(ctx.has_mcp_tools);
+        assert_eq!(
+            ctx.mapped_model,
+            crate::proxy::common::model_mapping::web_search_fallback_model()
+        );
+        assert!(ctx.tool_name_to_schema.contains_key("mcp__fs_read"));
+        assert!(!ctx.allow_dummy_thought);
+    }
+}

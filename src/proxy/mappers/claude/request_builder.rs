@@ -134,3 +134,77 @@ fn build_outer_body(
         "requestType": config.request_type,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_tools_sets_tools_and_validated_mode() {
+        let mut inner = json!({});
+        apply_tools(&mut inner, Some(json!([{"functionDeclarations": []}])));
+
+        assert!(inner.get("tools").is_some());
+        assert_eq!(
+            inner["toolConfig"]["functionCallingConfig"]["mode"],
+            json!("VALIDATED")
+        );
+    }
+
+    #[test]
+    fn apply_image_config_removes_text_tooling_fields_and_sets_image_config() {
+        let mut inner = json!({
+            "tools": [{"functionDeclarations": []}],
+            "systemInstruction": {"parts":[{"text":"x"}]},
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseModalities": ["TEXT"],
+                "temperature": 0.2
+            }
+        });
+        let image_cfg = json!({"aspectRatio":"16:9","imageSize":"2K"});
+
+        apply_image_config(&mut inner, image_cfg.clone());
+
+        assert!(inner.get("tools").is_none());
+        assert!(inner.get("systemInstruction").is_none());
+        assert_eq!(inner["generationConfig"]["imageConfig"], image_cfg);
+        assert!(inner["generationConfig"].get("responseMimeType").is_none());
+        assert!(inner["generationConfig"].get("responseModalities").is_none());
+        assert_eq!(inner["generationConfig"]["temperature"], json!(0.2));
+    }
+
+    #[test]
+    fn build_outer_body_contains_required_envelope_fields() {
+        let cfg = crate::proxy::mappers::common_utils::RequestConfig {
+            request_type: "agent".to_string(),
+            inject_google_search: false,
+            final_model: "gemini-3.0-flash".to_string(),
+            image_config: None,
+        };
+        let inner = json!({"contents":[]});
+
+        let body = build_outer_body("project-1", inner.clone(), &cfg);
+
+        assert_eq!(body["project"], json!("project-1"));
+        assert_eq!(body["request"], inner);
+        assert_eq!(body["model"], json!("gemini-3.0-flash"));
+        assert_eq!(body["requestType"], json!("agent"));
+        let request_id = body["requestId"].as_str().unwrap_or_default();
+        assert!(request_id.starts_with("agent-"));
+    }
+
+    #[test]
+    fn build_inner_request_cleans_undefined_markers() {
+        let contents = json!([{
+            "role":"user",
+            "parts":[{"text":"ok","junk":"[undefined]"}]
+        }]);
+        let safety = json!([{"category":"HARM_CATEGORY_HARASSMENT","threshold":"OFF"}]);
+
+        let built = build_inner_request(contents, safety);
+
+        assert!(built["contents"][0]["parts"][0].get("junk").is_none());
+        assert!(built.get("safetySettings").is_some());
+    }
+}
