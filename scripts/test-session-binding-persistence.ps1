@@ -395,6 +395,11 @@ try {
     Write-Host "Service is ready." -ForegroundColor Green
 
     Write-Step 2 "Check config prerequisites (persist_session_bindings + scheduling mode)"
+    $cap = Api-Get "/api/version/routes"
+    $hasStickyPatch = $false
+    if ($cap -and $cap.routes) {
+        $hasStickyPatch = [bool]$cap.routes.'POST /api/proxy/sticky'
+    }
     $cfg = Api-Get "/api/config"
     $configChanged = $false
 
@@ -441,19 +446,43 @@ Rebuild and run the latest local image, then rerun this script:
         throw "Runtime /api/config is missing proxy.scheduling.mode. Cannot validate sticky mode prerequisite."
     }
 
-    if ($cfg.proxy.scheduling.mode -eq "performance_first") {
+    $currentMode = [string]$cfg.proxy.scheduling.mode
+    if ($currentMode -eq "performance_first" -or $currentMode -eq "PerformanceFirst") {
         Write-Host "scheduling.mode=performance_first disables sticky behavior -> switching to balance for this test." -ForegroundColor Yellow
-        $cfg.proxy.scheduling.mode = "balance"
+        $cfg.proxy.scheduling.mode = "Balance"
         $configChanged = $true
     }
 
     if ($configChanged) {
-        Api-PostJson -Path "/api/config" -Payload @{ config = $cfg } | Out-Null
-        Write-Host "Config updated. Restarting server so token manager picks up changes..." -ForegroundColor Yellow
-        Stop-Server
-        Start-Server
-        if (-not (Wait-ServiceReady)) {
-            throw "Service did not become ready after config restart."
+        if ($hasStickyPatch) {
+            $persistTarget = if ($hasPersistSnake) {
+                [bool]$cfg.proxy.persist_session_bindings
+            } else {
+                [bool]$cfg.proxy.persistSessionBindings
+            }
+            $maxWait = 60
+            if (Has-ObjectProperty -Object $cfg.proxy.scheduling -Name "max_wait_seconds") {
+                $maxWait = [int]$cfg.proxy.scheduling.max_wait_seconds
+            } elseif (Has-ObjectProperty -Object $cfg.proxy.scheduling -Name "maxWaitSeconds") {
+                $maxWait = [int]$cfg.proxy.scheduling.maxWaitSeconds
+            }
+
+            Api-PostJson -Path "/api/proxy/sticky" -Payload @{
+                persist_session_bindings = $persistTarget
+                scheduling = @{
+                    mode = [string]$cfg.proxy.scheduling.mode
+                    max_wait_seconds = $maxWait
+                }
+            } | Out-Null
+            Write-Host "Sticky config updated via /api/proxy/sticky (hot-applied)." -ForegroundColor Green
+        } else {
+            Api-PostJson -Path "/api/config" -Payload @{ config = $cfg } | Out-Null
+            Write-Host "Config updated. Restarting server so token manager picks up changes..." -ForegroundColor Yellow
+            Stop-Server
+            Start-Server
+            if (-not (Wait-ServiceReady)) {
+                throw "Service did not become ready after config restart."
+            }
         }
     } else {
         Write-Host "Config looks good for persistence test." -ForegroundColor Green

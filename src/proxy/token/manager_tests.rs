@@ -1,4 +1,5 @@
 use super::{ProxyToken, TokenManager};
+use futures::StreamExt;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -589,6 +590,71 @@ async fn test_compliance_debug_snapshot_reports_live_state() {
             .unwrap_or(0)
             > 0
     );
+}
+
+#[tokio::test]
+async fn test_compliance_in_flight_persists_for_stream_lifetime() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 20,
+            max_account_concurrency: 1,
+            risk_cooldown_seconds: 60,
+            max_retry_attempts: 2,
+        })
+        .await;
+
+    let guard = manager
+        .try_acquire_compliance_guard("acc-stream")
+        .await
+        .expect("initial compliance acquire should succeed");
+    assert!(guard.is_some());
+
+    let stream = async_stream::stream! {
+        yield Ok::<bytes::Bytes, String>(bytes::Bytes::from_static(b"chunk-1"));
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        yield Ok::<bytes::Bytes, String>(bytes::Bytes::from_static(b"chunk-2"));
+    };
+    let mut wrapped = crate::proxy::handlers::streaming::attach_guard_to_stream(stream, guard);
+
+    let first = wrapped.next().await;
+    assert!(matches!(first, Some(Ok(_))));
+
+    let snapshot_mid = manager.get_compliance_debug_snapshot().await;
+    assert_eq!(
+        snapshot_mid
+            .account_in_flight
+            .get("acc-stream")
+            .copied()
+            .unwrap_or(0),
+        1
+    );
+
+    let blocked_while_stream_alive = manager.try_acquire_compliance_guard("acc-stream").await;
+    assert!(
+        blocked_while_stream_alive.is_err(),
+        "concurrency should remain enforced until stream/guard is dropped"
+    );
+
+    drop(wrapped);
+
+    let snapshot_after_drop = manager.get_compliance_debug_snapshot().await;
+    assert_eq!(
+        snapshot_after_drop
+            .account_in_flight
+            .get("acc-stream")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
+
+    let allowed_after_drop = manager
+        .try_acquire_compliance_guard("acc-stream")
+        .await
+        .expect("acquire should succeed after stream drops");
+    assert!(allowed_after_drop.is_some());
 }
 
 fn create_test_token(

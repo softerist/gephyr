@@ -29,7 +29,30 @@ pub(crate) async fn admin_save_config(
     State(state): State<AdminState>,
     Json(payload): Json<SaveConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let new_config = payload.config;
+    let mut new_config = payload.config;
+    let existing_config = config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let mut warnings: Vec<&'static str> = Vec::new();
+    if new_config.proxy.api_key.trim().is_empty() {
+        new_config.proxy.api_key = existing_config.proxy.api_key.clone();
+        warnings.push("proxy.api_key_preserved_from_existing");
+    }
+    if let Err(errors) = crate::modules::system::validation::validate_app_config(&new_config) {
+        let message = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: message }),
+        ));
+    }
+
     config::save_app_config(&new_config).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -61,7 +84,12 @@ pub(crate) async fn admin_save_config(
         state.core.token_manager.set_preferred_account(None).await;
     }
 
-    Ok(StatusCode::OK)
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "saved": true,
+        "message": "Config updated",
+        "warnings": warnings
+    })))
 }
 pub(crate) async fn admin_get_proxy_pool_config(
     State(state): State<AdminState>,

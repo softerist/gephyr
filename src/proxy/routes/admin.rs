@@ -123,6 +123,11 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
                 get(admin::admin_get_proxy_session_bindings),
             )
             .route(
+                "/proxy/sticky",
+                get(admin::admin_get_proxy_sticky_config)
+                    .post(admin::admin_update_proxy_sticky_config),
+            )
+            .route(
                 "/proxy/compliance",
                 get(admin::admin_get_proxy_compliance_debug)
                     .post(admin::admin_update_proxy_compliance),

@@ -1,3 +1,4 @@
+pub mod admin_runtime_endpoints;
 pub mod comprehensive;
 pub mod quota_protection;
 pub mod security_integration_tests;

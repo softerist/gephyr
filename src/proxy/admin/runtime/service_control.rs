@@ -28,6 +28,8 @@ pub(crate) async fn admin_get_version_routes() -> impl IntoResponse {
             "GET /api/health": true,
             "GET /api/config": true,
             "POST /api/config": true,
+            "GET /api/proxy/sticky": true,
+            "POST /api/proxy/sticky": true,
             "GET /api/proxy/session-bindings": true,
             "POST /api/proxy/session-bindings/clear": true,
             "GET /api/proxy/compliance": true,
@@ -122,6 +124,101 @@ pub(crate) async fn admin_get_proxy_session_bindings(
     State(state): State<AdminState>,
 ) -> impl IntoResponse {
     Json(state.core.token_manager.get_sticky_debug_snapshot())
+}
+
+pub(crate) async fn admin_get_proxy_sticky_config(
+    State(state): State<AdminState>,
+) -> impl IntoResponse {
+    let sticky = state.core.token_manager.get_sticky_debug_snapshot();
+    let preferred_account_id = state.core.token_manager.get_preferred_account().await;
+    Json(serde_json::json!({
+        "persist_session_bindings": sticky.persist_session_bindings,
+        "scheduling": sticky.scheduling,
+        "preferred_account_id": preferred_account_id
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct UpdateStickyConfigRequest {
+    #[serde(default, alias = "persistSessionBindings")]
+    persist_session_bindings: Option<bool>,
+    #[serde(default)]
+    scheduling: Option<crate::proxy::sticky_config::StickySessionConfig>,
+}
+
+pub(crate) async fn admin_update_proxy_sticky_config(
+    State(state): State<AdminState>,
+    Json(payload): Json<UpdateStickyConfigRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    if payload.persist_session_bindings.is_none() && payload.scheduling.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "At least one of persist_session_bindings or scheduling must be provided"
+                    .to_string(),
+            }),
+        ));
+    }
+
+    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    if let Some(enabled) = payload.persist_session_bindings {
+        app_config.proxy.persist_session_bindings = enabled;
+    }
+    if let Some(scheduling) = payload.scheduling.clone() {
+        app_config.proxy.scheduling = scheduling;
+    }
+
+    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
+        let message = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: message }),
+        ));
+    }
+
+    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    if let Some(enabled) = payload.persist_session_bindings {
+        state
+            .core
+            .token_manager
+            .update_session_binding_persistence(enabled);
+    }
+    if let Some(scheduling) = payload.scheduling {
+        state
+            .core
+            .token_manager
+            .update_sticky_config(scheduling)
+            .await;
+    }
+
+    let sticky = state.core.token_manager.get_sticky_debug_snapshot();
+    logger::log_info("[API] Sticky config updated via API and saved");
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "saved": true,
+        "message": "Sticky config updated",
+        "sticky": {
+            "persist_session_bindings": sticky.persist_session_bindings,
+            "scheduling": sticky.scheduling
+        }
+    })))
 }
 
 pub(crate) async fn admin_get_proxy_compliance_debug(
