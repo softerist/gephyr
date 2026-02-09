@@ -88,9 +88,68 @@ mod tests {
         }
     }
 
+    fn build_test_state_from_persisted_config() -> AppState {
+        let persisted = system_config::load_app_config().unwrap_or_default();
+        let proxy_cfg = persisted.proxy;
+
+        let data_dir = std::env::temp_dir().join(format!(
+            ".gephyr-admin-endpoint-test-reinit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let token_manager = Arc::new(TokenManager::new(data_dir));
+        let monitor = Arc::new(ProxyMonitor::new(64));
+        let integration = SystemManager::Headless;
+        let account_service = Arc::new(AccountService::new(integration.clone()));
+        let proxy_pool_state = Arc::new(RwLock::new(proxy_cfg.proxy_pool.clone()));
+        let proxy_pool_manager = Arc::new(ProxyPoolManager::new(proxy_pool_state.clone()));
+        let core = Arc::new(CoreServices {
+            token_manager,
+            upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
+                Some(proxy_cfg.upstream_proxy.clone()),
+                None,
+            )),
+            monitor,
+            integration: integration.clone(),
+            account_service,
+        });
+        let config = Arc::new(ConfigState {
+            custom_mapping: Arc::new(RwLock::new(proxy_cfg.custom_mapping.clone())),
+            upstream_proxy: Arc::new(RwLock::new(proxy_cfg.upstream_proxy.clone())),
+            zai: Arc::new(RwLock::new(proxy_cfg.zai.clone())),
+            experimental: Arc::new(RwLock::new(proxy_cfg.experimental.clone())),
+            debug_logging: Arc::new(RwLock::new(proxy_cfg.debug_logging.clone())),
+            security: Arc::new(RwLock::new(ProxySecurityConfig::from_proxy_config(
+                &proxy_cfg,
+            ))),
+            request_timeout: Arc::new(AtomicU64::new(proxy_cfg.request_timeout.max(5))),
+            update_lock: Arc::new(tokio::sync::Mutex::new(())),
+        });
+        let runtime = Arc::new(RuntimeState {
+            thought_signature_map: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            provider_rr: Arc::new(AtomicUsize::new(0)),
+            switching: Arc::new(RwLock::new(false)),
+            is_running: Arc::new(RwLock::new(true)),
+            port: 8045,
+            proxy_pool_state,
+            proxy_pool_manager,
+        });
+
+        AppState {
+            core,
+            config,
+            runtime,
+        }
+    }
+
     fn build_test_router(api_key: &str) -> Router {
         seed_runtime_config_api_key(api_key);
         let state = build_test_state(api_key);
+        build_admin_routes(state.clone()).with_state(state)
+    }
+
+    fn build_test_router_from_persisted_config(api_key: &str) -> Router {
+        seed_runtime_config_api_key(api_key);
+        let state = build_test_state_from_persisted_config();
         build_admin_routes(state.clone()).with_state(state)
     }
 
@@ -511,5 +570,91 @@ mod tests {
             .expect("request");
         let (status_code, _) = send(&router, status_request).await;
         assert_eq!(status_code, StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_scoped_updates_persist_across_restart_like_reinit() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let update_timeout = Request::builder()
+            .method("POST")
+            .uri("/proxy/request-timeout")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({ "request_timeout": 77 }).to_string()))
+            .expect("request");
+        let (status_timeout, _) = send(&router, update_timeout).await;
+        assert_eq!(status_timeout, StatusCode::OK);
+
+        let update_pool_runtime = Request::builder()
+            .method("POST")
+            .uri("/proxy/pool/runtime")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "enabled": true,
+                    "auto_failover": false,
+                    "health_check_interval": 123
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let (status_pool_runtime, _) = send(&router, update_pool_runtime).await;
+        assert_eq!(status_pool_runtime, StatusCode::OK);
+
+        let update_pool_strategy = Request::builder()
+            .method("POST")
+            .uri("/proxy/pool/strategy")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({ "strategy": "weighted_round_robin" }).to_string(),
+            ))
+            .expect("request");
+        let (status_pool_strategy, _) = send(&router, update_pool_strategy).await;
+        assert_eq!(status_pool_strategy, StatusCode::OK);
+
+        let reinit_router = build_test_router_from_persisted_config(api_key);
+
+        let get_timeout = Request::builder()
+            .uri("/proxy/request-timeout")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (timeout_status, timeout_body) = send(&reinit_router, get_timeout).await;
+        assert_eq!(timeout_status, StatusCode::OK);
+        assert_eq!(timeout_body["request_timeout"], Value::from(77));
+
+        let get_pool_runtime = Request::builder()
+            .uri("/proxy/pool/runtime")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (runtime_status, runtime_body) = send(&reinit_router, get_pool_runtime).await;
+        assert_eq!(runtime_status, StatusCode::OK);
+        assert_eq!(runtime_body["enabled"], Value::from(true));
+        assert_eq!(runtime_body["auto_failover"], Value::from(false));
+        assert_eq!(runtime_body["health_check_interval"], Value::from(123));
+        assert_eq!(
+            runtime_body["strategy"],
+            Value::from("weighted_round_robin")
+        );
+
+        let get_pool_strategy = Request::builder()
+            .uri("/proxy/pool/strategy")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (strategy_status, strategy_body) = send(&reinit_router, get_pool_strategy).await;
+        assert_eq!(strategy_status, StatusCode::OK);
+        assert_eq!(
+            strategy_body["strategy"],
+            Value::from("weighted_round_robin")
+        );
     }
 }

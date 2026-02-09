@@ -1,6 +1,7 @@
 use axum::http::{header, HeaderMap};
 use serde_json::{json, Value};
 
+use super::audit_event::{ActorIdentity, AdminAuditEvent};
 use crate::proxy::config::ProxyConfig;
 use crate::proxy::state::AdminState;
 
@@ -13,28 +14,47 @@ fn extract_auth_token(headers: &HeaderMap) -> Option<&str> {
         .or_else(|| headers.get("x-goog-api-key").and_then(|h| h.to_str().ok()))
 }
 
-pub(crate) async fn resolve_admin_actor(state: &AdminState, headers: &HeaderMap) -> String {
+fn extract_request_id(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-request-id")
+        .and_then(|h| h.to_str().ok())
+        .or_else(|| {
+            headers
+                .get("x-correlation-id")
+                .and_then(|h| h.to_str().ok())
+        })
+        .or_else(|| headers.get("x-trace-id").and_then(|h| h.to_str().ok()))
+        .map(|s| s.to_string())
+}
+
+pub(crate) async fn resolve_admin_actor(state: &AdminState, headers: &HeaderMap) -> ActorIdentity {
+    let request_id = extract_request_id(headers);
     let Some(token) = extract_auth_token(headers) else {
-        return "unknown".to_string();
+        return ActorIdentity::new("unknown", None, "unknown", request_id);
     };
 
     if let Ok(Some(user_token)) =
         crate::modules::persistence::user_token_db::get_token_by_value(token)
     {
-        return format!("user_token:{}:{}", user_token.username, user_token.id);
+        return ActorIdentity::new(
+            "user_token",
+            Some(user_token.id.clone()),
+            format!("user_token:{}:{}", user_token.username, user_token.id),
+            request_id,
+        );
     }
 
     let security = state.config.security.read().await.clone();
     if let Some(admin_password) = security.admin_password.as_deref() {
         if !admin_password.is_empty() && token == admin_password {
-            return "admin_password".to_string();
+            return ActorIdentity::new("admin_password", None, "admin_password", request_id);
         }
     }
     if token == security.api_key {
-        return "api_key".to_string();
+        return ActorIdentity::new("api_key", None, "api_key", request_id);
     }
 
-    "unknown".to_string()
+    ActorIdentity::new("unknown", None, "unknown", request_id)
 }
 
 pub(crate) fn summarize_proxy_config(proxy: &ProxyConfig) -> Value {
@@ -65,9 +85,15 @@ pub(crate) fn summarize_proxy_config(proxy: &ProxyConfig) -> Value {
     })
 }
 
-pub(crate) fn log_admin_audit(action: &str, actor: &str, details: Value) {
-    crate::modules::system::logger::log_info(&format!(
-        "[ADMIN_AUDIT] action={} actor={} details={}",
-        action, actor, details
-    ));
+pub(crate) fn log_admin_audit(action: &str, actor: &ActorIdentity, details: Value) {
+    let event = AdminAuditEvent::from_parts(action, actor, details.clone());
+    match serde_json::to_string(&event) {
+        Ok(payload) => {
+            crate::modules::system::logger::log_info(&format!("[ADMIN_AUDIT] {}", payload))
+        }
+        Err(_) => crate::modules::system::logger::log_info(&format!(
+            "[ADMIN_AUDIT] action={} actor={} details={}",
+            action, actor.actor_label, details
+        )),
+    }
 }

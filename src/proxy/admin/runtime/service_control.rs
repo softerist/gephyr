@@ -1,4 +1,5 @@
 use super::audit;
+use super::config_patch;
 use crate::modules::system::logger;
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
@@ -192,75 +193,42 @@ pub(crate) async fn admin_update_proxy_sticky_config(
     headers: HeaderMap,
     Json(payload): Json<UpdateStickyConfigRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let actor = audit::resolve_admin_actor(&state, &headers).await;
-    if payload.persist_session_bindings.is_none() && payload.scheduling.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "At least one of persist_session_bindings or scheduling must be provided"
+    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
+        if payload.persist_session_bindings.is_none() && payload.scheduling.is_none() {
+            return Err(
+                "At least one of persist_session_bindings or scheduling must be provided"
                     .to_string(),
-            }),
-        ));
-    }
+            );
+        }
+        if let Some(enabled) = payload.persist_session_bindings {
+            proxy.persist_session_bindings = enabled;
+        }
+        if let Some(scheduling) = payload.scheduling.clone() {
+            proxy.scheduling = scheduling;
+        }
+        Ok(())
+    })
+    .await?;
 
-    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    let before_persist = app_config.proxy.persist_session_bindings;
-    let before_scheduling = app_config.proxy.scheduling.clone();
-
-    if let Some(enabled) = payload.persist_session_bindings {
-        app_config.proxy.persist_session_bindings = enabled;
-    }
-    if let Some(scheduling) = payload.scheduling.clone() {
-        app_config.proxy.scheduling = scheduling;
-    }
-
-    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
-        let message = errors
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: message }),
-        ));
-    }
-
-    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    if let Some(enabled) = payload.persist_session_bindings {
-        state
-            .core
-            .token_manager
-            .update_session_binding_persistence(enabled);
-    }
-    if let Some(scheduling) = payload.scheduling {
-        state
-            .core
-            .token_manager
-            .update_sticky_config(scheduling)
-            .await;
-    }
+    state
+        .core
+        .token_manager
+        .update_session_binding_persistence(patch.after.persist_session_bindings);
+    state
+        .core
+        .token_manager
+        .update_sticky_config(patch.after.scheduling.clone())
+        .await;
 
     let sticky = state.core.token_manager.get_sticky_debug_snapshot();
     logger::log_info("[API] Sticky config updated via API and saved");
     audit::log_admin_audit(
         "update_proxy_sticky",
-        &actor,
+        &patch.actor,
         serde_json::json!({
             "before": {
-                "persist_session_bindings": before_persist,
-                "scheduling": before_scheduling
+                "persist_session_bindings": patch.before.persist_session_bindings,
+                "scheduling": patch.before.scheduling
             },
             "after": {
                 "persist_session_bindings": sticky.persist_session_bindings,
@@ -303,44 +271,16 @@ pub(crate) async fn admin_update_proxy_request_timeout(
     headers: HeaderMap,
     Json(payload): Json<UpdateRequestTimeoutRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let actor = audit::resolve_admin_actor(&state, &headers).await;
-    let request_timeout = payload
-        .request_timeout
-        .or(payload.request_timeout_seconds)
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "request_timeout is required".to_string(),
-                }),
-            )
-        })?;
-
-    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    let before_request_timeout = app_config.proxy.request_timeout;
-    app_config.proxy.request_timeout = request_timeout;
-    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
-        let message = errors
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: message }),
-        ));
-    }
-    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
+        let request_timeout = payload
+            .request_timeout
+            .or(payload.request_timeout_seconds)
+            .ok_or_else(|| "request_timeout is required".to_string())?;
+        proxy.request_timeout = request_timeout;
+        Ok(())
+    })
+    .await?;
+    let request_timeout = patch.after.request_timeout;
 
     state
         .config
@@ -349,11 +289,11 @@ pub(crate) async fn admin_update_proxy_request_timeout(
     logger::log_info("[API] Request timeout updated via API and saved");
     audit::log_admin_audit(
         "update_proxy_request_timeout",
-        &actor,
+        &patch.actor,
         serde_json::json!({
             "before": {
-                "request_timeout": before_request_timeout,
-                "effective_request_timeout": before_request_timeout.max(5)
+                "request_timeout": patch.before.request_timeout,
+                "effective_request_timeout": patch.before.request_timeout.max(5)
             },
             "after": {
                 "request_timeout": request_timeout,
@@ -388,53 +328,31 @@ pub(crate) async fn admin_update_proxy_compliance(
     headers: HeaderMap,
     Json(compliance): Json<crate::proxy::config::ComplianceConfig>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let actor = audit::resolve_admin_actor(&state, &headers).await;
-    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    let before_compliance = app_config.proxy.compliance.clone();
-    app_config.proxy.compliance = compliance.clone();
-    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
-        let message = errors
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: message }),
-        ));
-    }
-    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
+        proxy.compliance = compliance.clone();
+        Ok(())
+    })
+    .await?;
 
     state
         .core
         .token_manager
-        .update_compliance_config(compliance)
+        .update_compliance_config(patch.after.compliance.clone())
         .await;
     logger::log_info("[API] Compliance config updated via API and saved");
     audit::log_admin_audit(
         "update_proxy_compliance",
-        &actor,
+        &patch.actor,
         serde_json::json!({
-            "before": before_compliance,
-            "after": app_config.proxy.compliance
+            "before": patch.before.compliance,
+            "after": patch.after.compliance
         }),
     );
     Ok(Json(serde_json::json!({
         "ok": true,
         "saved": true,
         "message": "Compliance config updated",
-        "compliance": app_config.proxy.compliance
+        "compliance": patch.after.compliance
     })))
 }
 
