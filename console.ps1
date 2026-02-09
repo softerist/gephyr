@@ -11,7 +11,8 @@ param(
     [string]$Model = "gpt-5.3-codex",
     [string]$Prompt = "hello from gephyr",
     [switch]$NoBrowser,
-    [switch]$NoRestartAfterRotate
+    [switch]$NoRestartAfterRotate,
+    [switch]$Aggressive
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,6 +37,7 @@ Commands:
   accounts     Call /api/accounts
   api-test     Run one API test completion
   rotate-key   Generate new API key, save to .env.local, and optionally restart
+  docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
   logout       Remove linked account(s) via admin API
   logout-and-stop  Logout accounts, then stop container
 
@@ -50,12 +52,15 @@ Options:
   -Prompt <text>         Prompt for api-test
   -NoBrowser             Do not open browser for login command
   -NoRestartAfterRotate  Rotate key without container restart
+  -Aggressive            For docker-repair: remove all builder cache (slower next build)
 
 Examples:
   .\console.ps1 start
   .\console.ps1 login
   .\console.ps1 logs -LogLines 200
   .\console.ps1 rotate-key
+  .\console.ps1 docker-repair
+  .\console.ps1 docker-repair -Aggressive
   .\console.ps1 logout
   .\console.ps1 logout-and-stop
   .\console.ps1 -Command login
@@ -140,6 +145,13 @@ function Remove-ContainerIfExists {
     }
 }
 
+function Write-ContainerNotFoundNextSteps {
+    Write-Host "  Next steps:" -ForegroundColor Yellow
+    Write-Host "    1. Start it: .\console.ps1 start" -ForegroundColor Yellow
+    Write-Host "    2. If image is missing, build it:" -ForegroundColor Yellow
+    Write-Host "       docker build -t $Image -f docker/Dockerfile ." -ForegroundColor Yellow
+}
+
 function Start-Container {
     param([bool]$AdminApiEnabled)
     Ensure-ApiKey
@@ -184,6 +196,7 @@ function Stop-Container {
         Write-Host "Stopped container: $ContainerName"
     } else {
         Write-Host "Container not found: $ContainerName"
+        Write-ContainerNotFoundNextSteps
     }
 }
 
@@ -235,6 +248,7 @@ function Show-Status {
         Write-Host $parts[3] -ForegroundColor White
     } else {
         Write-Host "  Container not found: $ContainerName" -ForegroundColor Red
+        Write-ContainerNotFoundNextSteps
     }
     Write-Host ""
 
@@ -282,6 +296,8 @@ function Show-Status {
 
 function Show-Logs {
     if (-not (Test-ContainerExists)) {
+        Write-Host "Container not found: $ContainerName" -ForegroundColor Red
+        Write-ContainerNotFoundNextSteps
         throw "Container not found: $ContainerName"
     }
     docker logs --tail $LogLines $ContainerName
@@ -468,6 +484,39 @@ function Rotate-ApiKey {
     }
 }
 
+function Repair-DockerBuilder {
+    param([switch]$AggressiveMode)
+
+    Write-Host "Running Docker builder repair..." -ForegroundColor Cyan
+    if ($AggressiveMode) {
+        Write-Host "Mode: aggressive (will remove all builder cache)." -ForegroundColor Yellow
+    } else {
+        Write-Host "Mode: safe (prunes unused builder cache)." -ForegroundColor Yellow
+    }
+
+    $pruneFlag = if ($AggressiveMode) { "-af" } else { "-f" }
+
+    & docker buildx inspect --bootstrap | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to bootstrap Docker buildx. Restart Docker Desktop and retry."
+    }
+
+    & docker buildx prune $pruneFlag
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to run 'docker buildx prune $pruneFlag'."
+    }
+
+    & docker builder prune $pruneFlag
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to run 'docker builder prune $pruneFlag'."
+    }
+
+    Write-Host ""
+    Write-Host "Builder repair completed." -ForegroundColor Green
+    Write-Host "Next step: retry your image build." -ForegroundColor Green
+    Write-Host "  docker build -t $Image -f docker/Dockerfile ." -ForegroundColor Green
+}
+
 Load-EnvLocal
 
 function Test-DockerAvailable {
@@ -504,7 +553,7 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "logout", "logout-and-stop")
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "logout", "logout-and-stop")
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -536,6 +585,7 @@ switch ($Command) {
     "accounts" { Show-Accounts }
     "api-test" { Run-ApiTest }
     "rotate-key" { Rotate-ApiKey }
+    "docker-repair" { Repair-DockerBuilder -AggressiveMode:$Aggressive.IsPresent }
     "logout" { Logout-Accounts }
     "logout-and-stop" { Logout-AndStop }
     default { Write-Usage }

@@ -15,6 +15,7 @@ PROMPT="hello from gephyr"
 ENABLE_ADMIN_API="false"
 NO_BROWSER="false"
 NO_RESTART_AFTER_ROTATE="false"
+AGGRESSIVE_REPAIR="false"
 
 print_help() {
   cat <<'EOF'
@@ -34,6 +35,7 @@ Commands:
   accounts     Call /api/accounts
   api-test     Run one API test completion
   rotate-key   Generate new API key, save to .env.local, and optionally restart
+  docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
   logout       Remove linked account(s) via admin API
   logout-and-stop  Logout accounts, then stop container
 
@@ -48,6 +50,7 @@ Options:
   --prompt <text>        Prompt for api-test
   --no-browser           Do not open browser for login command
   --no-restart           Rotate key without restart
+  --aggressive           For docker-repair: remove all builder cache (slower next build)
   -h, --help             Show help
 
 Examples:
@@ -55,6 +58,8 @@ Examples:
   ./console.sh login
   ./console.sh logs --tail 200
   ./console.sh rotate-key
+  ./console.sh docker-repair
+  ./console.sh docker-repair --aggressive
   ./console.sh logout
   ./console.sh logout-and-stop
 
@@ -117,6 +122,13 @@ remove_container_if_exists() {
   fi
 }
 
+print_container_not_found_help() {
+  echo "Next steps:"
+  echo "  1) Start it: ./console.sh start"
+  echo "  2) If image is missing, build it:"
+  echo "     docker build -t \"$IMAGE\" -f docker/Dockerfile ."
+}
+
 start_container() {
   local admin_api="$1"
   ensure_api_key
@@ -151,6 +163,7 @@ stop_container() {
     echo "Stopped container: $CONTAINER_NAME"
   else
     echo "Container not found: $CONTAINER_NAME"
+    print_container_not_found_help
   fi
 }
 
@@ -168,11 +181,22 @@ wait_service_ready() {
 
 show_status() {
   echo -e "NAMES\tSTATUS\tPORTS\tIMAGE"
-  docker ps -a --format "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}" | awk -F '\t' -v n="$CONTAINER_NAME" '$1 == n { print }'
+  local row
+  row="$(docker ps -a --format "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}" | awk -F '\t' -v n="$CONTAINER_NAME" '$1 == n { print }')"
+  if [[ -n "$row" ]]; then
+    echo "$row"
+  else
+    echo "Container not found: $CONTAINER_NAME"
+    print_container_not_found_help
+  fi
 }
 
 show_logs() {
-  container_exists || { echo "Container not found: $CONTAINER_NAME" >&2; exit 1; }
+  if ! container_exists; then
+    echo "Container not found: $CONTAINER_NAME" >&2
+    print_container_not_found_help >&2
+    exit 1
+  fi
   docker logs --tail "$LOG_LINES" "$CONTAINER_NAME"
 }
 
@@ -409,6 +433,30 @@ rotate_key() {
   fi
 }
 
+docker_repair() {
+  local prune_flag="-f"
+  if [[ "$AGGRESSIVE_REPAIR" == "true" ]]; then
+    prune_flag="-af"
+    echo "Mode: aggressive (will remove all builder cache)."
+  else
+    echo "Mode: safe (prunes unused builder cache)."
+  fi
+
+  echo "Running Docker builder repair..."
+  if ! docker buildx inspect --bootstrap >/dev/null 2>&1; then
+    echo "Failed to bootstrap Docker buildx. Restart Docker and retry." >&2
+    exit 1
+  fi
+
+  docker buildx prune "$prune_flag"
+  docker builder prune "$prune_flag"
+
+  echo
+  echo "Builder repair completed."
+  echo "Next step: retry your image build."
+  echo "  docker build -t \"$IMAGE\" -f docker/Dockerfile ."
+}
+
 if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
   COMMAND="$1"
   shift
@@ -430,6 +478,7 @@ while [[ $# -gt 0 ]]; do
     --prompt) PROMPT="$2"; shift 2 ;;
     --no-browser) NO_BROWSER="true"; shift ;;
     --no-restart) NO_RESTART_AFTER_ROTATE="true"; shift ;;
+    --aggressive) AGGRESSIVE_REPAIR="true"; shift ;;
     -h|--help|-?|\?|/help) COMMAND="help"; shift ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -472,7 +521,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key logout logout-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair logout logout-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -498,6 +547,7 @@ case "$COMMAND" in
   accounts) show_accounts ;;
   api-test) api_test ;;
   rotate-key) rotate_key ;;
+  docker-repair) docker_repair ;;
   logout) logout_accounts ;;
   logout-and-stop) logout_and_stop ;;
   *)
