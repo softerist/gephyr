@@ -223,7 +223,26 @@ impl ProxyPoolManager {
     }
 
     fn select_weighted<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
-        self.select_by_priority(proxies)
+        if proxies.is_empty() {
+            return None;
+        }
+
+        use rand::distributions::WeightedIndex;
+        use rand::prelude::Distribution;
+
+        let max_priority = proxies
+            .iter()
+            .map(|p| p.priority as i64)
+            .max()
+            .unwrap_or(0);
+        let weights: Vec<u64> = proxies
+            .iter()
+            .map(|p| (max_priority - (p.priority as i64) + 1).max(1) as u64)
+            .collect();
+
+        let mut rng = rand::thread_rng();
+        let dist = WeightedIndex::new(&weights).ok()?;
+        Some(proxies[dist.sample(&mut rng)])
     }
     fn build_proxy_config(&self, entry: &ProxyEntry) -> Result<PoolProxyConfig, String> {
         let url = if !entry.url.contains("://") && !entry.url.is_empty() {

@@ -60,6 +60,7 @@ pub struct UserTokenStats {
 }
 pub async fn get_user_token_summary() -> Result<UserTokenStats, String> {
     let tokens = user_token_db::list_tokens()?;
+    let today_requests = user_token_db::get_today_request_count()?;
     let active_tokens = tokens.iter().filter(|t| t.enabled).count();
     let mut users = std::collections::HashSet::new();
     for t in &tokens {
@@ -70,6 +71,6 @@ pub async fn get_user_token_summary() -> Result<UserTokenStats, String> {
         total_tokens: tokens.len(),
         active_tokens,
         total_users: users.len(),
-        today_requests: 0,
+        today_requests,
     })
 }

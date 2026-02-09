@@ -9,6 +9,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
+
+fn extract_client_ip(request: &Request) -> String {
+    request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .or_else(|| {
+            request
+                .headers()
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+}
 pub async fn auth_middleware(
     state: State<Arc<RwLock<ProxySecurityConfig>>>,
     request: Request,
@@ -59,17 +75,31 @@ async fn auth_middleware_internal(
                 });
 
             if let Some(token) = api_key {
-                if let Ok(Some(user_token)) =
-                    crate::modules::persistence::user_token_db::get_token_by_value(token)
-                {
-                    let identity = UserTokenIdentity {
-                        token_id: user_token.id,
-                        username: user_token.username,
-                    };
-                    let (mut parts, body) = request.into_parts();
-                    parts.extensions.insert(identity);
-                    let request = Request::from_parts(parts, body);
-                    return Ok(next.run(request).await);
+                let client_ip = extract_client_ip(&request);
+                match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
+                    Ok((true, _)) => {
+                        if let Ok(Some(user_token)) =
+                            crate::modules::persistence::user_token_db::get_token_by_value(token)
+                        {
+                            let identity = UserTokenIdentity {
+                                token_id: user_token.id,
+                                username: user_token.username,
+                            };
+                            let (mut parts, body) = request.into_parts();
+                            parts.extensions.insert(identity);
+                            let request = Request::from_parts(parts, body);
+                            return Ok(next.run(request).await);
+                        }
+                    }
+                    Ok((false, reason)) => {
+                        tracing::debug!(
+                            "Auth off-mode ignored invalid user token for identity attach: {:?}",
+                            reason
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Auth off-mode user token validation error: {}", e);
+                    }
                 }
             }
 
@@ -133,19 +163,7 @@ async fn auth_middleware_internal(
         Ok(next.run(request).await)
     } else if !force_strict && api_key.is_some() {
         let token = api_key.unwrap();
-        let client_ip = request
-            .headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-            .or_else(|| {
-                request
-                    .headers()
-                    .get("x-real-ip")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let client_ip = extract_client_ip(&request);
         match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
             Ok((true, _)) => {
                 if let Ok(Some(user_token)) =

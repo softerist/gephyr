@@ -37,16 +37,19 @@ pub(crate) async fn admin_get_ip_access_logs(
     Query(q): Query<IpAccessLogQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let offset = (q.page.max(1) - 1) * q.page_size;
-    let logs =
-        security_db::get_ip_access_logs(q.page_size, offset, q.search.as_deref(), q.blocked_only)
-            .map_err(|e| {
+    let logs = security_db::get_ip_access_logs(q.page_size, offset, q.search.as_deref(), q.blocked_only)
+        .map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e }),
             )
         })?;
-
-    let total = logs.len();
+    let total = security_db::get_ip_access_logs_count(q.search.as_deref(), q.blocked_only).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
 
     Ok(Json(IpAccessLogResponse { logs, total }))
 }
@@ -194,7 +197,7 @@ pub(crate) async fn admin_clear_ip_blacklist(
         )
     })?;
     for entry in entries {
-        security_db::remove_from_blacklist(&entry.ip_pattern).map_err(|e| {
+        security_db::remove_from_blacklist(&entry.id).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e }),
@@ -288,7 +291,7 @@ pub(crate) async fn admin_clear_ip_whitelist(
         )
     })?;
     for entry in entries {
-        security_db::remove_from_whitelist(&entry.ip_pattern).map_err(|e| {
+        security_db::remove_from_whitelist(&entry.id).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse { error: e }),

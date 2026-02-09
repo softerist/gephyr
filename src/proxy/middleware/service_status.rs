@@ -12,7 +12,11 @@ pub async fn service_status_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    if path.starts_with("/api/") || path == "/auth/callback" || path == "/health" {
+    if path.starts_with("/api/")
+        || path == "/auth/callback"
+        || path == "/health"
+        || path == "/healthz"
+    {
         return next.run(request).await;
     }
 

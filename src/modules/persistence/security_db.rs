@@ -1,6 +1,23 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+fn map_ip_access_log_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<IpAccessLog> {
+    Ok(IpAccessLog {
+        id: row.get(0)?,
+        client_ip: row.get(1)?,
+        timestamp: row.get(2)?,
+        method: row.get(3)?,
+        path: row.get(4)?,
+        user_agent: row.get(5)?,
+        status: row.get(6)?,
+        duration: row.get(7)?,
+        api_key_hash: row.get(8)?,
+        blocked: row.get::<_, i32>(9)? != 0,
+        block_reason: row.get(10)?,
+        username: row.get(11).unwrap_or(None),
+    })
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpAccessLog {
     pub id: String,
@@ -168,72 +185,119 @@ pub fn get_ip_access_logs(
     blocked_only: bool,
 ) -> Result<Vec<IpAccessLog>, String> {
     let conn = connect_db()?;
+    let normalized_filter = ip_filter.map(str::trim).filter(|s| !s.is_empty());
 
-    let sql = if blocked_only {
-        if let Some(ip) = ip_filter {
-            format!(
-                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
-                 FROM ip_access_logs
-                 WHERE blocked = 1 AND client_ip LIKE '%{}%'
-                 ORDER BY timestamp DESC
-                 LIMIT {} OFFSET {}",
-                ip, limit, offset
-            )
-        } else {
-            format!(
+    let mut logs = Vec::new();
+    if blocked_only {
+        if let Some(ip) = normalized_filter {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
+                     FROM ip_access_logs
+                     WHERE blocked = 1 AND client_ip LIKE ?1
+                     ORDER BY timestamp DESC
+                     LIMIT ?2 OFFSET ?3",
+                )
+                .map_err(|e| e.to_string())?;
+            let pattern = format!("%{}%", ip);
+            let logs_iter = stmt
+                .query_map(params![pattern, limit as i64, offset as i64], map_ip_access_log_row)
+                .map_err(|e| e.to_string())?;
+            for log in logs_iter {
+                logs.push(log.map_err(|e| e.to_string())?);
+            }
+            return Ok(logs);
+        }
+        let mut stmt = conn
+            .prepare(
                 "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
                  FROM ip_access_logs
                  WHERE blocked = 1
                  ORDER BY timestamp DESC
-                 LIMIT {} OFFSET {}",
-                limit, offset
+                 LIMIT ?1 OFFSET ?2",
             )
+            .map_err(|e| e.to_string())?;
+        let logs_iter = stmt
+            .query_map(params![limit as i64, offset as i64], map_ip_access_log_row)
+            .map_err(|e| e.to_string())?;
+        for log in logs_iter {
+            logs.push(log.map_err(|e| e.to_string())?);
         }
-    } else if let Some(ip) = ip_filter {
-        format!(
+        return Ok(logs);
+    }
+
+    if let Some(ip) = normalized_filter {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
+                 FROM ip_access_logs
+                 WHERE client_ip LIKE ?1
+                 ORDER BY timestamp DESC
+                 LIMIT ?2 OFFSET ?3",
+            )
+            .map_err(|e| e.to_string())?;
+        let pattern = format!("%{}%", ip);
+        let logs_iter = stmt
+            .query_map(params![pattern, limit as i64, offset as i64], map_ip_access_log_row)
+            .map_err(|e| e.to_string())?;
+        for log in logs_iter {
+            logs.push(log.map_err(|e| e.to_string())?);
+        }
+        return Ok(logs);
+    }
+
+    let mut stmt = conn
+        .prepare(
             "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
              FROM ip_access_logs
-             WHERE client_ip LIKE '%{}%'
              ORDER BY timestamp DESC
-             LIMIT {} OFFSET {}",
-            ip, limit, offset
+             LIMIT ?1 OFFSET ?2",
         )
-    } else {
-        format!(
-            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
-             FROM ip_access_logs
-             ORDER BY timestamp DESC
-             LIMIT {} OFFSET {}",
-            limit, offset
-        )
-    };
-
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-
-    let logs_iter = stmt
-        .query_map([], |row| {
-            Ok(IpAccessLog {
-                id: row.get(0)?,
-                client_ip: row.get(1)?,
-                timestamp: row.get(2)?,
-                method: row.get(3)?,
-                path: row.get(4)?,
-                user_agent: row.get(5)?,
-                status: row.get(6)?,
-                duration: row.get(7)?,
-                api_key_hash: row.get(8)?,
-                blocked: row.get::<_, i32>(9)? != 0,
-                block_reason: row.get(10)?,
-                username: row.get(11).unwrap_or(None),
-            })
-        })
         .map_err(|e| e.to_string())?;
-
-    let mut logs = Vec::new();
+    let logs_iter = stmt
+        .query_map(params![limit as i64, offset as i64], map_ip_access_log_row)
+        .map_err(|e| e.to_string())?;
     for log in logs_iter {
         logs.push(log.map_err(|e| e.to_string())?);
     }
     Ok(logs)
+}
+
+pub fn get_ip_access_logs_count(ip_filter: Option<&str>, blocked_only: bool) -> Result<usize, String> {
+    let conn = connect_db()?;
+    let normalized_filter = ip_filter.map(str::trim).filter(|s| !s.is_empty());
+
+    let total: i64 = if blocked_only {
+        if let Some(ip) = normalized_filter {
+            let pattern = format!("%{}%", ip);
+            conn.query_row(
+                "SELECT COUNT(*) FROM ip_access_logs WHERE blocked = 1 AND client_ip LIKE ?1",
+                params![pattern],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM ip_access_logs WHERE blocked = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?
+        }
+    } else if let Some(ip) = normalized_filter {
+        let pattern = format!("%{}%", ip);
+        conn.query_row(
+            "SELECT COUNT(*) FROM ip_access_logs WHERE client_ip LIKE ?1",
+            params![pattern],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        conn.query_row("SELECT COUNT(*) FROM ip_access_logs", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?
+    };
+
+    Ok(total.max(0) as usize)
 }
 pub fn get_ip_stats() -> Result<IpStats, String> {
     let conn = connect_db()?;

@@ -466,6 +466,12 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
     let token_opt = get_token_by_value(token_str)?;
 
     if let Some(token) = token_opt {
+        if !token.enabled {
+            return Ok((
+                false,
+                Some("This token is disabled. Please contact the administrator.".to_string()),
+            ));
+        }
         if let Some(expires_at) = token.expires_at {
             if expires_at < Utc::now().timestamp() {
                 return Ok((
@@ -521,6 +527,22 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
             Some("Invalid token. Please check your API key.".to_string()),
         ))
     }
+}
+pub fn get_today_request_count() -> Result<i64, String> {
+    let conn = connect_db()?;
+    let today_start = Utc::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| "Failed to compute start of day".to_string())?
+        .and_utc()
+        .timestamp();
+
+    conn.query_row(
+        "SELECT COUNT(*) FROM token_usage_logs WHERE request_time >= ?1",
+        params![today_start],
+        |row| row.get(0),
+    )
+    .map_err(|e| format!("Failed to query today's token requests: {}", e))
 }
 pub fn get_username_for_ip(ip: &str) -> Result<Option<String>, String> {
     let conn = connect_db()?;

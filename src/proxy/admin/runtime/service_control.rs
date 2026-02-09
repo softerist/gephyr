@@ -149,7 +149,6 @@ pub(crate) async fn admin_set_preferred_account(
 }
 
 pub(crate) async fn admin_fetch_zai_models(
-    Path(_id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let zai_config = payload.get("zai").ok_or_else(|| {
