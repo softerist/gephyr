@@ -87,6 +87,7 @@ pub async fn internal_start_proxy_service(
     token_manager
         .update_sticky_config(config.scheduling.clone())
         .await;
+    token_manager.update_session_binding_persistence(config.persist_session_bindings);
     let app_config = crate::modules::system::config::load_app_config()
         .unwrap_or_else(|_| crate::models::AppConfig::new());
     token_manager
@@ -99,6 +100,7 @@ pub async fn internal_start_proxy_service(
         tracing::info!("🔒 Fixed account mode restored: {}", account_id);
     }
     let active_accounts = token_manager.load_accounts().await.unwrap_or(0);
+    token_manager.restore_persisted_session_bindings();
 
     if active_accounts == 0 {
         let zai_enabled = config.zai.enabled

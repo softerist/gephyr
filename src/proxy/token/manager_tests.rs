@@ -185,6 +185,88 @@ async fn test_sticky_session_skips_bound_account_when_disabled_on_disk_without_r
 
     let _ = std::fs::remove_dir_all(&tmp_root);
 }
+
+#[tokio::test]
+async fn test_session_bindings_persist_and_restore_across_restart() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "antigravity-token-manager-test-session-persist-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(tmp_root.join("accounts")).unwrap();
+
+    let manager1 = TokenManager::new(tmp_root.clone());
+    manager1.update_session_binding_persistence(true);
+    manager1.tokens.insert(
+        "acc1".to_string(),
+        create_test_token("acc1", Some("PRO"), 1.0, None, Some(100)),
+    );
+    manager1
+        .session_accounts
+        .insert("sid-persist".to_string(), "acc1".to_string());
+    manager1.persist_session_bindings_internal();
+
+    let bound_1 = manager1
+        .session_accounts
+        .get("sid-persist")
+        .map(|v| v.clone())
+        .unwrap();
+    assert!(tmp_root.join("session_bindings.json").exists());
+
+    let manager2 = TokenManager::new(tmp_root.clone());
+    manager2.update_session_binding_persistence(true);
+    manager2.tokens.insert(
+        "acc1".to_string(),
+        create_test_token("acc1", Some("PRO"), 1.0, None, Some(100)),
+    );
+    manager2.restore_persisted_session_bindings();
+
+    let bound_2 = manager2
+        .session_accounts
+        .get("sid-persist")
+        .map(|v| v.clone())
+        .unwrap();
+    assert_eq!(bound_2, bound_1);
+
+    let _ = std::fs::remove_dir_all(&tmp_root);
+}
+
+#[tokio::test]
+async fn test_restore_session_bindings_drops_missing_accounts() {
+    let tmp_root = std::env::temp_dir().join(format!(
+        "antigravity-token-manager-test-session-prune-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(tmp_root.join("accounts")).unwrap();
+
+    let manager1 = TokenManager::new(tmp_root.clone());
+    manager1.update_session_binding_persistence(true);
+    manager1.tokens.insert(
+        "acc1".to_string(),
+        create_test_token("acc1", Some("PRO"), 1.0, None, Some(100)),
+    );
+    manager1
+        .session_accounts
+        .insert("sid-prune".to_string(), "acc1".to_string());
+    manager1.persist_session_bindings_internal();
+    assert!(manager1.session_accounts.get("sid-prune").is_some());
+
+    let manager2 = TokenManager::new(tmp_root.clone());
+    manager2.update_session_binding_persistence(true);
+    manager2.tokens.insert(
+        "acc2".to_string(),
+        create_test_token("acc2", Some("PRO"), 1.0, None, Some(100)),
+    );
+    manager2.restore_persisted_session_bindings();
+
+    assert!(manager2.session_accounts.get("sid-prune").is_none());
+    let persisted: HashMap<String, String> = serde_json::from_str(
+        &std::fs::read_to_string(tmp_root.join("session_bindings.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(persisted.get("sid-prune").is_none());
+
+    let _ = std::fs::remove_dir_all(&tmp_root);
+}
 fn create_test_token(
     email: &str,
     tier: Option<&str>,

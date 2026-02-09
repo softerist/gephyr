@@ -140,8 +140,18 @@ impl TokenManager {
     pub async fn get_circuit_breaker_config(&self) -> crate::models::CircuitBreakerConfig {
         crate::proxy::token::control::get_circuit_breaker_config(&self.circuit_breaker_config).await
     }
+    pub fn update_session_binding_persistence(&self, enabled: bool) {
+        self.set_persist_session_bindings_enabled(enabled);
+        if !enabled {
+            self.clear_persisted_session_bindings_file();
+        }
+    }
+    pub fn restore_persisted_session_bindings(&self) {
+        self.restore_session_bindings_internal();
+    }
     pub fn clear_all_sessions(&self) {
         crate::proxy::token::control::clear_all_sessions(self.session_accounts.as_ref());
+        self.persist_session_bindings_internal();
     }
     pub async fn set_preferred_account(&self, account_id: Option<String>) {
         crate::proxy::token::control::set_preferred_account(&self.preferred_account_id, account_id)
@@ -185,6 +195,7 @@ impl TokenManager {
             block_until,
             reason,
         )?;
+        self.persist_session_bindings_internal();
 
         tracing::info!(
             "🚫 Account {} validation blocked until {} (reason: {})",

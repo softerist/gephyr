@@ -68,6 +68,7 @@ impl TokenManager {
                     reset_sec
                 );
                 self.session_accounts.remove(sid);
+                self.persist_session_bindings_internal();
                 return None;
             }
 
@@ -98,6 +99,7 @@ impl TokenManager {
                     req.target_model
                 );
                 self.session_accounts.remove(sid);
+                self.persist_session_bindings_internal();
             }
 
             return None;
@@ -107,6 +109,7 @@ impl TokenManager {
             sid
         );
         self.session_accounts.remove(sid);
+        self.persist_session_bindings_internal();
         None
     }
 
@@ -171,6 +174,7 @@ impl TokenManager {
             if let Some(sid) = req.session_id {
                 self.session_accounts
                     .insert(sid.to_string(), selected.account_id.clone());
+                self.persist_session_bindings_internal();
                 tracing::debug!(
                     "Sticky Session: Bound new account {} to session {}",
                     selected.email,

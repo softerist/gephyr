@@ -25,6 +25,10 @@ From `src/lib.rs` and `src/proxy/server.rs`:
 - `ABV_PUBLIC_URL`
 - `ABV_DATA_DIR`
 
+From `proxy` config (`src/proxy/config.rs`):
+
+- `persist_session_bindings` (default: `true`) controls whether sticky session bindings are persisted across process restarts.
+
 ## Middleware Stack
 
 Proxy routes (`src/proxy/routes/mod.rs`) apply:
@@ -61,6 +65,7 @@ From `src/proxy/token/*`:
 - P2C candidate selection
 - fallback delay + optimistic reset path
 - model-scoped rate-limit checks are applied in sticky reuse, preferred selection, and rotation fallback paths
+- sticky session bindings can be persisted to disk and restored on startup when `persist_session_bindings=true`
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
 

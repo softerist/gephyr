@@ -302,6 +302,8 @@ pub struct ProxyConfig {
     pub user_agent_override: Option<String>,
     #[serde(default)]
     pub scheduling: crate::proxy::sticky_config::StickySessionConfig,
+    #[serde(default = "default_true")]
+    pub persist_session_bindings: bool,
     #[serde(default)]
     pub experimental: ExperimentalConfig,
     #[serde(default)]
@@ -338,6 +340,7 @@ impl Default for ProxyConfig {
             upstream_proxy: UpstreamProxyConfig::default(),
             zai: ZaiConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
+            persist_session_bindings: true,
             experimental: ExperimentalConfig::default(),
             security_monitor: SecurityMonitorConfig::default(),
             preferred_account_id: None,

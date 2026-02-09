@@ -3,7 +3,7 @@ use crate::proxy::sticky_config::StickySessionConfig;
 pub use crate::proxy::token::types::ProxyToken;
 use dashmap::DashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 pub struct TokenManager {
@@ -14,6 +14,7 @@ pub struct TokenManager {
     rate_limit_tracker: Arc<RateLimitTracker>,
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>,
     session_accounts: Arc<DashMap<String, String>>,
+    persist_session_bindings: Arc<AtomicBool>,
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>,
     health_scores: Arc<DashMap<String, f32>>,
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>,
@@ -30,6 +31,7 @@ impl TokenManager {
             rate_limit_tracker: Arc::new(RateLimitTracker::new()),
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
+            persist_session_bindings: Arc::new(AtomicBool::new(false)),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)),
             health_scores: Arc::new(DashMap::new()),
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
@@ -37,6 +39,108 @@ impl TokenManager {
             )),
             auto_cleanup_handle: Arc::new(tokio::sync::Mutex::new(None)),
             cancel_token: CancellationToken::new(),
+        }
+    }
+    pub(super) fn set_persist_session_bindings_enabled(&self, enabled: bool) {
+        self.persist_session_bindings
+            .store(enabled, Ordering::Relaxed);
+    }
+    pub(super) fn clear_persisted_session_bindings_file(&self) {
+        let path = self.data_dir.join("session_bindings.json");
+        let tmp_path = self.data_dir.join("session_bindings.json.tmp");
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(tmp_path);
+    }
+    pub(super) fn persist_session_bindings_internal(&self) {
+        if !self.persist_session_bindings.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let bindings: std::collections::HashMap<String, String> = self
+            .session_accounts
+            .iter()
+            .map(|kv| (kv.key().clone(), kv.value().clone()))
+            .collect();
+        let path = self.data_dir.join("session_bindings.json");
+        let tmp_path = self.data_dir.join("session_bindings.json.tmp");
+
+        if let Err(e) = std::fs::create_dir_all(&self.data_dir) {
+            tracing::warn!(
+                "Failed to create data directory for session bindings persistence: {}",
+                e
+            );
+            return;
+        }
+        let content = match serde_json::to_string_pretty(&bindings) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Failed to serialize session bindings: {}", e);
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&tmp_path, content) {
+            tracing::warn!("Failed to write session bindings temp file: {}", e);
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp_path, &path) {
+            // Windows rename fails when destination exists; fall back to replace semantics.
+            let _ = std::fs::remove_file(&path);
+            if let Err(e2) = std::fs::rename(&tmp_path, &path) {
+                tracing::warn!(
+                    "Failed to move session bindings temp file into place: {} / {}",
+                    e,
+                    e2
+                );
+                let _ = std::fs::remove_file(&tmp_path);
+            }
+        }
+    }
+    pub(super) fn restore_session_bindings_internal(&self) {
+        if !self.persist_session_bindings.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let path = self.data_dir.join("session_bindings.json");
+        let content = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!("Failed to read persisted session bindings: {}", e);
+                }
+                return;
+            }
+        };
+        let persisted: std::collections::HashMap<String, String> =
+            match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("Failed to parse persisted session bindings JSON: {}", e);
+                    return;
+                }
+            };
+
+        self.session_accounts.clear();
+        let valid_accounts: std::collections::HashSet<String> =
+            self.tokens.iter().map(|e| e.key().clone()).collect();
+        let mut restored = 0usize;
+        let mut dropped = 0usize;
+        for (session_id, account_id) in persisted {
+            if valid_accounts.contains(&account_id) {
+                self.session_accounts.insert(session_id, account_id);
+                restored += 1;
+            } else {
+                dropped += 1;
+            }
+        }
+        if restored > 0 || dropped > 0 {
+            tracing::info!(
+                "Session bindings restored: restored={}, dropped={}",
+                restored,
+                dropped
+            );
+        }
+        if dropped > 0 {
+            self.persist_session_bindings_internal();
         }
     }
     pub async fn start_auto_cleanup(&self) {
@@ -89,6 +193,7 @@ impl TokenManager {
             &self.preferred_account_id,
             account_id,
         );
+        self.persist_session_bindings_internal();
     }
     #[cfg(test)]
     pub fn get_model_quota_from_json_for_test(
