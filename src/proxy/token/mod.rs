@@ -16,5 +16,4 @@ pub mod types;
 pub(crate) mod warmup;
 
 pub use manager::TokenManager;
-#[allow(unused_imports)]
-pub use types::ProxyToken;
+

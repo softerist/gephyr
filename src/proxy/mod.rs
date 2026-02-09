@@ -23,13 +23,9 @@ pub mod sticky_config;
 pub mod token;
 pub mod upstream;
 
-#[allow(unused_imports)]
 pub use config::{
-    get_thinking_budget_config, update_thinking_budget_config, ProxyAuthMode, ProxyConfig,
-    ProxyPoolConfig, ThinkingBudgetConfig, ThinkingBudgetMode, ZaiConfig, ZaiDispatchMode,
+    update_thinking_budget_config, ProxyAuthMode, ProxyConfig, ZaiConfig, ZaiDispatchMode,
 };
-#[allow(unused_imports)]
-pub use proxy_pool::{get_global_proxy_pool, init_global_proxy_pool, ProxyPoolManager};
 pub use security::ProxySecurityConfig;
 pub use server::{AxumServer, AxumStartConfig};
 pub use signature_cache::SignatureCache;
@@ -37,3 +33,4 @@ pub use token::TokenManager;
 
 #[cfg(test)]
 pub mod tests;
+

@@ -6,11 +6,13 @@ use serde_json::{json, Value};
 use std::pin::Pin;
 use tracing::debug;
 use uuid::Uuid;
+
+use crate::proxy::signature_cache::SignatureCache;
 pub fn store_thought_signature(sig: &str, session_id: &str, message_count: usize) {
     if sig.is_empty() {
         return;
     }
-    crate::proxy::SignatureCache::global().cache_session_signature(
+    SignatureCache::global().cache_session_signature(
         session_id,
         sig.to_string(),
         message_count,
@@ -452,3 +454,4 @@ pub fn create_codex_sse_stream(
     };
     Box::pin(stream)
 }
+

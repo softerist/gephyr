@@ -5,7 +5,7 @@ mod tests {
 
     use crate::models::QuotaProtectionConfig;
     use crate::proxy::common::model_mapping::normalize_to_standard_id;
-    use crate::proxy::token::ProxyToken;
+    use crate::proxy::token::types::ProxyToken;
 
     fn create_mock_token(
         account_id: &str,

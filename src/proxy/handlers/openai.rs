@@ -8,7 +8,7 @@ use tracing::{debug, error, info};
 
 use crate::proxy::debug_logger;
 use crate::proxy::mappers::openai::{
-    transform_openai_request, transform_openai_response, OpenAIRequest,
+    transform_openai_request, transform_openai_response, OpenAIContent, OpenAIMessage, OpenAIRequest,
 };
 use crate::proxy::state::{ModelCatalogState, OpenAIHandlerState};
 
@@ -72,9 +72,9 @@ pub async fn handle_chat_completions(
         debug!("Received request with empty messages, injecting fallback...");
         openai_req
             .messages
-            .push(crate::proxy::mappers::openai::OpenAIMessage {
+            .push(OpenAIMessage {
                 role: "user".to_string(),
-                content: Some(crate::proxy::mappers::openai::OpenAIContent::String(
+                content: Some(OpenAIContent::String(
                     " ".to_string(),
                 )),
                 reasoning_content: None,
@@ -150,7 +150,7 @@ pub async fn handle_chat_completions(
         {
             Ok(t) => t,
             Err(e) => {
-                return Ok(crate::proxy::handlers::errors::text_error_response(
+                return Ok(super::errors::text_error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
                     &format!("Token error: {}", e),
                     None,
@@ -267,9 +267,9 @@ pub async fn handle_chat_completions(
                     session_id,
                     message_count,
                 );
-                let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                let first_data_chunk = match super::streaming::peek_first_data_chunk(
                     &mut openai_stream,
-                    &crate::proxy::handlers::streaming::StreamPeekOptions {
+                    &super::streaming::StreamPeekOptions {
                         timeout: Duration::from_secs(60),
                         context: "OpenAI:chat",
                         fail_on_empty_chunk: false,
@@ -295,7 +295,7 @@ pub async fn handle_chat_completions(
 
                 if client_wants_stream {
                     let body = Body::from_stream(combined_stream);
-                    return Ok(crate::proxy::handlers::streaming::build_sse_response(
+                    return Ok(super::streaming::build_sse_response(
                         body,
                         &email,
                         &mapped_model,
@@ -309,7 +309,7 @@ pub async fn handle_chat_completions(
                         Ok(full_response) => {
                             info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
                             return Ok(
-                                crate::proxy::handlers::streaming::build_json_response_with_headers(
+                                super::streaming::build_json_response_with_headers(
                                     StatusCode::OK,
                                     &full_response,
                                     Some(&email),
@@ -321,7 +321,7 @@ pub async fn handle_chat_completions(
                         }
                         Err(e) => {
                             error!("[{}] Stream collection error: {}", trace_id, e);
-                            return Ok(crate::proxy::handlers::errors::stream_collection_error_response(
+                            return Ok(super::errors::stream_collection_error_response(
                                 &e.to_string(),
                             ));
                         }
@@ -337,7 +337,7 @@ pub async fn handle_chat_completions(
             let openai_response =
                 transform_openai_response(&gemini_resp, Some(&session_id), message_count);
             return Ok(
-                crate::proxy::handlers::streaming::build_json_response_with_headers(
+                super::streaming::build_json_response_with_headers(
                     StatusCode::OK,
                     &openai_response,
                     Some(&email),
@@ -508,14 +508,14 @@ pub async fn handle_chat_completions(
             "OpenAI Upstream non-retryable error {} on account {}: {}",
             status_code, email, error_text
         );
-        return Ok(crate::proxy::handlers::errors::openai_upstream_error_response(
+        return Ok(super::errors::openai_upstream_error_response(
             status,
             &error_text,
             Some(&email),
             Some(&mapped_model),
         ));
     }
-    Ok(crate::proxy::handlers::errors::accounts_exhausted_text_response(
+    Ok(super::errors::accounts_exhausted_text_response(
         &last_error,
         last_email.as_deref(),
         Some(&mapped_model),
@@ -841,9 +841,9 @@ pub async fn handle_completions(
     if openai_req.messages.is_empty() {
         openai_req
             .messages
-            .push(crate::proxy::mappers::openai::OpenAIMessage {
+            .push(OpenAIMessage {
                 role: "user".to_string(),
-                content: Some(crate::proxy::mappers::openai::OpenAIContent::String(
+                content: Some(OpenAIContent::String(
                     " ".to_string(),
                 )),
                 reasoning_content: None,
@@ -974,9 +974,9 @@ pub async fn handle_completions(
                             message_count,
                         )
                     };
-                    let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                    let first_data_chunk = match super::streaming::peek_first_data_chunk(
                         &mut openai_stream,
-                        &crate::proxy::handlers::streaming::StreamPeekOptions {
+                        &super::streaming::StreamPeekOptions {
                             timeout: Duration::from_secs(60),
                             context: "OpenAI:legacy",
                             fail_on_empty_chunk: false,
@@ -1002,7 +1002,7 @@ pub async fn handle_completions(
                     })
                     .chain(openai_stream);
 
-                    return crate::proxy::handlers::streaming::build_sse_response(
+                    return super::streaming::build_sse_response(
                         Body::from_stream(combined_stream),
                         &email,
                         &mapped_model,
@@ -1017,9 +1017,9 @@ pub async fn handle_completions(
                         session_id,
                         message_count,
                     );
-                    let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                    let first_data_chunk = match super::streaming::peek_first_data_chunk(
                         &mut openai_stream,
-                        &crate::proxy::handlers::streaming::StreamPeekOptions {
+                        &super::streaming::StreamPeekOptions {
                             timeout: Duration::from_secs(60),
                             context: "OpenAI:internal",
                             fail_on_empty_chunk: false,
@@ -1050,7 +1050,7 @@ pub async fn handle_completions(
                             let choices = chat_resp.choices.iter().map(|c| {
                                 json!({
                                     "text": match &c.message.content {
-                                        Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
+                                        Some(OpenAIContent::String(s)) => s.clone(),
                                         _ => "".to_string()
                                     },
                                     "index": c.index,
@@ -1068,7 +1068,7 @@ pub async fn handle_completions(
                                 "usage": chat_resp.usage
                             });
 
-                            return crate::proxy::handlers::streaming::build_json_response_with_headers(
+                            return super::streaming::build_json_response_with_headers(
                                 StatusCode::OK,
                                 &legacy_resp,
                                 Some(&email),
@@ -1077,7 +1077,7 @@ pub async fn handle_completions(
                             );
                         }
                         Err(e) => {
-                            return crate::proxy::handlers::errors::stream_collection_error_response(
+                            return super::errors::stream_collection_error_response(
                                 &e.to_string(),
                             );
                         }
@@ -1088,7 +1088,7 @@ pub async fn handle_completions(
             let gemini_resp: Value = match response.json().await {
                 Ok(json) => json,
                 Err(e) => {
-                    return crate::proxy::handlers::errors::parse_error_response(
+                    return super::errors::parse_error_response(
                         &e.to_string(),
                         Some(mapped_model.as_str()),
                     );
@@ -1100,7 +1100,7 @@ pub async fn handle_completions(
             let choices = chat_resp.choices.iter().map(|c| {
                 json!({
                     "text": match &c.message.content {
-                        Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
+                        Some(OpenAIContent::String(s)) => s.clone(),
                         _ => "".to_string()
                     },
                     "index": c.index,
@@ -1118,7 +1118,7 @@ pub async fn handle_completions(
                 "usage": chat_resp.usage
             });
 
-            return crate::proxy::handlers::streaming::build_json_response_with_headers(
+            return super::streaming::build_json_response_with_headers(
                 StatusCode::OK,
                 &legacy_resp,
                 Some(&email),
@@ -1159,7 +1159,7 @@ pub async fn handle_completions(
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
             continue;
         } else {
-            return crate::proxy::handlers::errors::text_error_response(
+            return super::errors::text_error_response(
                 status,
                 &error_text,
                 Some(&email),
@@ -1167,7 +1167,7 @@ pub async fn handle_completions(
             );
         }
     }
-    crate::proxy::handlers::errors::accounts_exhausted_text_response(
+    super::errors::accounts_exhausted_text_response(
         &last_error,
         last_email.as_deref(),
         Some(&mapped_model),
@@ -1177,3 +1177,4 @@ pub async fn handle_completions(
 pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
     build_models_list_response(&state).await
 }
+

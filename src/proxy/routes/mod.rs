@@ -6,6 +6,7 @@ use axum::{
 };
 
 use crate::proxy::handlers;
+use crate::proxy::health;
 use crate::proxy::middleware::{auth_middleware, ip_filter_middleware, monitor_middleware};
 use crate::proxy::state::AppState;
 
@@ -13,8 +14,8 @@ pub use admin::build_admin_routes;
 
 pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/health", get(crate::proxy::health::health_check_handler))
-        .route("/healthz", get(crate::proxy::health::health_check_handler))
+        .route("/health", get(health::health_check_handler))
+        .route("/healthz", get(health::health_check_handler))
         .route("/v1/models", get(handlers::openai::handle_list_models))
         .route(
             "/v1/chat/completions",
@@ -60,3 +61,5 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
             ip_filter_middleware,
         ))
 }
+
+
