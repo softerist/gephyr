@@ -152,6 +152,8 @@ Admin visibility:
 - `GET /api/version/routes` returns running version + key route capabilities (useful to detect old images).
 - `GET /api/proxy/sticky` returns sticky runtime config (`persist_session_bindings`, scheduling, preferred account).
 - `POST /api/proxy/sticky` updates sticky settings only (avoids full `/api/config` round-trip).
+- `GET /api/proxy/request-timeout` returns configured/effective runtime timeout.
+- `POST /api/proxy/request-timeout` updates timeout only (avoids full `/api/config` round-trip).
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
 
@@ -183,6 +185,17 @@ curl -X POST http://127.0.0.1:8045/api/proxy/sticky \
       "mode": "Balance",
       "max_wait_seconds": 60
     }
+  }'
+```
+
+Request-timeout-only update call:
+
+```bash
+curl -X POST http://127.0.0.1:8045/api/proxy/request-timeout \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request_timeout": 120
   }'
 ```
 

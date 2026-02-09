@@ -128,6 +128,8 @@ mod tests {
 
         let (status, body) = send(&router, request).await;
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["routes"]["GET /api/proxy/request-timeout"], true);
+        assert_eq!(body["routes"]["POST /api/proxy/request-timeout"], true);
         assert_eq!(body["routes"]["GET /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["POST /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["GET /api/proxy/compliance"], true);
@@ -270,6 +272,57 @@ mod tests {
         assert_eq!(get_status, StatusCode::OK);
         assert_eq!(get_body["persist_session_bindings"], Value::from(true));
         assert_eq!(get_body["scheduling"]["max_wait_seconds"], Value::from(33));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_request_timeout_post_updates_runtime_snapshot() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let initial_get = Request::builder()
+            .uri("/proxy/request-timeout")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (initial_status, initial_body) = send(&router, initial_get).await;
+        assert_eq!(initial_status, StatusCode::OK);
+        assert!(initial_body["request_timeout"].is_number());
+
+        let post_request = Request::builder()
+            .method("POST")
+            .uri("/proxy/request-timeout")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({ "request_timeout": 45 }).to_string()))
+            .expect("request");
+        let (post_status, post_body) = send(&router, post_request).await;
+        assert_eq!(post_status, StatusCode::OK);
+        assert_eq!(post_body["ok"], true);
+        assert_eq!(post_body["request_timeout"], Value::from(45));
+        assert_eq!(post_body["effective_request_timeout"], Value::from(45));
+
+        let get_request = Request::builder()
+            .uri("/proxy/request-timeout")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (get_status, get_body) = send(&router, get_request).await;
+        assert_eq!(get_status, StatusCode::OK);
+        assert_eq!(get_body["request_timeout"], Value::from(45));
+        assert_eq!(get_body["effective_request_timeout"], Value::from(45));
+
+        let bad_post = Request::builder()
+            .method("POST")
+            .uri("/proxy/request-timeout")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({ "request_timeout": 0 }).to_string()))
+            .expect("request");
+        let (bad_status, _) = send(&router, bad_post).await;
+        assert_eq!(bad_status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test(flavor = "current_thread")]

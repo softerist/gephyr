@@ -1,10 +1,11 @@
+use super::audit;
 use crate::models::AppConfig;
 use crate::modules::system::config;
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
     extract::{Json, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -27,8 +28,10 @@ pub(crate) struct SaveConfigWrapper {
 
 pub(crate) async fn admin_save_config(
     State(state): State<AdminState>,
+    headers: HeaderMap,
     Json(payload): Json<SaveConfigWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
     let mut new_config = payload.config;
     let existing_config = config::load_app_config().map_err(|e| {
         (
@@ -83,6 +86,15 @@ pub(crate) async fn admin_save_config(
     } else {
         state.core.token_manager.set_preferred_account(None).await;
     }
+    audit::log_admin_audit(
+        "save_config",
+        &actor,
+        serde_json::json!({
+            "before": audit::summarize_proxy_config(&existing_config.proxy),
+            "after": audit::summarize_proxy_config(&new_config.proxy),
+            "warnings": warnings,
+        }),
+    );
 
     Ok(Json(serde_json::json!({
         "ok": true,

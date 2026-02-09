@@ -6,11 +6,52 @@ use axum::{
 use crate::proxy::state::AppState;
 use crate::proxy::{admin, health};
 
+const ADMIN_PATH_HEALTH: &str = "/health";
+const ADMIN_PATH_VERSION_ROUTES: &str = "/version/routes";
+const ADMIN_PATH_CONFIG: &str = "/config";
+const ADMIN_PATH_PROXY_STATUS: &str = "/proxy/status";
+const ADMIN_PATH_PROXY_REQUEST_TIMEOUT: &str = "/proxy/request-timeout";
+const ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR: &str = "/proxy/session-bindings/clear";
+const ADMIN_PATH_PROXY_SESSION_BINDINGS: &str = "/proxy/session-bindings";
+const ADMIN_PATH_PROXY_STICKY: &str = "/proxy/sticky";
+const ADMIN_PATH_PROXY_COMPLIANCE: &str = "/proxy/compliance";
+
+const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
+    ("GET", ADMIN_PATH_HEALTH),
+    ("GET", ADMIN_PATH_CONFIG),
+    ("POST", ADMIN_PATH_CONFIG),
+    ("GET", ADMIN_PATH_PROXY_REQUEST_TIMEOUT),
+    ("POST", ADMIN_PATH_PROXY_REQUEST_TIMEOUT),
+    ("GET", ADMIN_PATH_PROXY_STICKY),
+    ("POST", ADMIN_PATH_PROXY_STICKY),
+    ("GET", ADMIN_PATH_PROXY_SESSION_BINDINGS),
+    ("POST", ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR),
+    ("GET", ADMIN_PATH_PROXY_COMPLIANCE),
+    ("POST", ADMIN_PATH_PROXY_COMPLIANCE),
+    ("GET", ADMIN_PATH_PROXY_STATUS),
+    ("GET", ADMIN_PATH_VERSION_ROUTES),
+];
+
+pub fn admin_version_route_capabilities() -> serde_json::Map<String, serde_json::Value> {
+    VERSION_ROUTE_CAPABILITIES
+        .iter()
+        .map(|(method, path)| {
+            (
+                format!("{} /api{}", method, path),
+                serde_json::Value::Bool(true),
+            )
+        })
+        .collect()
+}
+
 pub fn build_admin_routes(state: AppState) -> Router<AppState> {
     add_legacy_stats_alias_routes(
         Router::new()
-            .route("/health", get(health::health_check_handler))
-            .route("/version/routes", get(admin::admin_get_version_routes))
+            .route(ADMIN_PATH_HEALTH, get(health::health_check_handler))
+            .route(
+                ADMIN_PATH_VERSION_ROUTES,
+                get(admin::admin_get_version_routes),
+            )
             .route(
                 "/accounts",
                 get(admin::admin_list_accounts).post(admin::admin_add_account),
@@ -59,7 +100,7 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
             )
             .route("/accounts/sync/db", post(admin::admin_sync_account_from_db))
             .route(
-                "/config",
+                ADMIN_PATH_CONFIG,
                 get(admin::admin_get_config).post(admin::admin_save_config),
             )
             .route("/proxy/cli/status", post(admin::admin_get_cli_sync_status))
@@ -85,7 +126,12 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
                 "/proxy/opencode/config",
                 post(admin::admin_get_opencode_config_content),
             )
-            .route("/proxy/status", get(admin::admin_get_proxy_status))
+            .route(ADMIN_PATH_PROXY_STATUS, get(admin::admin_get_proxy_status))
+            .route(
+                ADMIN_PATH_PROXY_REQUEST_TIMEOUT,
+                get(admin::admin_get_proxy_request_timeout)
+                    .post(admin::admin_update_proxy_request_timeout),
+            )
             .route(
                 "/proxy/pool/config",
                 get(admin::admin_get_proxy_pool_config),
@@ -115,20 +161,20 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
                 post(admin::admin_generate_api_key),
             )
             .route(
-                "/proxy/session-bindings/clear",
+                ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR,
                 post(admin::admin_clear_proxy_session_bindings),
             )
             .route(
-                "/proxy/session-bindings",
+                ADMIN_PATH_PROXY_SESSION_BINDINGS,
                 get(admin::admin_get_proxy_session_bindings),
             )
             .route(
-                "/proxy/sticky",
+                ADMIN_PATH_PROXY_STICKY,
                 get(admin::admin_get_proxy_sticky_config)
                     .post(admin::admin_update_proxy_sticky_config),
             )
             .route(
-                "/proxy/compliance",
+                ADMIN_PATH_PROXY_COMPLIANCE,
                 get(admin::admin_get_proxy_compliance_debug)
                     .post(admin::admin_update_proxy_compliance),
             )

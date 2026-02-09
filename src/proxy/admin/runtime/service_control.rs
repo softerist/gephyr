@@ -1,12 +1,15 @@
+use super::audit;
 use crate::modules::system::logger;
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
     extract::{Json, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::Ordering;
 pub(crate) async fn admin_get_proxy_status(
     State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
@@ -22,21 +25,10 @@ pub(crate) async fn admin_get_proxy_status(
 }
 
 pub(crate) async fn admin_get_version_routes() -> impl IntoResponse {
+    let routes = crate::proxy::routes::admin_version_route_capabilities();
     Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "routes": {
-            "GET /api/health": true,
-            "GET /api/config": true,
-            "POST /api/config": true,
-            "GET /api/proxy/sticky": true,
-            "POST /api/proxy/sticky": true,
-            "GET /api/proxy/session-bindings": true,
-            "POST /api/proxy/session-bindings/clear": true,
-            "GET /api/proxy/compliance": true,
-            "POST /api/proxy/compliance": true,
-            "GET /api/proxy/status": true,
-            "GET /api/version/routes": true
-        }
+        "routes": routes
     }))
 }
 
@@ -78,10 +70,52 @@ pub(crate) struct UpdateMappingWrapper {
     config: crate::proxy::config::ProxyConfig,
 }
 
+fn model_mapping_change_details(
+    before: &HashMap<String, String>,
+    after: &HashMap<String, String>,
+) -> serde_json::Value {
+    let before_keys: BTreeSet<String> = before.keys().cloned().collect();
+    let after_keys: BTreeSet<String> = after.keys().cloned().collect();
+
+    let mut added: Vec<String> = after_keys.difference(&before_keys).cloned().collect();
+    let mut removed: Vec<String> = before_keys.difference(&after_keys).cloned().collect();
+    let mut updated: Vec<String> = after_keys
+        .intersection(&before_keys)
+        .filter_map(|key| {
+            let before_value = before.get(key)?;
+            let after_value = after.get(key)?;
+            if before_value != after_value {
+                Some(key.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    added.sort();
+    removed.sort();
+    updated.sort();
+
+    serde_json::json!({
+        "before_entries": before.len(),
+        "after_entries": after.len(),
+        "delta": {
+            "added_count": added.len(),
+            "removed_count": removed.len(),
+            "updated_count": updated.len(),
+            "added_models": added,
+            "removed_models": removed,
+            "updated_models": updated
+        }
+    })
+}
+
 pub(crate) async fn admin_update_model_mapping(
     State(state): State<AdminState>,
+    headers: HeaderMap,
     Json(payload): Json<UpdateMappingWrapper>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
     let config = payload.config;
     {
         let mut mapping = state.config.custom_mapping.write().await;
@@ -94,6 +128,7 @@ pub(crate) async fn admin_update_model_mapping(
         )
     })?;
 
+    let before_mapping = app_config.proxy.custom_mapping.clone();
     app_config.proxy.custom_mapping = config.custom_mapping;
 
     crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
@@ -104,6 +139,11 @@ pub(crate) async fn admin_update_model_mapping(
     })?;
 
     logger::log_info("[API] Model mapping hot-reloaded via API and saved");
+    audit::log_admin_audit(
+        "update_model_mapping",
+        &actor,
+        model_mapping_change_details(&before_mapping, &app_config.proxy.custom_mapping),
+    );
     Ok(StatusCode::OK)
 }
 
@@ -149,8 +189,10 @@ pub(crate) struct UpdateStickyConfigRequest {
 
 pub(crate) async fn admin_update_proxy_sticky_config(
     State(state): State<AdminState>,
+    headers: HeaderMap,
     Json(payload): Json<UpdateStickyConfigRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
     if payload.persist_session_bindings.is_none() && payload.scheduling.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -167,6 +209,8 @@ pub(crate) async fn admin_update_proxy_sticky_config(
             Json(ErrorResponse { error: e }),
         )
     })?;
+    let before_persist = app_config.proxy.persist_session_bindings;
+    let before_scheduling = app_config.proxy.scheduling.clone();
 
     if let Some(enabled) = payload.persist_session_bindings {
         app_config.proxy.persist_session_bindings = enabled;
@@ -210,6 +254,20 @@ pub(crate) async fn admin_update_proxy_sticky_config(
 
     let sticky = state.core.token_manager.get_sticky_debug_snapshot();
     logger::log_info("[API] Sticky config updated via API and saved");
+    audit::log_admin_audit(
+        "update_proxy_sticky",
+        &actor,
+        serde_json::json!({
+            "before": {
+                "persist_session_bindings": before_persist,
+                "scheduling": before_scheduling
+            },
+            "after": {
+                "persist_session_bindings": sticky.persist_session_bindings,
+                "scheduling": sticky.scheduling
+            }
+        }),
+    );
     Ok(Json(serde_json::json!({
         "ok": true,
         "saved": true,
@@ -218,6 +276,98 @@ pub(crate) async fn admin_update_proxy_sticky_config(
             "persist_session_bindings": sticky.persist_session_bindings,
             "scheduling": sticky.scheduling
         }
+    })))
+}
+
+pub(crate) async fn admin_get_proxy_request_timeout(
+    State(state): State<AdminState>,
+) -> impl IntoResponse {
+    let timeout = state.config.request_timeout_secs();
+    Json(serde_json::json!({
+        "request_timeout": timeout,
+        "effective_request_timeout": timeout.max(5)
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct UpdateRequestTimeoutRequest {
+    #[serde(default, alias = "requestTimeout", alias = "requestTimeoutSeconds")]
+    request_timeout: Option<u64>,
+    #[serde(default, alias = "request_timeout_seconds")]
+    request_timeout_seconds: Option<u64>,
+}
+
+pub(crate) async fn admin_update_proxy_request_timeout(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateRequestTimeoutRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+    let request_timeout = payload
+        .request_timeout
+        .or(payload.request_timeout_seconds)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "request_timeout is required".to_string(),
+                }),
+            )
+        })?;
+
+    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let before_request_timeout = app_config.proxy.request_timeout;
+    app_config.proxy.request_timeout = request_timeout;
+    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
+        let message = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: message }),
+        ));
+    }
+    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    state
+        .config
+        .request_timeout
+        .store(request_timeout, Ordering::Relaxed);
+    logger::log_info("[API] Request timeout updated via API and saved");
+    audit::log_admin_audit(
+        "update_proxy_request_timeout",
+        &actor,
+        serde_json::json!({
+            "before": {
+                "request_timeout": before_request_timeout,
+                "effective_request_timeout": before_request_timeout.max(5)
+            },
+            "after": {
+                "request_timeout": request_timeout,
+                "effective_request_timeout": request_timeout.max(5)
+            }
+        }),
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "saved": true,
+        "message": "Request timeout updated",
+        "request_timeout": request_timeout,
+        "effective_request_timeout": request_timeout.max(5)
     })))
 }
 
@@ -235,8 +385,10 @@ pub(crate) async fn admin_get_proxy_compliance_debug(
 
 pub(crate) async fn admin_update_proxy_compliance(
     State(state): State<AdminState>,
+    headers: HeaderMap,
     Json(compliance): Json<crate::proxy::config::ComplianceConfig>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
     let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -244,6 +396,7 @@ pub(crate) async fn admin_update_proxy_compliance(
         )
     })?;
 
+    let before_compliance = app_config.proxy.compliance.clone();
     app_config.proxy.compliance = compliance.clone();
     if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
         let message = errors
@@ -269,6 +422,14 @@ pub(crate) async fn admin_update_proxy_compliance(
         .update_compliance_config(compliance)
         .await;
     logger::log_info("[API] Compliance config updated via API and saved");
+    audit::log_admin_audit(
+        "update_proxy_compliance",
+        &actor,
+        serde_json::json!({
+            "before": before_compliance,
+            "after": app_config.proxy.compliance
+        }),
+    );
     Ok(Json(serde_json::json!({
         "ok": true,
         "saved": true,
@@ -316,13 +477,25 @@ pub(crate) struct SetPreferredAccountRequest {
 
 pub(crate) async fn admin_set_preferred_account(
     State(state): State<AdminState>,
+    headers: HeaderMap,
     Json(payload): Json<SetPreferredAccountRequest>,
 ) -> impl IntoResponse {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+    let before = state.core.token_manager.get_preferred_account().await;
     state
         .core
         .token_manager
-        .set_preferred_account(payload.account_id)
+        .set_preferred_account(payload.account_id.clone())
         .await;
+    let after = state.core.token_manager.get_preferred_account().await;
+    audit::log_admin_audit(
+        "set_preferred_account",
+        &actor,
+        serde_json::json!({
+            "before": { "preferred_account_id": before },
+            "after": { "preferred_account_id": after }
+        }),
+    );
     StatusCode::OK
 }
 

@@ -32,6 +32,7 @@ Use this when starting a new task quickly and safely.
 7. For low-risk account traffic profile, verify `proxy.compliance.enabled=true` and sane budgets (`max_global_requests_per_minute`, `max_account_requests_per_minute`, `max_account_concurrency`, `risk_cooldown_seconds`, `max_retry_attempts`).
 8. Prefer `POST /api/proxy/compliance` for compliance-only changes instead of posting full `/api/config`.
 9. Prefer `POST /api/proxy/sticky` for stickiness-only changes (`persist_session_bindings`, `scheduling`) instead of posting full `/api/config`.
+10. Prefer `POST /api/proxy/request-timeout` for timeout-only changes instead of posting full `/api/config`.
 
 ## Session Persistence Quick Config
 

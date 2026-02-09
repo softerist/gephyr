@@ -39,10 +39,13 @@ Primary groups:
 - api-key generation
 - config save (`POST /api/config`) now returns `{ ok, saved, message, warnings[] }` and protects against empty `proxy.api_key` lockout by preserving the existing key
 - version/routes capability snapshot (`GET /api/version/routes`)
+- `GET /api/version/routes` is now generated from shared admin-route capability metadata (reduces manual drift risk)
 - sticky runtime snapshot/config update (`GET|POST /api/proxy/sticky`) for scheduling + `persist_session_bindings` without full config round-trip
+- request-timeout runtime snapshot/config update (`GET|POST /api/proxy/request-timeout`) to tune timeout without full config round-trip
 - session bindings debug snapshot (bindings + recent sticky decisions)
 - compliance debug snapshot (live RPM/in-flight/cooldown counters)
 - compliance config update (`POST /api/proxy/compliance`) without full `config` round-trip
+- key mutating admin endpoints emit `[ADMIN_AUDIT]` logs with actor identity and before/after details
 - clear session bindings
 - clear rate limits (all or account)
 - preferred account get/set

@@ -10,6 +10,7 @@ use crate::proxy::health;
 use crate::proxy::middleware::{auth_middleware, ip_filter_middleware, monitor_middleware};
 use crate::proxy::state::AppState;
 
+pub use admin::admin_version_route_capabilities;
 pub use admin::build_admin_routes;
 
 pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
