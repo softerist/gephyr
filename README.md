@@ -158,8 +158,10 @@ Admin visibility:
 - `POST /api/proxy/pool/runtime` updates only proxy-pool runtime knobs (avoids full `/api/config` round-trip).
 - `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
 - `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
+- `GET /api/proxy/metrics` returns runtime/monitor/sticky/compliance aggregates and supported runtime-apply policy values.
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
+- scoped `POST /api/proxy/*` update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`).
 
 Example update call:
 
@@ -231,6 +233,9 @@ Practical notes:
 
 - Keep `scheduling.mode` as `balance` or `cache_first` to use sticky session behavior.
 - `performance_first` intentionally disables sticky session reuse.
+- runtime apply policy mapping:
+- sticky / request-timeout / compliance updates: `always_hot_applied`
+- proxy-pool strategy / runtime updates: `hot_applied_when_safe`
 - `scheduling.max_wait_seconds` keeps sticky binding during short bound-account rate-limit windows; long windows release/rebind.
 - For maximum stickiness from clients, send a stable explicit session id:
 - Header: `x-session-id` (or `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)

@@ -2,7 +2,7 @@
 
 These files split the code-derived capability report into focused sections.
 
-- Master report: `docs/AGENT_CODE_CAPABILITIES_REPORT.md`
+- Master report: `docs/AGENT_CODE_CAPABILITIES.md`
 - Quick-start workflow: `docs/agents/QUICK_START_WORKFLOW.md`
 - API surface: `docs/agents/API_SURFACE.md`
 - Runtime and routing: `docs/agents/RUNTIME_ROUTING.md`

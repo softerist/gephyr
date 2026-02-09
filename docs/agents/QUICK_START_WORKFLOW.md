@@ -8,7 +8,7 @@ Use this when starting a new task quickly and safely.
 2. Read `docs/agents/RUNTIME_ROUTING.md` to understand request flow and middleware order.
 3. Read `docs/agents/API_SURFACE.md` for endpoint coverage and handler ownership.
 4. Read `docs/agents/SECURITY_AUTH.md` before touching auth, tokens, IP rules, or admin exposure.
-5. Use `docs/AGENT_CODE_CAPABILITIES_REPORT.md` only when you need full-system depth.
+5. Use `docs/AGENT_CODE_CAPABILITIES.md` only when you need full-system depth.
 
 ## Read-First by Task Type
 
@@ -16,7 +16,7 @@ Use this when starting a new task quickly and safely.
 - `Task: Fix routing/middleware behavior` -> `docs/agents/RUNTIME_ROUTING.md`, then `docs/agents/EDGE_CASES_DEFECTS.md`
 - `Task: Auth/token/security changes` -> `docs/agents/SECURITY_AUTH.md`, then `docs/agents/EDGE_CASES_DEFECTS.md`
 - `Task: Debug production issue` -> `docs/agents/EDGE_CASES_DEFECTS.md`, then `docs/agents/RUNTIME_ROUTING.md`
-- `Task: Account/proxy-pool/rate-limit behavior` -> `docs/agents/RUNTIME_ROUTING.md`, then `docs/AGENT_CODE_CAPABILITIES_REPORT.md`
+- `Task: Account/proxy-pool/rate-limit behavior` -> `docs/agents/RUNTIME_ROUTING.md`, then `docs/AGENT_CODE_CAPABILITIES.md`
 - `Task: Quick orientation` -> `AGENTS.md`, then `docs/agents/README.md`
 
 ## Execution Checklist

@@ -46,6 +46,8 @@ Main admin groups include:
 - Accounts CRUD/switch/import/export/reorder/quota/proxy-toggle
 - OAuth prepare/start/complete/cancel/manual-code
 - Proxy start/stop/status/mapping/api-key/session/rate-limit/preferred-account
+- Proxy scoped update endpoints expose runtime-apply contract (`runtime_apply.policy`, `runtime_apply.applied`, `runtime_apply.requires_restart`)
+- Proxy metrics snapshot endpoint (`GET /api/proxy/metrics`) exposes runtime/monitor/sticky/compliance aggregates and supported runtime-apply policies
 - Proxy pool config/bindings/bind/unbind/health-check
 - Logs and proxy stats
 - Token stats (hourly/daily/weekly/by-account/by-model/trends/summary/clear)

@@ -4,7 +4,7 @@ This agent guide is derived from `src/` code analysis, not from markdown docs as
 
 ## Start Here
 
-- Full report: `docs/AGENT_CODE_CAPABILITIES_REPORT.md`
+- Full report: `docs/AGENT_CODE_CAPABILITIES.md`
 - Split docs index: `docs/agents/README.md`
 - Quick-start workflow: `docs/agents/QUICK_START_WORKFLOW.md`
 - API-focused: `docs/agents/API_SURFACE.md`

@@ -43,6 +43,7 @@ Primary groups:
 - sticky runtime snapshot/config update (`GET|POST /api/proxy/sticky`) for scheduling + `persist_session_bindings` without full config round-trip
 - request-timeout runtime snapshot/config update (`GET|POST /api/proxy/request-timeout`) to tune timeout without full config round-trip
 - metrics snapshot (`GET /api/proxy/metrics`) with runtime/monitor/sticky/compliance aggregates
+- metrics snapshot also includes `runtime_apply_policies_supported` for policy discovery
 - scoped proxy update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`) for hot-reload transparency
 - session bindings debug snapshot (bindings + recent sticky decisions)
 - compliance debug snapshot (live RPM/in-flight/cooldown counters)
@@ -55,6 +56,7 @@ Primary groups:
 - fetch model list
 - Proxy pool:
 - config, runtime knobs snapshot/update (`GET|POST /api/proxy/pool/runtime`), strategy snapshot/update (`GET|POST /api/proxy/pool/strategy`), list bindings, bind/unbind account, account binding lookup
+- scoped policy note: pool strategy/runtime updates currently return `runtime_apply.policy = hot_applied_when_safe`; sticky/request-timeout/compliance return `always_hot_applied`
 - trigger proxy health check
 - Logs/stats:
 - proxy stats

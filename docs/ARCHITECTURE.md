@@ -73,8 +73,11 @@ Current scoped endpoint policy mapping:
   - sticky config
   - request-timeout
   - compliance config
+- `hot_applied_when_safe`
   - proxy-pool strategy
   - proxy-pool runtime knobs
+- `requires_restart`
+  - currently not assigned to scoped proxy update endpoints (reserved for fields that cannot be safely hot-applied)
 
 API contract for scoped updates includes:
 
@@ -101,6 +104,7 @@ Main selection and control paths:
 Operational snapshot endpoint:
 
 - `GET /api/proxy/metrics` aggregates runtime/monitor/sticky/compliance data.
+- `GET /api/proxy/metrics` also exposes `runtime_apply_policies_supported` for machine-readable policy discovery.
 
 ## Observability and Audit
 
