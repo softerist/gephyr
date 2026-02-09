@@ -16,6 +16,9 @@ ENABLE_ADMIN_API="false"
 NO_BROWSER="false"
 NO_RESTART_AFTER_ROTATE="false"
 AGGRESSIVE_REPAIR="false"
+JSON_OUTPUT="false"
+QUIET="false"
+NO_CACHE="false"
 
 print_help() {
   cat <<'EOF'
@@ -36,6 +39,8 @@ Commands:
   api-test     Run one API test completion
   rotate-key   Generate new API key, save to .env.local, and optionally restart
   docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
+  rebuild      Rebuild Docker image from source
+  version      Show version from Cargo.toml
   logout       Remove linked account(s) via admin API
   logout-and-stop  Logout accounts, then stop container
 
@@ -51,6 +56,9 @@ Options:
   --no-browser           Do not open browser for login command
   --no-restart           Rotate key without restart
   --aggressive           For docker-repair: remove all builder cache (slower next build)
+  --json                 Output machine-readable JSON (for health, accounts)
+  --quiet                Suppress non-essential output (for CI/automation)
+  --no-cache             For rebuild: build without Docker cache
   -h, --help             Show help
 
 Examples:
@@ -58,6 +66,8 @@ Examples:
   ./console.sh login
   ./console.sh logs --tail 200
   ./console.sh rotate-key
+  ./console.sh rebuild
+  ./console.sh rebuild --no-cache
   ./console.sh docker-repair
   ./console.sh docker-repair --aggressive
   ./console.sh logout
@@ -202,14 +212,24 @@ show_logs() {
 
 show_health() {
   ensure_api_key
-  curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/healthz"
-  echo
+  local result
+  result="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/healthz")"
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "$result"
+  else
+    echo "$result" | python3 -m json.tool 2>/dev/null || echo "$result"
+  fi
 }
 
 show_accounts() {
   ensure_api_key
   local payload
   payload="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/accounts")"
+
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "$payload"
+    return 0
+  fi
 
   if command -v python3 >/dev/null 2>&1; then
     python3 - <<'PY' "$payload"
@@ -243,7 +263,6 @@ PY
   else
     echo "$payload"
   fi
-  echo
 }
 
 wait_oauth_account_link() {
@@ -302,9 +321,22 @@ logout_accounts() {
   accounts_json="$(printf '%s' "$accounts_json" | sed '$d')"
 
   if [[ "$http_code" == "404" ]]; then
-    echo "Logout requires admin API. Restart with admin API enabled, then run logout again." >&2
-    exit 1
-  elif [[ "$http_code" == "401" ]]; then
+    echo "Admin API not enabled. Restarting container with admin API..." >&2
+    stop_container
+    start_container "true"
+    if ! wait_service_ready; then
+      echo "Service did not become ready after restart." >&2
+      exit 1
+    fi
+    # Retry after restart
+    accounts_json="$(curl -sS -w $'\n%{http_code}' \
+      -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      "http://127.0.0.1:${PORT}/api/accounts")"
+    http_code="$(printf '%s' "$accounts_json" | tail -n 1)"
+    accounts_json="$(printf '%s' "$accounts_json" | sed '$d')"
+  fi
+
+  if [[ "$http_code" == "401" ]]; then
     echo "Logout failed with 401. API key mismatch. Run restart or rotate-key." >&2
     exit 1
   elif [[ "$http_code" -ge 400 ]]; then
@@ -457,6 +489,50 @@ docker_repair() {
   echo "  docker build -t \"$IMAGE\" -f docker/Dockerfile ."
 }
 
+rebuild() {
+  local dockerfile="$SCRIPT_DIR/docker/Dockerfile"
+  if [[ ! -f "$dockerfile" ]]; then
+    echo "Dockerfile not found at: $dockerfile" >&2
+    exit 1
+  fi
+
+  if [[ "$QUIET" != "true" ]]; then
+    echo "Building Docker image: $IMAGE"
+    if [[ "$NO_CACHE" == "true" ]]; then
+      echo "Mode: no-cache (clean build)"
+    fi
+  fi
+
+  local build_args=("build" "-t" "$IMAGE" "-f" "docker/Dockerfile" ".")
+  if [[ "$NO_CACHE" == "true" ]]; then
+    build_args=("build" "--no-cache" "-t" "$IMAGE" "-f" "docker/Dockerfile" ".")
+  fi
+
+  docker "${build_args[@]}"
+
+  if [[ "$QUIET" != "true" ]]; then
+    echo
+    echo "Build completed: $IMAGE"
+  fi
+}
+
+show_version() {
+  local cargo_toml="$SCRIPT_DIR/Cargo.toml"
+  if [[ ! -f "$cargo_toml" ]]; then
+    echo "Cargo.toml not found at: $cargo_toml" >&2
+    exit 1
+  fi
+
+  local version
+  version="$(grep -E '^version\s*=' "$cargo_toml" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "{\"version\": \"$version\", \"image\": \"$IMAGE\"}"
+  else
+    echo "gephyr $version"
+  fi
+}
+
 if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
   COMMAND="$1"
   shift
@@ -479,6 +555,9 @@ while [[ $# -gt 0 ]]; do
     --no-browser) NO_BROWSER="true"; shift ;;
     --no-restart) NO_RESTART_AFTER_ROTATE="true"; shift ;;
     --aggressive) AGGRESSIVE_REPAIR="true"; shift ;;
+    --json) JSON_OUTPUT="true"; shift ;;
+    --quiet) QUIET="true"; shift ;;
+    --no-cache) NO_CACHE="true"; shift ;;
     -h|--help|-?|\?|/help) COMMAND="help"; shift ;;
     *)
       echo "Unknown argument: $1" >&2
@@ -521,7 +600,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair logout logout-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild logout logout-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -548,6 +627,8 @@ case "$COMMAND" in
   api-test) api_test ;;
   rotate-key) rotate_key ;;
   docker-repair) docker_repair ;;
+  rebuild) rebuild ;;
+  version) show_version ;;
   logout) logout_accounts ;;
   logout-and-stop) logout_and_stop ;;
   *)

@@ -12,7 +12,10 @@ param(
     [string]$Prompt = "hello from gephyr",
     [switch]$NoBrowser,
     [switch]$NoRestartAfterRotate,
-    [switch]$Aggressive
+    [switch]$Aggressive,
+    [switch]$Json,
+    [switch]$Quiet,
+    [switch]$NoCache
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +41,8 @@ Commands:
   api-test     Run one API test completion
   rotate-key   Generate new API key, save to .env.local, and optionally restart
   docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
+  rebuild      Rebuild Docker image from source
+  version      Show version from Cargo.toml
   logout       Remove linked account(s) via admin API
   logout-and-stop  Logout accounts, then stop container
 
@@ -53,12 +58,17 @@ Options:
   -NoBrowser             Do not open browser for login command
   -NoRestartAfterRotate  Rotate key without container restart
   -Aggressive            For docker-repair: remove all builder cache (slower next build)
+  -Json                  Output machine-readable JSON (for status, health, accounts)
+  -Quiet                 Suppress non-essential output (for CI/automation)
+  -NoCache               For rebuild: build without Docker cache
 
 Examples:
   .\console.ps1 start
   .\console.ps1 login
   .\console.ps1 logs -LogLines 200
   .\console.ps1 rotate-key
+  .\console.ps1 rebuild
+  .\console.ps1 rebuild -NoCache
   .\console.ps1 docker-repair
   .\console.ps1 docker-repair -Aggressive
   .\console.ps1 logout
@@ -304,18 +314,34 @@ function Show-Logs {
 }
 
 function Show-Health {
+    param([switch]$AsJson)
     $headers = Get-AuthHeaders
     try {
         $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 10
-        $health | Format-Table -AutoSize
+        if ($AsJson) {
+            $health | ConvertTo-Json -Depth 5
+        } else {
+            $health | Format-Table -AutoSize
+        }
     } catch {
-        throw "Health check failed. If status is 401, your local GEPHYR_API_KEY does not match the running container; run restart or rotate-key."
+        if ($AsJson) {
+            @{ error = "Health check failed" } | ConvertTo-Json
+        } else {
+            throw "Health check failed. If status is 401, your local GEPHYR_API_KEY does not match the running container; run restart or rotate-key."
+        }
     }
 }
 
 function Show-Accounts {
+    param([switch]$AsJson)
     $headers = Get-AuthHeaders
     $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
+
+    if ($AsJson) {
+        $resp | ConvertTo-Json -Depth 5
+        return
+    }
+
     $accounts = @()
     if ($resp -and $resp.accounts) {
         $accounts = @($resp.accounts)
@@ -341,13 +367,19 @@ function Show-Accounts {
 function Logout-Accounts {
     $headers = Get-AuthHeaders
 
-    $accountsResponse = $null
     try {
         $accountsResponse = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
     } catch {
         $msg = $_.Exception.Message
         if ($msg -match "404|Not Found") {
-            throw "Logout requires admin API. Restart with admin API enabled, then run logout again."
+            Write-Host "Admin API not enabled. Restarting container with admin API..." -ForegroundColor Yellow
+            Stop-Container
+            Start-Container -AdminApiEnabled $true
+            if (-not (Wait-ServiceReady)) {
+                throw "Service did not become ready after restart."
+            }
+            # Retry after restart
+            $accountsResponse = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
         } elseif ($msg -match "401|Unauthorized") {
             throw "Logout failed with 401. API key mismatch. Run restart or rotate-key."
         } else {
@@ -517,6 +549,54 @@ function Repair-DockerBuilder {
     Write-Host "  docker build -t $Image -f docker/Dockerfile ." -ForegroundColor Green
 }
 
+function Invoke-Rebuild {
+    param([switch]$UseNoCache)
+
+    $dockerfilePath = Join-Path $PSScriptRoot "docker/Dockerfile"
+    if (-not (Test-Path $dockerfilePath)) {
+        throw "Dockerfile not found at: $dockerfilePath"
+    }
+
+    if (-not $Quiet) {
+        Write-Host "Building Docker image: $Image" -ForegroundColor Cyan
+        if ($UseNoCache) {
+            Write-Host "Mode: no-cache (clean build)" -ForegroundColor Yellow
+        }
+    }
+
+    $buildArgs = @("build", "-t", $Image, "-f", "docker/Dockerfile", ".")
+    if ($UseNoCache) {
+        $buildArgs = @("build", "--no-cache", "-t", $Image, "-f", "docker/Dockerfile", ".")
+    }
+
+    & docker @buildArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker build failed with exit code $LASTEXITCODE"
+    }
+
+    if (-not $Quiet) {
+        Write-Host ""
+        Write-Host "Build completed: $Image" -ForegroundColor Green
+    }
+}
+
+function Show-Version {
+    $cargoPath = Join-Path $PSScriptRoot "Cargo.toml"
+    if (-not (Test-Path $cargoPath)) {
+        throw "Cargo.toml not found at: $cargoPath"
+    }
+
+    $version = Select-String -Path $cargoPath -Pattern '^version\s*=\s*"([^"]+)"' | 
+        ForEach-Object { $_.Matches[0].Groups[1].Value } |
+        Select-Object -First 1
+
+    if ($Json) {
+        @{ version = $version; image = $Image } | ConvertTo-Json
+    } else {
+        Write-Host "gephyr $version"
+    }
+}
+
 Load-EnvLocal
 
 function Test-DockerAvailable {
@@ -578,14 +658,16 @@ switch ($Command) {
     }
     "status" { Show-Status }
     "logs" { Show-Logs }
-    "health" { Show-Health }
+    "health" { Show-Health -AsJson:$Json.IsPresent }
     "login" { Start-OAuthFlow }
     "oauth" { Start-OAuthFlow }
     "auth" { Start-OAuthFlow }
-    "accounts" { Show-Accounts }
+    "accounts" { Show-Accounts -AsJson:$Json.IsPresent }
     "api-test" { Run-ApiTest }
     "rotate-key" { Rotate-ApiKey }
     "docker-repair" { Repair-DockerBuilder -AggressiveMode:$Aggressive.IsPresent }
+    "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }
+    "version" { Show-Version }
     "logout" { Logout-Accounts }
     "logout-and-stop" { Logout-AndStop }
     default { Write-Usage }
