@@ -6,13 +6,22 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
+use tracing::trace;
 pub async fn handle_detect_model(
     State(state): State<ModelCatalogState>,
     Json(body): Json<Value>,
 ) -> Response {
-    let _ = crate::proxy::handlers::traits::all_handler_protocols();
-    let _ = crate::proxy::handlers::traits::protocol_name(
+    let active_protocol = crate::proxy::handlers::traits::protocol_name(
         &crate::proxy::handlers::traits::HandlerProtocol::Claude,
+    );
+    let supported_protocols: Vec<&'static str> = crate::proxy::handlers::traits::all_handler_protocols()
+        .iter()
+        .map(crate::proxy::handlers::traits::protocol_name)
+        .collect();
+    trace!(
+        protocol = active_protocol,
+        supported = ?supported_protocols,
+        "handle_detect_model invoked"
     );
     let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
 
