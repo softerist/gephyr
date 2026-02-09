@@ -419,14 +419,15 @@ pub fn transform_claude_request_in(
     );
     let contents = build_google_contents(
         &claude_req.messages,
-        claude_req,
         &mut tool_id_to_name,
         &tool_name_to_schema,
-        is_thinking_enabled,
-        allow_dummy_thought,
-        &mapped_model,
-        &session_id,
-        is_retry,
+        GoogleContentsOptions {
+            is_thinking_enabled,
+            allow_dummy_thought,
+            mapped_model: &mapped_model,
+            session_id: &session_id,
+            is_retry,
+        },
     )?;
     let tools = build_tools(&claude_req.tools, has_web_search_tool)?;
     let safety_settings = build_safety_settings();
@@ -633,23 +634,29 @@ fn build_system_instruction(
         "parts": parts
     }))
 }
-#[allow(clippy::too_many_arguments)]
+struct BuildContentsContext<'a> {
+    is_thinking_enabled: bool,
+    session_id: &'a str,
+    allow_dummy_thought: bool,
+    is_retry: bool,
+    tool_name_to_schema: &'a HashMap<String, Value>,
+    mapped_model: &'a str,
+    existing_tool_result_ids: &'a std::collections::HashSet<String>,
+}
+
+struct BuildContentsState<'a> {
+    tool_id_to_name: &'a mut HashMap<String, String>,
+    last_thought_signature: &'a mut Option<String>,
+    pending_tool_use_ids: &'a mut Vec<String>,
+    last_user_task_text_normalized: &'a mut Option<String>,
+    previous_was_tool_result: &'a mut bool,
+}
+
 fn build_contents(
     content: &MessageContent,
     is_assistant: bool,
-    _claude_req: &ClaudeRequest,
-    is_thinking_enabled: bool,
-    session_id: &str,
-    allow_dummy_thought: bool,
-    is_retry: bool,
-    tool_id_to_name: &mut HashMap<String, String>,
-    tool_name_to_schema: &HashMap<String, Value>,
-    mapped_model: &str,
-    last_thought_signature: &mut Option<String>,
-    pending_tool_use_ids: &mut Vec<String>,
-    last_user_task_text_normalized: &mut Option<String>,
-    previous_was_tool_result: &mut bool,
-    _existing_tool_result_ids: &std::collections::HashSet<String>,
+    ctx: &BuildContentsContext<'_>,
+    state: &mut BuildContentsState<'_>,
 ) -> Result<Vec<Value>, String> {
     let mut parts = Vec::new();
     let mut current_turn_tool_result_ids = std::collections::HashSet::new();
@@ -666,8 +673,8 @@ fn build_contents(
                 match item {
                     ContentBlock::Text { text } => {
                         if text != "(no content)" {
-                            if !is_assistant && *previous_was_tool_result {
-                                if let Some(last_task) = last_user_task_text_normalized {
+                            if !is_assistant && *state.previous_was_tool_result {
+                                if let Some(last_task) = state.last_user_task_text_normalized {
                                     let current_normalized =
                                         text.replace(|c: char| c.is_whitespace(), "");
                                     if !current_normalized.is_empty()
@@ -682,10 +689,10 @@ fn build_contents(
                             parts.push(json!({"text": text}));
                             saw_non_thinking = true;
                             if !is_assistant {
-                                *last_user_task_text_normalized =
+                                *state.last_user_task_text_normalized =
                                     Some(text.replace(|c: char| c.is_whitespace(), ""));
                             }
-                            *previous_was_tool_result = false;
+                            *state.previous_was_tool_result = false;
                         }
                     }
                     ContentBlock::Thinking {
@@ -707,7 +714,7 @@ fn build_contents(
                             }
                             continue;
                         }
-                        if !is_thinking_enabled {
+                        if !ctx.is_thinking_enabled {
                             tracing::warn!("[Claude-Request] Thinking disabled. Downgrading thinking block to text.");
                             if !thinking.is_empty() {
                                 parts.push(json!({
@@ -740,19 +747,20 @@ fn build_contents(
                             match cached_family {
                                 Some(family) => {
                                     let compatible =
-                                        !is_retry && is_model_compatible(&family, mapped_model);
+                                        !ctx.is_retry
+                                            && is_model_compatible(&family, ctx.mapped_model);
 
                                     if !compatible {
                                         tracing::warn!(
                                             "[Thinking-Signature] {} signature (Family: {}, Target: {}). Downgrading to text.",
-                                            if is_retry { "Stripping historical" } else { "Incompatible" },
-                                            family, mapped_model
+                                            if ctx.is_retry { "Stripping historical" } else { "Incompatible" },
+                                            family, ctx.mapped_model
                                         );
                                         parts.push(json!({"text": thinking}));
                                         saw_non_thinking = true;
                                         continue;
                                     }
-                                    *last_thought_signature = Some(sig.clone());
+                                    *state.last_thought_signature = Some(sig.clone());
                                     let mut part = json!({
                                         "text": thinking,
                                         "thought": true,
@@ -767,7 +775,7 @@ fn build_contents(
                                             "[Thinking-Signature] Unknown signature origin but valid length (len: {}), using as-is for JSON tool calling.",
                                             sig.len()
                                         );
-                                        *last_thought_signature = Some(sig.clone());
+                                        *state.last_thought_signature = Some(sig.clone());
                                         let mut part = json!({
                                             "text": thinking,
                                             "thought": true,
@@ -834,7 +842,7 @@ fn build_contents(
                         ..
                     } => {
                         let mut final_input = input.clone();
-                        if let Some(original_schema) = tool_name_to_schema.get(name) {
+                        if let Some(original_schema) = ctx.tool_name_to_schema.get(name) {
                             crate::proxy::common::json_schema::fix_tool_call_args(
                                 &mut final_input,
                                 original_schema,
@@ -850,18 +858,18 @@ fn build_contents(
                         });
                         saw_non_thinking = true;
                         if is_assistant {
-                            pending_tool_use_ids.push(id.clone());
+                            state.pending_tool_use_ids.push(id.clone());
                         }
-                        tool_id_to_name.insert(id.clone(), name.clone());
+                        state.tool_id_to_name.insert(id.clone(), name.clone());
                         let final_sig = signature.as_ref()
-                            .or(last_thought_signature.as_ref())
+                            .or(state.last_thought_signature.as_ref())
                             .cloned()
                             .or_else(|| {
-                                crate::proxy::SignatureCache::global().get_session_signature(session_id)
+                                crate::proxy::SignatureCache::global().get_session_signature(ctx.session_id)
                                     .inspect(|s| {
                                         tracing::info!(
                                             "[Claude-Request] Recovered signature from SESSION cache (session: {}, len: {})",
-                                            session_id, s.len()
+                                            ctx.session_id, s.len()
                                         );
                                     })
                             })
@@ -883,7 +891,7 @@ fn build_contents(
                                 global_sig
                             });
                         if let Some(sig) = final_sig {
-                            if is_retry && signature.is_none() {
+                            if ctx.is_retry && signature.is_none() {
                                 tracing::warn!("[Tool-Signature] Skipping signature backfill for tool_use: {} during retry.", id);
                             } else if sig.len() < MIN_SIGNATURE_LENGTH {
                                 tracing::warn!(
@@ -896,12 +904,12 @@ fn build_contents(
 
                                 let should_use_sig = match cached_family {
                                     Some(family) => {
-                                        if is_model_compatible(&family, mapped_model) {
+                                        if is_model_compatible(&family, ctx.mapped_model) {
                                             true
                                         } else {
                                             tracing::warn!(
                                                 "[Tool-Signature] Incompatible signature for tool_use: {} (Family: {}, Target: {})",
-                                                id, family, mapped_model
+                                                id, family, ctx.mapped_model
                                             );
                                             false
                                         }
@@ -913,7 +921,7 @@ fn build_contents(
                                                 sig.len(), id
                                             );
                                             true
-                                        } else if is_thinking_enabled {
+                                        } else if ctx.is_thinking_enabled {
                                             tracing::warn!(
                                                 "[Tool-Signature] Unknown signature origin and too short for tool_use: {} (len: {}). Dropping in thinking mode.",
                                                 id, sig.len()
@@ -929,8 +937,8 @@ fn build_contents(
                                 }
                             }
                         } else {
-                            let is_google_cloud = mapped_model.starts_with("projects/");
-                            if is_thinking_enabled && !is_google_cloud {
+                            let is_google_cloud = ctx.mapped_model.starts_with("projects/");
+                            if ctx.is_thinking_enabled && !is_google_cloud {
                                 tracing::debug!("[Tool-Signature] Adding GEMINI_SKIP_SIGNATURE for tool_use: {}", id);
                                 part["thoughtSignature"] =
                                     json!("skip_thought_signature_validator");
@@ -945,7 +953,8 @@ fn build_contents(
                         ..
                     } => {
                         current_turn_tool_result_ids.insert(tool_use_id.clone());
-                        let func_name = tool_id_to_name
+                        let func_name = state
+                            .tool_id_to_name
                             .get(tool_use_id)
                             .cloned()
                             .unwrap_or_else(|| tool_use_id.clone());
@@ -1006,12 +1015,12 @@ fn build_contents(
                                 "id": tool_use_id
                             }
                         }));
-                        if let Some(sig) = last_thought_signature.as_ref() {
+                        if let Some(sig) = state.last_thought_signature.as_ref() {
                             if let Some(last_part) = parts.last_mut() {
                                 last_part["thoughtSignature"] = json!(sig);
                             }
                         }
-                        *previous_was_tool_result = true;
+                        *state.previous_was_tool_result = true;
                     }
                     ContentBlock::ServerToolUse { .. }
                     | ContentBlock::WebSearchToolResult { .. } => {
@@ -1021,8 +1030,9 @@ fn build_contents(
             }
         }
     }
-    if !is_assistant && !pending_tool_use_ids.is_empty() {
-        let missing_ids: Vec<_> = pending_tool_use_ids
+    if !is_assistant && !state.pending_tool_use_ids.is_empty() {
+        let missing_ids: Vec<_> = state
+            .pending_tool_use_ids
             .iter()
             .filter(|id| !current_turn_tool_result_ids.contains(*id))
             .cloned()
@@ -1031,7 +1041,11 @@ fn build_contents(
         if !missing_ids.is_empty() {
             tracing::warn!("[Elastic-Recovery] Injecting {} missing tool results into User message (IDs: {:?})", missing_ids.len(), missing_ids);
             for id in missing_ids.iter().rev() {
-                let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
+                let name = state
+                    .tool_id_to_name
+                    .get(id)
+                    .cloned()
+                    .unwrap_or(id.clone());
                 let synthetic_part = json!({
                     "functionResponse": {
                         "name": name,
@@ -1044,9 +1058,9 @@ fn build_contents(
                 parts.insert(0, synthetic_part);
             }
         }
-        pending_tool_use_ids.clear();
+        state.pending_tool_use_ids.clear();
     }
-    if allow_dummy_thought && is_assistant && is_thinking_enabled {
+    if ctx.allow_dummy_thought && is_assistant && ctx.is_thinking_enabled {
         let has_thought_part = parts.iter().any(|p| {
             p.get("thought").and_then(|v| v.as_bool()).unwrap_or(false)
                 || p.get("thoughtSignature").is_some()
@@ -1091,36 +1105,25 @@ fn build_contents(
 
     Ok(parts)
 }
-#[allow(clippy::too_many_arguments)]
 fn build_google_content(
     msg: &Message,
-    claude_req: &ClaudeRequest,
-    is_thinking_enabled: bool,
-    session_id: &str,
-    allow_dummy_thought: bool,
-    is_retry: bool,
-    tool_id_to_name: &mut HashMap<String, String>,
-    tool_name_to_schema: &HashMap<String, Value>,
-    mapped_model: &str,
-    last_thought_signature: &mut Option<String>,
-    pending_tool_use_ids: &mut Vec<String>,
-    last_user_task_text_normalized: &mut Option<String>,
-    previous_was_tool_result: &mut bool,
-    existing_tool_result_ids: &std::collections::HashSet<String>,
+    ctx: &BuildContentsContext<'_>,
+    state: &mut BuildContentsState<'_>,
 ) -> Result<Value, String> {
     let role = if msg.role == "assistant" {
         "model"
     } else {
         &msg.role
     };
-    if role == "model" && !pending_tool_use_ids.is_empty() {
-        tracing::warn!("[Elastic-Recovery] Detected interrupted tool chain (Assistant -> Assistant). Injecting synthetic User message for IDs: {:?}", pending_tool_use_ids);
+    if role == "model" && !state.pending_tool_use_ids.is_empty() {
+        tracing::warn!("[Elastic-Recovery] Detected interrupted tool chain (Assistant -> Assistant). Injecting synthetic User message for IDs: {:?}", state.pending_tool_use_ids);
 
-        let synthetic_parts: Vec<serde_json::Value> = pending_tool_use_ids
+        let synthetic_parts: Vec<serde_json::Value> = state
+            .pending_tool_use_ids
             .iter()
-            .filter(|id| !existing_tool_result_ids.contains(*id))
+            .filter(|id| !ctx.existing_tool_result_ids.contains(*id))
             .map(|id| {
-                let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
+                let name = state.tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
                 json!({
                     "functionResponse": {
                         "name": name,
@@ -1139,25 +1142,14 @@ fn build_google_content(
                 "parts": synthetic_parts
             }));
         }
-        pending_tool_use_ids.clear();
+        state.pending_tool_use_ids.clear();
     }
 
     let parts = build_contents(
         &msg.content,
         msg.role == "assistant",
-        claude_req,
-        is_thinking_enabled,
-        session_id,
-        allow_dummy_thought,
-        is_retry,
-        tool_id_to_name,
-        tool_name_to_schema,
-        mapped_model,
-        last_thought_signature,
-        pending_tool_use_ids,
-        last_user_task_text_normalized,
-        previous_was_tool_result,
-        existing_tool_result_ids,
+        ctx,
+        state,
     )?;
 
     if parts.is_empty() {
@@ -1169,17 +1161,19 @@ fn build_google_content(
         "parts": parts
     }))
 }
-#[allow(clippy::too_many_arguments)]
-fn build_google_contents(
-    messages: &[Message],
-    claude_req: &ClaudeRequest,
-    tool_id_to_name: &mut HashMap<String, String>,
-    tool_name_to_schema: &HashMap<String, Value>,
+struct GoogleContentsOptions<'a> {
     is_thinking_enabled: bool,
     allow_dummy_thought: bool,
-    mapped_model: &str,
-    session_id: &str,
+    mapped_model: &'a str,
+    session_id: &'a str,
     is_retry: bool,
+}
+
+fn build_google_contents(
+    messages: &[Message],
+    tool_id_to_name: &mut HashMap<String, String>,
+    tool_name_to_schema: &HashMap<String, Value>,
+    options: GoogleContentsOptions<'_>,
 ) -> Result<Value, String> {
     let mut contents = Vec::new();
     let mut last_thought_signature: Option<String> = None;
@@ -1200,30 +1194,32 @@ fn build_google_contents(
         }
     }
 
+    let build_ctx = BuildContentsContext {
+        is_thinking_enabled: options.is_thinking_enabled,
+        session_id: options.session_id,
+        allow_dummy_thought: options.allow_dummy_thought,
+        is_retry: options.is_retry,
+        tool_name_to_schema,
+        mapped_model: options.mapped_model,
+        existing_tool_result_ids: &existing_tool_result_ids,
+    };
+    let mut build_state = BuildContentsState {
+        tool_id_to_name,
+        last_thought_signature: &mut last_thought_signature,
+        pending_tool_use_ids: &mut pending_tool_use_ids,
+        last_user_task_text_normalized: &mut last_user_task_text_normalized,
+        previous_was_tool_result: &mut previous_was_tool_result,
+    };
+
     for msg in messages.iter() {
-        let google_content = build_google_content(
-            msg,
-            claude_req,
-            is_thinking_enabled,
-            session_id,
-            allow_dummy_thought,
-            is_retry,
-            tool_id_to_name,
-            tool_name_to_schema,
-            mapped_model,
-            &mut last_thought_signature,
-            &mut pending_tool_use_ids,
-            &mut last_user_task_text_normalized,
-            &mut previous_was_tool_result,
-            &existing_tool_result_ids,
-        )?;
+        let google_content = build_google_content(msg, &build_ctx, &mut build_state)?;
 
         if !google_content.is_null() {
             contents.push(google_content);
         }
     }
     let mut merged_contents = merge_adjacent_roles(contents);
-    if !is_thinking_enabled {
+    if !options.is_thinking_enabled {
         for msg in &mut merged_contents {
             clean_thinking_fields_recursive(msg);
         }

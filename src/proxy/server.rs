@@ -61,6 +61,23 @@ pub fn take_pending_delete_accounts() -> Vec<String> {
 }
 
 use crate::proxy::state::{AppState, ConfigState, CoreServices, RuntimeState};
+pub struct AxumStartConfig {
+    pub host: String,
+    pub port: u16,
+    pub token_manager: Arc<TokenManager>,
+    pub custom_mapping: std::collections::HashMap<String, String>,
+    pub request_timeout: u64,
+    pub upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
+    pub user_agent_override: Option<String>,
+    pub security_config: crate::proxy::ProxySecurityConfig,
+    pub zai_config: crate::proxy::ZaiConfig,
+    pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
+    pub experimental_config: crate::proxy::config::ExperimentalConfig,
+    pub debug_logging: crate::proxy::config::DebugLoggingConfig,
+    pub integration: crate::modules::system::integration::SystemManager,
+    pub proxy_pool_config: crate::proxy::config::ProxyPoolConfig,
+}
+
 #[derive(Clone)]
 pub struct AxumServer {
     pub is_running: Arc<RwLock<bool>>,
@@ -73,24 +90,26 @@ impl AxumServer {
         *r = running;
         tracing::info!("Proxy service running status updated to: {}", running);
     }
-    #[allow(clippy::too_many_arguments)]
     pub async fn start(
-        host: String,
-        port: u16,
-        token_manager: Arc<TokenManager>,
-        custom_mapping: std::collections::HashMap<String, String>,
-        request_timeout: u64,
-        upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
-        user_agent_override: Option<String>,
-        security_config: crate::proxy::ProxySecurityConfig,
-        zai_config: crate::proxy::ZaiConfig,
-        monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
-        experimental_config: crate::proxy::config::ExperimentalConfig,
-        debug_logging: crate::proxy::config::DebugLoggingConfig,
-
-        integration: crate::modules::system::integration::SystemManager,
-        proxy_pool_config: crate::proxy::config::ProxyPoolConfig,
+        config: AxumStartConfig,
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
+        let AxumStartConfig {
+            host,
+            port,
+            token_manager,
+            custom_mapping,
+            request_timeout,
+            upstream_proxy,
+            user_agent_override,
+            security_config,
+            zai_config,
+            monitor,
+            experimental_config,
+            debug_logging,
+            integration,
+            proxy_pool_config,
+        } = config;
+
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
         let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
         let proxy_pool_state = Arc::new(tokio::sync::RwLock::new(proxy_pool_config));

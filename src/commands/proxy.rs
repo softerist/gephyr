@@ -150,24 +150,24 @@ pub async fn ensure_admin_server(
     let token_manager = Arc::new(TokenManager::new(app_data_dir));
     let _ = token_manager.load_accounts().await;
 
-    let (axum_server, _server_handle) = match crate::proxy::AxumServer::start(
-        config.get_bind_address().to_string(),
-        config.port,
+    let start_config = crate::proxy::AxumStartConfig {
+        host: config.get_bind_address().to_string(),
+        port: config.port,
         token_manager,
-        config.custom_mapping.clone(),
-        config.request_timeout,
-        config.upstream_proxy.clone(),
-        config.user_agent_override.clone(),
-        crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
-        config.zai.clone(),
+        custom_mapping: config.custom_mapping.clone(),
+        request_timeout: config.request_timeout,
+        upstream_proxy: config.upstream_proxy.clone(),
+        user_agent_override: config.user_agent_override.clone(),
+        security_config: crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
+        zai_config: config.zai.clone(),
         monitor,
-        config.experimental.clone(),
-        config.debug_logging.clone(),
-        integration.clone(),
-        config.proxy_pool.clone(),
-    )
-    .await
-    {
+        experimental_config: config.experimental.clone(),
+        debug_logging: config.debug_logging.clone(),
+        integration: integration.clone(),
+        proxy_pool_config: config.proxy_pool.clone(),
+    };
+
+    let (axum_server, _server_handle) = match crate::proxy::AxumServer::start(start_config).await {
         Ok((server, handle)) => (server, handle),
         Err(e) => return Err(format!("Failed to start management server: {}", e)),
     };
