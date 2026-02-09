@@ -193,21 +193,26 @@ pub(crate) async fn admin_update_proxy_sticky_config(
     headers: HeaderMap,
     Json(payload): Json<UpdateStickyConfigRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
-        if payload.persist_session_bindings.is_none() && payload.scheduling.is_none() {
-            return Err(
-                "At least one of persist_session_bindings or scheduling must be provided"
-                    .to_string(),
-            );
-        }
-        if let Some(enabled) = payload.persist_session_bindings {
-            proxy.persist_session_bindings = enabled;
-        }
-        if let Some(scheduling) = payload.scheduling.clone() {
-            proxy.scheduling = scheduling;
-        }
-        Ok(())
-    })
+    let patch = config_patch::patch_proxy_config(
+        &state,
+        &headers,
+        config_patch::RuntimeApplyPolicy::AlwaysHotApplied,
+        |proxy| {
+            if payload.persist_session_bindings.is_none() && payload.scheduling.is_none() {
+                return Err(
+                    "At least one of persist_session_bindings or scheduling must be provided"
+                        .to_string(),
+                );
+            }
+            if let Some(enabled) = payload.persist_session_bindings {
+                proxy.persist_session_bindings = enabled;
+            }
+            if let Some(scheduling) = payload.scheduling.clone() {
+                proxy.scheduling = scheduling;
+            }
+            Ok(())
+        },
+    )
     .await?;
 
     state
@@ -240,6 +245,7 @@ pub(crate) async fn admin_update_proxy_sticky_config(
         "ok": true,
         "saved": true,
         "message": "Sticky config updated",
+        "runtime_apply": patch.runtime_apply_result(true),
         "sticky": {
             "persist_session_bindings": sticky.persist_session_bindings,
             "scheduling": sticky.scheduling
@@ -271,14 +277,19 @@ pub(crate) async fn admin_update_proxy_request_timeout(
     headers: HeaderMap,
     Json(payload): Json<UpdateRequestTimeoutRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
-        let request_timeout = payload
-            .request_timeout
-            .or(payload.request_timeout_seconds)
-            .ok_or_else(|| "request_timeout is required".to_string())?;
-        proxy.request_timeout = request_timeout;
-        Ok(())
-    })
+    let patch = config_patch::patch_proxy_config(
+        &state,
+        &headers,
+        config_patch::RuntimeApplyPolicy::AlwaysHotApplied,
+        |proxy| {
+            let request_timeout = payload
+                .request_timeout
+                .or(payload.request_timeout_seconds)
+                .ok_or_else(|| "request_timeout is required".to_string())?;
+            proxy.request_timeout = request_timeout;
+            Ok(())
+        },
+    )
     .await?;
     let request_timeout = patch.after.request_timeout;
 
@@ -306,6 +317,7 @@ pub(crate) async fn admin_update_proxy_request_timeout(
         "ok": true,
         "saved": true,
         "message": "Request timeout updated",
+        "runtime_apply": patch.runtime_apply_result(true),
         "request_timeout": request_timeout,
         "effective_request_timeout": request_timeout.max(5)
     })))
@@ -377,7 +389,8 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
             "tracked_accounts_in_flight": compliance.account_in_flight.len(),
             "total_account_in_flight": total_account_in_flight,
             "accounts_in_cooldown": compliance.account_cooldown_seconds_remaining.len(),
-        }
+        },
+        "runtime_apply_policies_supported": config_patch::supported_runtime_apply_policies()
     }))
 }
 
@@ -386,10 +399,15 @@ pub(crate) async fn admin_update_proxy_compliance(
     headers: HeaderMap,
     Json(compliance): Json<crate::proxy::config::ComplianceConfig>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
-        proxy.compliance = compliance.clone();
-        Ok(())
-    })
+    let patch = config_patch::patch_proxy_config(
+        &state,
+        &headers,
+        config_patch::RuntimeApplyPolicy::AlwaysHotApplied,
+        |proxy| {
+            proxy.compliance = compliance.clone();
+            Ok(())
+        },
+    )
     .await?;
 
     state
@@ -410,6 +428,7 @@ pub(crate) async fn admin_update_proxy_compliance(
         "ok": true,
         "saved": true,
         "message": "Compliance config updated",
+        "runtime_apply": patch.runtime_apply_result(true),
         "compliance": patch.after.compliance
     })))
 }

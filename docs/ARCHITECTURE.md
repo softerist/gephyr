@@ -1,0 +1,143 @@
+# Gephyr Architecture
+
+## Runtime Component Map
+
+Core runtime state is assembled in `src/proxy/server.rs` and carried via `AppState` (`src/proxy/state.rs`):
+
+- `CoreServices`
+  - `token_manager`: account pool, selection, sticky/session bindings, compliance guards (`src/proxy/token/manager.rs`)
+  - `upstream`: outbound HTTP client (`src/proxy/upstream/client.rs`)
+  - `monitor`: request logs + counters (`src/proxy/monitor.rs`)
+  - `integration` + `account_service`: system integration and account management
+- `ConfigState`
+  - mutable runtime config mirrors (mapping, security, timeouts, etc.)
+  - synchronized hot-apply entrypoint: `apply_proxy_config`
+- `RuntimeState`
+  - runtime-only controls (running flag, port, proxy-pool runtime state/manager)
+
+## Routing and Middleware
+
+Public and admin route composition:
+
+- Public proxy routes: `src/proxy/routes/mod.rs` -> `build_proxy_routes`
+- Admin routes: `src/proxy/routes/admin.rs` -> grouped builders in `src/proxy/routes/admin_groups.rs`
+- Admin capabilities snapshot: `GET /api/version/routes` from `admin_version_route_capabilities`
+
+Middleware order for proxy routes (`src/proxy/routes/mod.rs`):
+
+1. IP filter
+2. auth
+3. monitor
+
+Admin routes are guarded by `admin_auth_middleware` in `build_admin_routes`.
+
+## Config Mutation Flow
+
+### Full config path
+
+- Endpoint: `POST /api/config` (`src/proxy/admin/runtime/config_pool.rs`)
+- Flow:
+  1. load submitted config
+  2. validate
+  3. persist (`save_app_config`)
+  4. hot-apply to runtime (`ConfigState::apply_proxy_config` + token-manager sync)
+  5. emit structured admin audit
+
+### Scoped proxy patch path
+
+Scoped endpoints use shared patch helper in `src/proxy/admin/runtime/config_patch.rs`:
+
+1. resolve actor
+2. load persisted config
+3. apply endpoint patch closure
+4. validate
+5. persist
+6. return `before/after + runtime_apply_policy`
+7. endpoint applies runtime mutation and returns `runtime_apply` in API response
+
+Scoped endpoints in this path:
+
+- `POST /api/proxy/sticky`
+- `POST /api/proxy/request-timeout`
+- `POST /api/proxy/compliance`
+- `POST /api/proxy/pool/strategy`
+- `POST /api/proxy/pool/runtime`
+
+## Hot-Reload Policy
+
+Policy enum: `RuntimeApplyPolicy` in `src/proxy/admin/runtime/config_patch.rs`.
+
+Current scoped endpoint policy mapping:
+
+- `always_hot_applied`
+  - sticky config
+  - request-timeout
+  - compliance config
+  - proxy-pool strategy
+  - proxy-pool runtime knobs
+
+API contract for scoped updates includes:
+
+- `runtime_apply.policy`
+- `runtime_apply.applied`
+- `runtime_apply.requires_restart`
+
+This makes hot-apply behavior explicit for operators and scripts.
+
+## Token Manager Data Flow
+
+Main selection and control paths:
+
+- request -> account selection (`manager_runtime.rs` + selection/rotation modules)
+- sticky bindings:
+  - in-memory map + optional persisted `session_bindings.json`
+  - debug snapshot via `GET /api/proxy/session-bindings`
+- compliance controls:
+  - global/account RPM windows
+  - in-flight concurrency
+  - cooldown windows
+  - debug snapshot via `GET /api/proxy/compliance`
+
+Operational snapshot endpoint:
+
+- `GET /api/proxy/metrics` aggregates runtime/monitor/sticky/compliance data.
+
+## Observability and Audit
+
+- Request monitor:
+  - stats/logs in `src/proxy/monitor.rs`
+  - admin endpoints in `src/proxy/admin/runtime/logs.rs`
+- Structured admin audit:
+  - actor resolution/logging in `src/proxy/admin/runtime/audit.rs`
+  - event model in `src/proxy/admin/runtime/audit_event.rs`
+  - emitted with `[ADMIN_AUDIT]` prefix for grep compatibility
+
+## Failure Domains and Recovery
+
+- Persisted config errors:
+  - validation failure -> request rejected (400)
+  - save/read failure -> internal error (500)
+- Runtime drift risks:
+  - minimized via shared scoped patch helper and explicit runtime apply policy
+- Session stickiness restart behavior:
+  - persistence controlled by `persist_session_bindings`
+  - validated by restart smoke tests/scripts
+- Admin auth lockout risk:
+  - `POST /api/config` preserves existing API key when blank input is submitted
+
+## Test Strategy Map
+
+Unit-heavy coverage in `src/proxy/tests` with focused admin runtime suite:
+
+- `src/proxy/tests/admin_runtime_endpoints.rs`
+  - scoped config updates
+  - auth regression
+  - restart-like reinit persistence flow
+  - route capability and group parity checks
+  - metrics schema stability
+
+Operator smoke scripts in `scripts/` validate live runtime behavior:
+
+- session binding persistence
+- compliance counters
+- proxy pool strategy/runtime endpoints

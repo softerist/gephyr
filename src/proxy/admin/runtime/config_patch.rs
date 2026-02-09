@@ -2,6 +2,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
+use serde::Serialize;
 
 use super::audit;
 use crate::proxy::admin::ErrorResponse;
@@ -9,16 +10,54 @@ use crate::proxy::state::AdminState;
 
 pub(crate) type AdminError = (StatusCode, Json<ErrorResponse>);
 
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RuntimeApplyPolicy {
+    AlwaysHotApplied,
+    HotAppliedWhenSafe,
+    RequiresRestart,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RuntimeApplyResult {
+    pub policy: RuntimeApplyPolicy,
+    pub applied: bool,
+    pub requires_restart: bool,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ProxyPatchResult {
     pub actor: super::audit_event::ActorIdentity,
     pub before: crate::proxy::config::ProxyConfig,
     pub after: crate::proxy::config::ProxyConfig,
+    pub runtime_apply_policy: RuntimeApplyPolicy,
+}
+
+impl ProxyPatchResult {
+    pub(crate) fn runtime_apply_result(&self, applied: bool) -> RuntimeApplyResult {
+        RuntimeApplyResult {
+            policy: self.runtime_apply_policy,
+            applied,
+            requires_restart: matches!(
+                self.runtime_apply_policy,
+                RuntimeApplyPolicy::RequiresRestart
+            ),
+        }
+    }
+}
+
+pub(crate) fn supported_runtime_apply_policies() -> [RuntimeApplyPolicy; 3] {
+    [
+        RuntimeApplyPolicy::AlwaysHotApplied,
+        RuntimeApplyPolicy::HotAppliedWhenSafe,
+        RuntimeApplyPolicy::RequiresRestart,
+    ]
 }
 
 pub(crate) async fn patch_proxy_config<F>(
     state: &AdminState,
     headers: &HeaderMap,
+    runtime_apply_policy: RuntimeApplyPolicy,
     patch_fn: F,
 ) -> Result<ProxyPatchResult, AdminError>
 where
@@ -47,6 +86,7 @@ where
         actor,
         before,
         after,
+        runtime_apply_policy,
     })
 }
 

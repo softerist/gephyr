@@ -149,14 +149,19 @@ pub(crate) async fn admin_update_proxy_pool_strategy(
     headers: HeaderMap,
     Json(payload): Json<UpdateProxyPoolStrategyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
-        let strategy = payload
-            .strategy
-            .clone()
-            .ok_or_else(|| "strategy is required".to_string())?;
-        proxy.proxy_pool.strategy = strategy;
-        Ok(())
-    })
+    let patch = config_patch::patch_proxy_config(
+        &state,
+        &headers,
+        config_patch::RuntimeApplyPolicy::HotAppliedWhenSafe,
+        |proxy| {
+            let strategy = payload
+                .strategy
+                .clone()
+                .ok_or_else(|| "strategy is required".to_string())?;
+            proxy.proxy_pool.strategy = strategy;
+            Ok(())
+        },
+    )
     .await?;
 
     {
@@ -182,6 +187,7 @@ pub(crate) async fn admin_update_proxy_pool_strategy(
         "ok": true,
         "saved": true,
         "message": "Proxy pool strategy updated",
+        "runtime_apply": patch.runtime_apply_result(true),
         "proxy_pool": proxy_pool_runtime_snapshot(&runtime_cfg)
     })))
 }
@@ -213,28 +219,33 @@ pub(crate) async fn admin_update_proxy_pool_runtime(
     headers: HeaderMap,
     Json(payload): Json<UpdateProxyPoolRuntimeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let patch = config_patch::patch_proxy_config(&state, &headers, |proxy| {
-        if payload.enabled.is_none()
-            && payload.auto_failover.is_none()
-            && payload.health_check_interval.is_none()
-        {
-            return Err(
-                "At least one of enabled, auto_failover, health_check_interval must be provided"
-                    .to_string(),
-            );
-        }
+    let patch = config_patch::patch_proxy_config(
+        &state,
+        &headers,
+        config_patch::RuntimeApplyPolicy::HotAppliedWhenSafe,
+        |proxy| {
+            if payload.enabled.is_none()
+                && payload.auto_failover.is_none()
+                && payload.health_check_interval.is_none()
+            {
+                return Err(
+                    "At least one of enabled, auto_failover, health_check_interval must be provided"
+                        .to_string(),
+                );
+            }
 
-        if let Some(enabled) = payload.enabled {
-            proxy.proxy_pool.enabled = enabled;
-        }
-        if let Some(auto_failover) = payload.auto_failover {
-            proxy.proxy_pool.auto_failover = auto_failover;
-        }
-        if let Some(health_check_interval) = payload.health_check_interval {
-            proxy.proxy_pool.health_check_interval = health_check_interval;
-        }
-        Ok(())
-    })
+            if let Some(enabled) = payload.enabled {
+                proxy.proxy_pool.enabled = enabled;
+            }
+            if let Some(auto_failover) = payload.auto_failover {
+                proxy.proxy_pool.auto_failover = auto_failover;
+            }
+            if let Some(health_check_interval) = payload.health_check_interval {
+                proxy.proxy_pool.health_check_interval = health_check_interval;
+            }
+            Ok(())
+        },
+    )
     .await?;
 
     let after_runtime;
@@ -265,6 +276,7 @@ pub(crate) async fn admin_update_proxy_pool_runtime(
         "ok": true,
         "saved": true,
         "message": "Proxy pool runtime config updated",
+        "runtime_apply": patch.runtime_apply_result(true),
         "proxy_pool": after_runtime
     })))
 }

@@ -43,6 +43,7 @@ Primary groups:
 - sticky runtime snapshot/config update (`GET|POST /api/proxy/sticky`) for scheduling + `persist_session_bindings` without full config round-trip
 - request-timeout runtime snapshot/config update (`GET|POST /api/proxy/request-timeout`) to tune timeout without full config round-trip
 - metrics snapshot (`GET /api/proxy/metrics`) with runtime/monitor/sticky/compliance aggregates
+- scoped proxy update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`) for hot-reload transparency
 - session bindings debug snapshot (bindings + recent sticky decisions)
 - compliance debug snapshot (live RPM/in-flight/cooldown counters)
 - compliance config update (`POST /api/proxy/compliance`) without full `config` round-trip

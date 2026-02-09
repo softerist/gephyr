@@ -282,6 +282,12 @@ mod tests {
         assert_eq!(metrics_body["compliance"]["enabled"], true);
         assert!(metrics_body["compliance"]["global_requests_in_last_minute"].is_number());
         assert!(metrics_body["compliance"]["total_account_in_flight"].is_number());
+        let policies = metrics_body["runtime_apply_policies_supported"]
+            .as_array()
+            .expect("runtime_apply_policies_supported should be an array");
+        assert!(policies.iter().any(|v| v == "always_hot_applied"));
+        assert!(policies.iter().any(|v| v == "hot_applied_when_safe"));
+        assert!(policies.iter().any(|v| v == "requires_restart"));
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -338,6 +344,12 @@ mod tests {
         assert_eq!(post_status, StatusCode::OK);
         assert_eq!(post_body["ok"], true);
         assert_eq!(post_body["saved"], true);
+        assert_eq!(
+            post_body["runtime_apply"]["policy"],
+            Value::from("always_hot_applied")
+        );
+        assert_eq!(post_body["runtime_apply"]["applied"], true);
+        assert_eq!(post_body["runtime_apply"]["requires_restart"], false);
 
         let get_request = Request::builder()
             .uri("/proxy/compliance")
@@ -402,6 +414,12 @@ mod tests {
         assert_eq!(post_body["ok"], true);
         assert_eq!(post_body["saved"], true);
         assert_eq!(
+            post_body["runtime_apply"]["policy"],
+            Value::from("always_hot_applied")
+        );
+        assert_eq!(post_body["runtime_apply"]["applied"], true);
+        assert_eq!(post_body["runtime_apply"]["requires_restart"], false);
+        assert_eq!(
             post_body["sticky"]["persist_session_bindings"],
             Value::from(true)
         );
@@ -448,6 +466,12 @@ mod tests {
         let (post_status, post_body) = send(&router, post_request).await;
         assert_eq!(post_status, StatusCode::OK);
         assert_eq!(post_body["ok"], true);
+        assert_eq!(
+            post_body["runtime_apply"]["policy"],
+            Value::from("always_hot_applied")
+        );
+        assert_eq!(post_body["runtime_apply"]["applied"], true);
+        assert_eq!(post_body["runtime_apply"]["requires_restart"], false);
         assert_eq!(post_body["request_timeout"], Value::from(45));
         assert_eq!(post_body["effective_request_timeout"], Value::from(45));
 
@@ -500,6 +524,12 @@ mod tests {
         assert_eq!(post_status, StatusCode::OK);
         assert_eq!(post_body["ok"], true);
         assert_eq!(post_body["saved"], true);
+        assert_eq!(
+            post_body["runtime_apply"]["policy"],
+            Value::from("hot_applied_when_safe")
+        );
+        assert_eq!(post_body["runtime_apply"]["applied"], true);
+        assert_eq!(post_body["runtime_apply"]["requires_restart"], false);
         assert_eq!(
             post_body["proxy_pool"]["strategy"],
             Value::from("round_robin")
@@ -562,6 +592,12 @@ mod tests {
         assert_eq!(post_status, StatusCode::OK);
         assert_eq!(post_body["ok"], true);
         assert_eq!(post_body["saved"], true);
+        assert_eq!(
+            post_body["runtime_apply"]["policy"],
+            Value::from("hot_applied_when_safe")
+        );
+        assert_eq!(post_body["runtime_apply"]["applied"], true);
+        assert_eq!(post_body["runtime_apply"]["requires_restart"], false);
         assert_eq!(post_body["proxy_pool"]["enabled"], Value::from(true));
         assert_eq!(post_body["proxy_pool"]["auto_failover"], Value::from(false));
         assert_eq!(
