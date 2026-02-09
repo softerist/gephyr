@@ -30,6 +30,7 @@ Use this when starting a new task quickly and safely.
    - `scheduling.mode: balance` or `cache_first` (not `performance_first`)
 6. For client-driven stickiness, verify requests provide a stable explicit session id (`x-session-id` or payload `session_id`/`sessionId`).
 7. For low-risk account traffic profile, verify `proxy.compliance.enabled=true` and sane budgets (`max_global_requests_per_minute`, `max_account_requests_per_minute`, `max_account_concurrency`, `risk_cooldown_seconds`, `max_retry_attempts`).
+8. Prefer `POST /api/proxy/compliance` for compliance-only changes instead of posting full `/api/config`.
 
 ## Session Persistence Quick Config
 

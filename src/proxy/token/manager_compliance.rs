@@ -17,6 +17,47 @@ impl TokenManager {
         self.compliance_config.read().await.clone()
     }
 
+    pub async fn get_compliance_debug_snapshot(&self) -> super::ComplianceDebugSnapshot {
+        let cfg = self.compliance_config.read().await.clone();
+        let now = Instant::now();
+
+        let mut global_requests_in_last_minute = 0usize;
+        let mut account_requests_in_last_minute = std::collections::HashMap::new();
+        let mut account_in_flight = std::collections::HashMap::new();
+        let mut account_cooldown_seconds_remaining = std::collections::HashMap::new();
+
+        if let Ok(mut state) = self.compliance_state.lock() {
+            Self::cleanup_compliance_state_locked(&mut state, now);
+
+            global_requests_in_last_minute = state.global_request_timestamps.len();
+            account_requests_in_last_minute = state
+                .account_request_timestamps
+                .iter()
+                .map(|(k, v)| (k.clone(), v.len()))
+                .collect();
+            account_in_flight = state.account_in_flight.clone();
+            account_cooldown_seconds_remaining = state
+                .account_cooldown_until
+                .iter()
+                .filter_map(|(account, until)| {
+                    if *until > now {
+                        Some((account.clone(), until.duration_since(now).as_secs()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+
+        super::ComplianceDebugSnapshot {
+            config: cfg,
+            global_requests_in_last_minute,
+            account_requests_in_last_minute,
+            account_in_flight,
+            account_cooldown_seconds_remaining,
+        }
+    }
+
     pub async fn effective_retry_attempts(&self, default_attempts: usize) -> usize {
         let cfg = self.compliance_config.read().await.clone();
         if !cfg.enabled {

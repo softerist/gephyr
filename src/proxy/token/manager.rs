@@ -32,6 +32,15 @@ pub struct StickyDebugSnapshot {
     pub recent_events: Vec<StickyDecisionEvent>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ComplianceDebugSnapshot {
+    pub config: crate::proxy::config::ComplianceConfig,
+    pub global_requests_in_last_minute: usize,
+    pub account_requests_in_last_minute: HashMap<String, usize>,
+    pub account_in_flight: HashMap<String, usize>,
+    pub account_cooldown_seconds_remaining: HashMap<String, u64>,
+}
+
 #[derive(Default)]
 pub(super) struct ComplianceRuntimeState {
     pub global_request_timestamps: VecDeque<std::time::Instant>,

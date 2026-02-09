@@ -132,7 +132,7 @@ pub async fn handle_generate(
                 ));
             }
         };
-        let _compliance_guard = match token_manager
+        let compliance_guard = match token_manager
             .try_acquire_compliance_guard(&account_id)
             .await
         {
@@ -342,7 +342,11 @@ pub async fn handle_generate(
                 };
 
                 if client_wants_stream {
-                    let body = Body::from_stream(stream);
+                    let guarded_stream = crate::proxy::handlers::streaming::attach_guard_to_stream(
+                        stream,
+                        compliance_guard,
+                    );
+                    let body = Body::from_stream(guarded_stream);
                     return Ok(crate::proxy::handlers::streaming::build_sse_response(
                         body,
                         &email,

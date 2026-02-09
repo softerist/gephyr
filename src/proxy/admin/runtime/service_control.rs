@@ -107,6 +107,57 @@ pub(crate) async fn admin_get_proxy_session_bindings(
     Json(state.core.token_manager.get_sticky_debug_snapshot())
 }
 
+pub(crate) async fn admin_get_proxy_compliance_debug(
+    State(state): State<AdminState>,
+) -> impl IntoResponse {
+    Json(
+        state
+            .core
+            .token_manager
+            .get_compliance_debug_snapshot()
+            .await,
+    )
+}
+
+pub(crate) async fn admin_update_proxy_compliance(
+    State(state): State<AdminState>,
+    Json(compliance): Json<crate::proxy::config::ComplianceConfig>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let mut app_config = crate::modules::system::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    app_config.proxy.compliance = compliance.clone();
+    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
+        let message = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: message }),
+        ));
+    }
+    crate::modules::system::config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    state
+        .core
+        .token_manager
+        .update_compliance_config(compliance)
+        .await;
+    logger::log_info("[API] Compliance config updated via API and saved");
+    Ok(StatusCode::OK)
+}
+
 pub(crate) async fn admin_clear_all_rate_limits(
     State(state): State<AdminState>,
 ) -> impl IntoResponse {

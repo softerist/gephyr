@@ -122,6 +122,11 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
                 get(admin::admin_get_proxy_session_bindings),
             )
             .route(
+                "/proxy/compliance",
+                get(admin::admin_get_proxy_compliance_debug)
+                    .post(admin::admin_update_proxy_compliance),
+            )
+            .route(
                 "/proxy/rate-limits",
                 delete(admin::admin_clear_all_rate_limits),
             )

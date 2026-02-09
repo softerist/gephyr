@@ -408,7 +408,7 @@ pub async fn handle_messages(
                     .into_response();
             }
         };
-        let _compliance_guard = match token_manager
+        let compliance_guard = match token_manager
             .try_acquire_compliance_guard(&account_id)
             .await
         {
@@ -775,8 +775,12 @@ pub async fn handle_messages(
                     ),
                 );
                 if client_wants_stream {
+                    let guarded_stream = crate::proxy::handlers::streaming::attach_guard_to_stream(
+                        combined_stream,
+                        compliance_guard,
+                    );
                     return crate::proxy::handlers::streaming::build_sse_response_with_headers(
-                        Body::from_stream(combined_stream),
+                        Body::from_stream(guarded_stream),
                         Some(&email),
                         Some(&request_with_mapped.model),
                         true,

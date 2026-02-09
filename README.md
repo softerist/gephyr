@@ -148,6 +148,26 @@ Example:
 }
 ```
 
+Admin visibility:
+- `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
+- `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
+
+Example update call:
+
+```bash
+curl -X POST http://127.0.0.1:8045/api/proxy/compliance \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "max_global_requests_per_minute": 120,
+    "max_account_requests_per_minute": 20,
+    "max_account_concurrency": 2,
+    "risk_cooldown_seconds": 300,
+    "max_retry_attempts": 2
+  }'
+```
+
 Practical notes:
 
 - Keep `scheduling.mode` as `balance` or `cache_first` to use sticky session behavior.

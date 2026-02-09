@@ -38,6 +38,8 @@ Primary groups:
 - model mapping update
 - api-key generation
 - session bindings debug snapshot (bindings + recent sticky decisions)
+- compliance debug snapshot (live RPM/in-flight/cooldown counters)
+- compliance config update (`POST /api/proxy/compliance`) without full `config` round-trip
 - clear session bindings
 - clear rate limits (all or account)
 - preferred account get/set

@@ -541,6 +541,56 @@ async fn test_compliance_risk_signal_cooldown_expires() {
     assert!(allowed.is_some());
 }
 
+#[tokio::test]
+async fn test_compliance_debug_snapshot_reports_live_state() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 20,
+            max_account_concurrency: 2,
+            risk_cooldown_seconds: 60,
+            max_retry_attempts: 2,
+        })
+        .await;
+
+    let guard = manager
+        .try_acquire_compliance_guard("acc-debug")
+        .await
+        .expect("first acquire should succeed");
+    assert!(guard.is_some());
+    manager.mark_compliance_risk_signal("acc-debug", 429).await;
+
+    let snapshot = manager.get_compliance_debug_snapshot().await;
+    assert!(snapshot.config.enabled);
+    assert!(snapshot.global_requests_in_last_minute >= 1);
+    assert_eq!(
+        snapshot
+            .account_requests_in_last_minute
+            .get("acc-debug")
+            .copied()
+            .unwrap_or(0),
+        1
+    );
+    assert_eq!(
+        snapshot
+            .account_in_flight
+            .get("acc-debug")
+            .copied()
+            .unwrap_or(0),
+        1
+    );
+    assert!(
+        snapshot
+            .account_cooldown_seconds_remaining
+            .get("acc-debug")
+            .copied()
+            .unwrap_or(0)
+            > 0
+    );
+}
+
 fn create_test_token(
     email: &str,
     tier: Option<&str>,

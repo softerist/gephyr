@@ -80,6 +80,7 @@ From `src/proxy/token/*`:
 - if wait is `<= max_wait_seconds`, binding is retained and current request may use fallback account without rebinding
 - if wait is `> max_wait_seconds`, binding is released and a new binding may be established
 - admin visibility endpoint for sticky behavior: `GET /api/proxy/session-bindings` (current bindings + recent sticky decision events)
+- admin visibility endpoint for compliance behavior: `GET /api/proxy/compliance` (config + live RPM/in-flight/cooldown snapshot)
 - compliance guard path (when enabled):
 - retries are capped by `max_retry_attempts`
 - per-account/global RPM caps and per-account concurrency caps are enforced before upstream attempt
