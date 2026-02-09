@@ -109,6 +109,113 @@ pub(crate) async fn admin_get_proxy_pool_config(
     let config = state.runtime.proxy_pool_state.read().await;
     Ok(Json(config.clone()))
 }
+
+pub(crate) async fn admin_get_proxy_pool_strategy(
+    State(state): State<AdminState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let config = state.runtime.proxy_pool_state.read().await;
+    let total = config.proxies.len();
+    let enabled = config.proxies.iter().filter(|p| p.enabled).count();
+    Ok(Json(serde_json::json!({
+        "strategy": config.strategy,
+        "enabled": config.enabled,
+        "auto_failover": config.auto_failover,
+        "health_check_interval": config.health_check_interval,
+        "proxies_total": total,
+        "proxies_enabled": enabled
+    })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct UpdateProxyPoolStrategyRequest {
+    #[serde(
+        default,
+        alias = "proxySelectionStrategy",
+        alias = "proxy_selection_strategy"
+    )]
+    strategy: Option<crate::proxy::config::ProxySelectionStrategy>,
+}
+
+pub(crate) async fn admin_update_proxy_pool_strategy(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateProxyPoolStrategyRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+    let strategy = payload.strategy.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "strategy is required".to_string(),
+            }),
+        )
+    })?;
+
+    let mut app_config = config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let before_strategy = app_config.proxy.proxy_pool.strategy.clone();
+    app_config.proxy.proxy_pool.strategy = strategy.clone();
+
+    if let Err(errors) = crate::modules::system::validation::validate_app_config(&app_config) {
+        let message = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: message }),
+        ));
+    }
+
+    config::save_app_config(&app_config).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    {
+        let mut runtime_cfg = state.runtime.proxy_pool_state.write().await;
+        runtime_cfg.strategy = strategy.clone();
+    }
+    let runtime_cfg = state.runtime.proxy_pool_state.read().await;
+    let total = runtime_cfg.proxies.len();
+    let enabled = runtime_cfg.proxies.iter().filter(|p| p.enabled).count();
+
+    audit::log_admin_audit(
+        "update_proxy_pool_strategy",
+        &actor,
+        serde_json::json!({
+            "before": {
+                "strategy": before_strategy
+            },
+            "after": {
+                "strategy": runtime_cfg.strategy
+            }
+        }),
+    );
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "saved": true,
+        "message": "Proxy pool strategy updated",
+        "proxy_pool": {
+            "strategy": runtime_cfg.strategy,
+            "enabled": runtime_cfg.enabled,
+            "auto_failover": runtime_cfg.auto_failover,
+            "health_check_interval": runtime_cfg.health_check_interval,
+            "proxies_total": total,
+            "proxies_enabled": enabled
+        }
+    })))
+}
+
 pub(crate) async fn admin_get_all_account_bindings(
     State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {

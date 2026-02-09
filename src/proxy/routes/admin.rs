@@ -11,6 +11,7 @@ const ADMIN_PATH_VERSION_ROUTES: &str = "/version/routes";
 const ADMIN_PATH_CONFIG: &str = "/config";
 const ADMIN_PATH_PROXY_STATUS: &str = "/proxy/status";
 const ADMIN_PATH_PROXY_REQUEST_TIMEOUT: &str = "/proxy/request-timeout";
+const ADMIN_PATH_PROXY_POOL_STRATEGY: &str = "/proxy/pool/strategy";
 const ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR: &str = "/proxy/session-bindings/clear";
 const ADMIN_PATH_PROXY_SESSION_BINDINGS: &str = "/proxy/session-bindings";
 const ADMIN_PATH_PROXY_STICKY: &str = "/proxy/sticky";
@@ -22,6 +23,8 @@ const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("POST", ADMIN_PATH_CONFIG),
     ("GET", ADMIN_PATH_PROXY_REQUEST_TIMEOUT),
     ("POST", ADMIN_PATH_PROXY_REQUEST_TIMEOUT),
+    ("GET", ADMIN_PATH_PROXY_POOL_STRATEGY),
+    ("POST", ADMIN_PATH_PROXY_POOL_STRATEGY),
     ("GET", ADMIN_PATH_PROXY_STICKY),
     ("POST", ADMIN_PATH_PROXY_STICKY),
     ("GET", ADMIN_PATH_PROXY_SESSION_BINDINGS),
@@ -135,6 +138,11 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
             .route(
                 "/proxy/pool/config",
                 get(admin::admin_get_proxy_pool_config),
+            )
+            .route(
+                ADMIN_PATH_PROXY_POOL_STRATEGY,
+                get(admin::admin_get_proxy_pool_strategy)
+                    .post(admin::admin_update_proxy_pool_strategy),
             )
             .route(
                 "/proxy/pool/bindings",

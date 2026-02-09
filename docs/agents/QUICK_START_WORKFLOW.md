@@ -33,6 +33,7 @@ Use this when starting a new task quickly and safely.
 8. Prefer `POST /api/proxy/compliance` for compliance-only changes instead of posting full `/api/config`.
 9. Prefer `POST /api/proxy/sticky` for stickiness-only changes (`persist_session_bindings`, `scheduling`) instead of posting full `/api/config`.
 10. Prefer `POST /api/proxy/request-timeout` for timeout-only changes instead of posting full `/api/config`.
+11. Prefer `POST /api/proxy/pool/strategy` for proxy-pool strategy-only changes instead of posting full `/api/config`.
 
 ## Session Persistence Quick Config
 

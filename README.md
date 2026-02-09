@@ -154,6 +154,8 @@ Admin visibility:
 - `POST /api/proxy/sticky` updates sticky settings only (avoids full `/api/config` round-trip).
 - `GET /api/proxy/request-timeout` returns configured/effective runtime timeout.
 - `POST /api/proxy/request-timeout` updates timeout only (avoids full `/api/config` round-trip).
+- `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
+- `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
 
@@ -196,6 +198,17 @@ curl -X POST http://127.0.0.1:8045/api/proxy/request-timeout \
   -H "Content-Type: application/json" \
   -d '{
     "request_timeout": 120
+  }'
+```
+
+Proxy-pool-strategy-only update call:
+
+```bash
+curl -X POST http://127.0.0.1:8045/api/proxy/pool/strategy \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "strategy": "round_robin"
   }'
 ```
 

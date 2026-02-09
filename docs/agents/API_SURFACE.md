@@ -52,7 +52,7 @@ Primary groups:
 - ZAI:
 - fetch model list
 - Proxy pool:
-- config, list bindings, bind/unbind account, account binding lookup
+- config, strategy snapshot/update (`GET|POST /api/proxy/pool/strategy`), list bindings, bind/unbind account, account binding lookup
 - trigger proxy health check
 - Logs/stats:
 - proxy stats
