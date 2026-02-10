@@ -141,6 +141,11 @@ Operational snapshot endpoint:
   - validated by restart smoke tests/scripts
 - Admin auth lockout risk:
   - `POST /api/config` preserves existing API key when blank input is submitted
+- OAuth linkage contract:
+  - callback success means `authorization received`, not `account linked`
+  - account linking is only successful when OAuth flow reaches terminal `linked`
+  - if token exchange/user-info/account-save fails, terminal state must be explicit (`failed`, `rejected`, or `cancelled`) and never presented as linked
+  - containerized/runtime prerequisite for reliable encrypted persistence: set `ABV_ENCRYPTION_KEY` (machine UID may be unavailable in some containers)
 - Graceful shutdown path:
   - Ctrl+C signals accept-loop shutdown
   - optional admin stop hook can also signal graceful shutdown when `ABV_ADMIN_STOP_SHUTDOWN=true` and `POST /api/proxy/stop` is called
