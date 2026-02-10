@@ -119,7 +119,7 @@ function Wait-OAuthAccountLink {
     }
 
     if (-not $apiKey) {
-        Write-Warning "Skipping OAuth wait: GEPHYR_API_KEY is missing (env and .env.local)."
+        Write-Warning "[W-OAUTH-MISSING-API-KEY] Skipping OAuth wait: GEPHYR_API_KEY is missing (env and .env.local)."
         return $false
     }
 
@@ -178,7 +178,7 @@ function Wait-OAuthAccountLink {
                     return $false
                 }
                 if ($statusCode -eq 404) {
-                    Write-Warning "OAuth status endpoint not available on this runtime; falling back to legacy /api/accounts polling."
+                    Write-Warning "[W-OAUTH-STATUS-UNSUPPORTED] OAuth status endpoint not available on this runtime; falling back to legacy /api/accounts polling."
                     $statusEndpointSupported = $false
                 }
             }
@@ -231,19 +231,19 @@ function Wait-OAuthAccountLink {
                     return $false
                 }
                 if ($recentLogs -match "OAuth callback state mismatch") {
-                    Write-Warning "OAuth callback state mismatch detected. Restart login flow and complete only the latest opened OAuth URL."
+                    Write-Warning "[E-OAUTH-STATE-MISMATCH] OAuth callback state mismatch detected. Restart login flow and complete only the latest opened OAuth URL."
                     return $false
                 }
                 if ($recentLogs -match "Background OAuth exchange failed:") {
-                    Write-Warning "OAuth wait aborted: token exchange failed. Check network/proxy settings and Google OAuth client credentials."
+                    Write-Warning "[E-OAUTH-TOKEN-EXCHANGE] OAuth wait aborted: token exchange failed. Check network/proxy settings and Google OAuth client credentials."
                     return $false
                 }
                 if ($recentLogs -match "Background OAuth error: Google did not return a refresh_token") {
-                    Write-Warning "OAuth wait aborted: Google returned no refresh_token. Revoke prior app consent and retry."
+                    Write-Warning "[E-OAUTH-REFRESH-MISSING] OAuth wait aborted: Google returned no refresh_token. Revoke prior app consent and retry."
                     return $false
                 }
                 if ($recentLogs -match "Failed to fetch user info in background OAuth:") {
-                    Write-Warning "OAuth wait aborted: token accepted but user-info lookup failed."
+                    Write-Warning "[E-OAUTH-USER-INFO] OAuth wait aborted: token accepted but user-info lookup failed."
                     return $false
                 }
             } catch {
@@ -255,7 +255,7 @@ function Wait-OAuthAccountLink {
         Start-Sleep -Seconds $PollSec
     }
 
-    Write-Warning "Timed out waiting for OAuth account linkage. You can still finish OAuth and rerun .\console.ps1 accounts."
+    Write-Warning "[W-OAUTH-TIMEOUT] Timed out waiting for OAuth account linkage. You can still finish OAuth and rerun .\console.ps1 accounts."
     return $false
 }
 

@@ -105,10 +105,12 @@ pub(crate) async fn admin_submit_oauth_code(
 
 #[derive(Deserialize)]
 pub(crate) struct OAuthParams {
-    code: String,
+    code: Option<String>,
     #[serde(rename = "scope")]
     _scope: Option<String>,
     state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
 pub(crate) async fn handle_oauth_callback(
@@ -116,7 +118,43 @@ pub(crate) async fn handle_oauth_callback(
     _headers: HeaderMap,
     State(_state): State<AdminState>,
 ) -> Result<Html<String>, StatusCode> {
-    let code = params.code;
+    if let Some(error) = params.error.as_deref() {
+        if error == "access_denied" {
+            crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                crate::modules::auth::oauth_server::OAuthFlowPhase::Rejected,
+                Some("oauth_access_denied".to_string()),
+                None,
+            );
+            return Ok(Html(
+                "<html><body><h1>Authorization Rejected</h1><p>You declined the OAuth consent screen. Return to the app if you want to retry.</p></body></html>".to_string(),
+            ));
+        }
+        let detail = if let Some(desc) = params.error_description.as_deref() {
+            format!("oauth_error_{}: {}", error, desc)
+        } else {
+            format!("oauth_error_{}", error)
+        };
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+            Some(detail.clone()),
+            None,
+        );
+        error!("OAuth callback returned error: {}", detail);
+        return Ok(Html(format!(
+            r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
+            detail
+        )));
+    }
+    let Some(code) = params.code else {
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+            Some("authorization_code_missing_in_callback".to_string()),
+            None,
+        );
+        return Ok(Html(
+            "<html><body><h1>Authorization Failed</h1><p>Error: authorization_code_missing_in_callback</p></body></html>".to_string(),
+        ));
+    };
     let state_param = params.state;
     match crate::modules::auth::oauth_server::submit_oauth_code(code, state_param).await {
         Ok(()) => Ok(Html(

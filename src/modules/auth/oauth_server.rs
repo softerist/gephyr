@@ -20,6 +20,7 @@ struct OAuthFlowState {
 
 static OAUTH_FLOW_STATE: OnceLock<Mutex<Option<OAuthFlowState>>> = OnceLock::new();
 static OAUTH_FLOW_STATUS: OnceLock<Mutex<OAuthFlowStatusSnapshot>> = OnceLock::new();
+static OAUTH_FLOW_HISTORY: OnceLock<Mutex<Vec<OAuthFlowStatusEvent>>> = OnceLock::new();
 
 fn get_oauth_flow_state() -> &'static Mutex<Option<OAuthFlowState>> {
     OAUTH_FLOW_STATE.get_or_init(|| Mutex::new(None))
@@ -35,12 +36,22 @@ pub enum OAuthFlowPhase {
     FetchingUserInfo,
     SavingAccount,
     Linked,
+    Rejected,
     Failed,
     Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OAuthFlowStatusSnapshot {
+    pub phase: OAuthFlowPhase,
+    pub detail: Option<String>,
+    pub account_email: Option<String>,
+    pub updated_at_unix: i64,
+    pub recent_events: Vec<OAuthFlowStatusEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthFlowStatusEvent {
     pub phase: OAuthFlowPhase,
     pub detail: Option<String>,
     pub account_email: Option<String>,
@@ -54,6 +65,7 @@ impl OAuthFlowStatusSnapshot {
             detail: None,
             account_email: None,
             updated_at_unix: chrono::Utc::now().timestamp(),
+            recent_events: Vec::new(),
         }
     }
 }
@@ -62,17 +74,35 @@ fn get_oauth_flow_status_state() -> &'static Mutex<OAuthFlowStatusSnapshot> {
     OAUTH_FLOW_STATUS.get_or_init(|| Mutex::new(OAuthFlowStatusSnapshot::idle()))
 }
 
+fn get_oauth_flow_history_state() -> &'static Mutex<Vec<OAuthFlowStatusEvent>> {
+    OAUTH_FLOW_HISTORY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 fn set_oauth_flow_status(
     phase: OAuthFlowPhase,
     detail: Option<String>,
     account_email: Option<String>,
 ) {
+    let updated_at_unix = chrono::Utc::now().timestamp();
+    if let Ok(mut history) = get_oauth_flow_history_state().lock() {
+        history.push(OAuthFlowStatusEvent {
+            phase: phase.clone(),
+            detail: detail.clone(),
+            account_email: account_email.clone(),
+            updated_at_unix,
+        });
+        if history.len() > 20 {
+            let drain = history.len() - 20;
+            history.drain(0..drain);
+        }
+    }
     if let Ok(mut status) = get_oauth_flow_status_state().lock() {
         *status = OAuthFlowStatusSnapshot {
             phase,
             detail,
             account_email,
-            updated_at_unix: chrono::Utc::now().timestamp(),
+            updated_at_unix,
+            recent_events: Vec::new(),
         };
     }
 }
@@ -86,10 +116,14 @@ pub fn mark_oauth_flow_status(
 }
 
 pub fn get_oauth_flow_status() -> OAuthFlowStatusSnapshot {
-    get_oauth_flow_status_state()
+    let mut snapshot = get_oauth_flow_status_state()
         .lock()
         .map(|s| s.clone())
-        .unwrap_or_else(|_| OAuthFlowStatusSnapshot::idle())
+        .unwrap_or_else(|_| OAuthFlowStatusSnapshot::idle());
+    if let Ok(history) = get_oauth_flow_history_state().lock() {
+        snapshot.recent_events = history.clone();
+    }
+    snapshot
 }
 
 fn oauth_success_html() -> &'static str {
@@ -109,6 +143,16 @@ fn oauth_fail_html() -> &'static str {
     <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
     <h1 style='color: red;'>❌ Authorization Failed</h1>\
     <p>Failed to obtain Authorization Code. Please return to the app and try again.</p>\
+    </body>\
+    </html>"
+}
+
+fn oauth_rejected_html() -> &'static str {
+    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+    <html>\
+    <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
+    <h1 style='color: #b45309;'>Authorization Rejected</h1>\
+    <p>You declined the OAuth consent screen. Return to the app if you want to retry.</p>\
     </body>\
     </html>"
 }
@@ -252,19 +296,25 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                     .map(|url| {
                         let mut code = None;
                         let mut state = None;
+                        let mut error = None;
+                        let mut error_description = None;
                         for (k, v) in url.query_pairs() {
                             if k == "code" {
                                 code = Some(v.to_string());
                             } else if k == "state" {
                                 state = Some(v.to_string());
+                            } else if k == "error" {
+                                error = Some(v.to_string());
+                            } else if k == "error_description" {
+                                error_description = Some(v.to_string());
                             }
                         }
-                        (code, state)
+                        (code, state, error, error_description)
                     });
 
-                let (code, received_state) = match query_params {
-                    Some((c, s)) => (c, s),
-                    None => (None, None),
+                let (code, received_state, error, error_description) = match query_params {
+                    Some((c, s, e, d)) => (c, s, e, d),
+                    None => (None, None, None, None),
                 };
 
                 if code.is_none() && bytes_read > 0 {
@@ -285,8 +335,35 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                     }
                 };
 
-                let (result, response_html) = match (code, state_valid) {
-                    (Some(code), true) => {
+                let (result, response_html) = match (code, error, state_valid) {
+                    (None, Some(error), _) if error == "access_denied" => {
+                        set_oauth_flow_status(
+                            OAuthFlowPhase::Rejected,
+                            Some("oauth_access_denied".to_string()),
+                            None,
+                        );
+                        crate::modules::system::logger::log_warn(
+                            "OAuth consent screen rejected by user",
+                        );
+                        (
+                            Err("OAuth access denied".to_string()),
+                            oauth_rejected_html(),
+                        )
+                    }
+                    (None, Some(error), _) => {
+                        let detail = if let Some(desc) = error_description {
+                            format!("oauth_error_{}: {}", error, desc)
+                        } else {
+                            format!("oauth_error_{}", error)
+                        };
+                        set_oauth_flow_status(OAuthFlowPhase::Failed, Some(detail.clone()), None);
+                        crate::modules::system::logger::log_error(&format!(
+                            "OAuth callback returned error: {}",
+                            detail
+                        ));
+                        (Err(format!("OAuth error: {}", error)), oauth_fail_html())
+                    }
+                    (Some(code), _, true) => {
                         set_oauth_flow_status(
                             OAuthFlowPhase::CallbackReceived,
                             Some("authorization_code_captured_ipv4".to_string()),
@@ -297,7 +374,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         );
                         (Ok(code), oauth_success_html())
                     }
-                    (Some(_), false) => {
+                    (Some(_), _, false) => {
                         set_oauth_flow_status(
                             OAuthFlowPhase::Failed,
                             Some("oauth_state_mismatch".to_string()),
@@ -308,7 +385,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
                     }
-                    (None, _) => (
+                    (None, _, _) => (
                         {
                             set_oauth_flow_status(
                                 OAuthFlowPhase::Failed,
@@ -356,19 +433,25 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                     .map(|url| {
                         let mut code = None;
                         let mut state = None;
+                        let mut error = None;
+                        let mut error_description = None;
                         for (k, v) in url.query_pairs() {
                             if k == "code" {
                                 code = Some(v.to_string());
                             } else if k == "state" {
                                 state = Some(v.to_string());
+                            } else if k == "error" {
+                                error = Some(v.to_string());
+                            } else if k == "error_description" {
+                                error_description = Some(v.to_string());
                             }
                         }
-                        (code, state)
+                        (code, state, error, error_description)
                     });
 
-                let (code, received_state) = match query_params {
-                    Some((c, s)) => (c, s),
-                    None => (None, None),
+                let (code, received_state, error, error_description) = match query_params {
+                    Some((c, s, e, d)) => (c, s, e, d),
+                    None => (None, None, None, None),
                 };
 
                 if code.is_none() && bytes_read > 0 {
@@ -389,8 +472,35 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                     }
                 };
 
-                let (result, response_html) = match (code, state_valid) {
-                    (Some(code), true) => {
+                let (result, response_html) = match (code, error, state_valid) {
+                    (None, Some(error), _) if error == "access_denied" => {
+                        set_oauth_flow_status(
+                            OAuthFlowPhase::Rejected,
+                            Some("oauth_access_denied".to_string()),
+                            None,
+                        );
+                        crate::modules::system::logger::log_warn(
+                            "OAuth consent screen rejected by user (IPv6)",
+                        );
+                        (
+                            Err("OAuth access denied".to_string()),
+                            oauth_rejected_html(),
+                        )
+                    }
+                    (None, Some(error), _) => {
+                        let detail = if let Some(desc) = error_description {
+                            format!("oauth_error_{}: {}", error, desc)
+                        } else {
+                            format!("oauth_error_{}", error)
+                        };
+                        set_oauth_flow_status(OAuthFlowPhase::Failed, Some(detail.clone()), None);
+                        crate::modules::system::logger::log_error(&format!(
+                            "OAuth callback returned error (IPv6): {}",
+                            detail
+                        ));
+                        (Err(format!("OAuth error: {}", error)), oauth_fail_html())
+                    }
+                    (Some(code), _, true) => {
                         set_oauth_flow_status(
                             OAuthFlowPhase::CallbackReceived,
                             Some("authorization_code_captured_ipv6".to_string()),
@@ -401,7 +511,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         );
                         (Ok(code), oauth_success_html())
                     }
-                    (Some(_), false) => {
+                    (Some(_), _, false) => {
                         set_oauth_flow_status(
                             OAuthFlowPhase::Failed,
                             Some("oauth_state_mismatch".to_string()),
@@ -412,7 +522,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
                     }
-                    (None, _) => (
+                    (None, _, _) => (
                         {
                             set_oauth_flow_status(
                                 OAuthFlowPhase::Failed,

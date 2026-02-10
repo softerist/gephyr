@@ -431,7 +431,7 @@ function Logout-Accounts {
             $removed++
             Write-Host "Removed account: $id"
         } catch {
-            Write-Warning "Failed to remove account $id : $($_.Exception.Message)"
+            Write-Warning "[W-ACCOUNT-REMOVE-FAILED] Failed to remove account $id : $($_.Exception.Message)"
         }
     }
 

@@ -33,6 +33,10 @@ Primary groups:
 - OAuth:
 - prepare/start/complete/cancel/submit-code
 - web auth URL + callback flow
+- status: `GET /api/auth/status` returns phase + detail
+- phases include `idle`, `prepared`, `callback_received`, `exchanging_token`, `fetching_user_info`, `saving_account`, `linked`, `rejected`, `failed`, `cancelled`
+- `GET /api/auth/status` also includes `recent_events` (ring buffer of the latest phase transitions) to make short-lived phases observable in polling clients
+- OAuth consent denial from callback (`error=access_denied`) is mapped to `phase=rejected` with `detail=oauth_access_denied`
 - Proxy control:
 - status/start/stop
 - model mapping update
