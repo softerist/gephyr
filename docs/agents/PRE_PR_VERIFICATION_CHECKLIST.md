@@ -16,7 +16,10 @@ Use this before opening a PR. It is aligned to:
 - `ABV_ENABLE_ADMIN_API`
 - `ABV_AUTH_MODE`
 - `ABV_MAX_BODY_SIZE`
+- `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`
+- `ABV_ADMIN_STOP_SHUTDOWN`
 - `ABV_ALLOW_LAN_ACCESS`
+- `ABV_ENCRYPTION_KEY`
 
 ## 2) API and Contract Checks
 
@@ -34,13 +37,17 @@ Use this before opening a PR. It is aligned to:
 
 ## 4) Security and Auth Checks
 
-- Verify auth mode behavior (`Off`, `Strict`, `AllExceptHealth`, `Auto`).
+- Verify auth mode behavior (`Off`, `Strict`, `AllExceptHealth`).
+- Verify legacy `auto` values are coerced to `strict` with warning (env/config compatibility path).
 - Verify admin auth remains strict where required.
 - Verify user token validation paths enforce intended constraints:
 - enabled flag
 - expiry
 - IP cap
 - curfew
+- If client IP extraction logic changed, verify trusted-proxy behavior:
+- untrusted socket peer must ignore forwarded headers
+- trusted socket peer may use forwarded headers
 - If SQL changed, ensure parameterized queries are used (no string interpolation of untrusted input).
 
 ## 5) Token/Rate-Limit/Proxy-Pool Checks

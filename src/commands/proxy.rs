@@ -231,6 +231,7 @@ pub async fn internal_stop_proxy_service(state: &ProxyServiceState) -> Result<()
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::{internal_start_proxy_service, internal_stop_proxy_service, ProxyServiceState};
     use crate::modules::persistence::proxy_db;
@@ -252,10 +253,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn startup_runs_monitor_maintenance_and_initializes_proxy_db() {
+        let _security_guard = crate::proxy::tests::acquire_security_test_lock();
         let _guard = PROXY_STARTUP_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .expect("proxy startup test lock");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         proxy_db::init_db().expect("proxy db init");
         let old_log_id = format!("startup-maintenance-{}", uuid::Uuid::new_v4());
         let old_timestamp = chrono::Utc::now().timestamp() - (40 * 24 * 3600);
@@ -280,9 +282,11 @@ mod tests {
         };
         proxy_db::save_log(&seeded_old_log).expect("seed old proxy log");
 
-        let mut config = ProxyConfig::default();
-        config.port = reserve_local_port();
-        config.enable_logging = false;
+        let config = ProxyConfig {
+            port: reserve_local_port(),
+            enable_logging: false,
+            ..ProxyConfig::default()
+        };
 
         let state = ProxyServiceState::new();
         let start_result =

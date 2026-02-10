@@ -437,7 +437,7 @@ async fn test_restore_session_bindings_drops_missing_accounts() {
         &std::fs::read_to_string(tmp_root.join("session_bindings.json")).unwrap(),
     )
     .unwrap();
-    assert!(persisted.get("sid-prune").is_none());
+    assert!(!persisted.contains_key("sid-prune"));
 
     let _ = std::fs::remove_dir_all(&tmp_root);
 }

@@ -392,6 +392,7 @@ impl AxumServer {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::{
         normalize_shutdown_drain_timeout_secs, AxumServer, AxumStartConfig,
@@ -444,6 +445,27 @@ mod tests {
             .local_addr()
             .expect("ephemeral listener local_addr")
             .port()
+    }
+
+    async fn wait_for_server_ready(port: u16) {
+        let client = reqwest::Client::builder().build().expect("reqwest client");
+        let url = format!("http://127.0.0.1:{}/health", port);
+
+        for _ in 0..40 {
+            let ready = client
+                .get(&url)
+                .header("Authorization", "Bearer test-api-key")
+                .send()
+                .await
+                .map(|resp| resp.status().is_success())
+                .unwrap_or(false);
+            if ready {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+
+        panic!("test server did not become ready in time");
     }
 
     fn test_start_config(port: u16) -> AxumStartConfig {
@@ -499,7 +521,7 @@ mod tests {
         let _guard = SERVER_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .expect("server test lock");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "1");
 
         let port = reserve_local_port();
@@ -507,6 +529,7 @@ mod tests {
         let (server, mut handle) = AxumServer::start(start_config)
             .await
             .expect("server should start");
+        wait_for_server_ready(port).await;
 
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
@@ -544,7 +567,7 @@ Content-Length: 4096\r\n\
         let _guard = SERVER_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .expect("server test lock");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "2");
 
         let port = reserve_local_port();
@@ -552,6 +575,7 @@ Content-Length: 4096\r\n\
         let (server, mut handle) = AxumServer::start(start_config)
             .await
             .expect("server should start");
+        wait_for_server_ready(port).await;
 
         let client = reqwest::Client::builder()
             .pool_max_idle_per_host(64)
@@ -567,14 +591,21 @@ Content-Length: 4096\r\n\
                 let client = client.clone();
                 let url = url.clone();
                 async move {
-                    client
-                        .get(url)
-                        .header("Authorization", "Bearer test-api-key")
-                        .send()
-                        .await
-                        .expect("request should succeed")
-                        .status()
-                        .as_u16()
+                    for attempt in 0..3 {
+                        match client
+                            .get(&url)
+                            .header("Authorization", "Bearer test-api-key")
+                            .send()
+                            .await
+                        {
+                            Ok(resp) => return resp.status().as_u16(),
+                            Err(_) if attempt < 2 => {
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            }
+                            Err(err) => panic!("request should succeed: {err}"),
+                        }
+                    }
+                    unreachable!("retry loop always returns or panics");
                 }
             })
             .buffer_unordered(concurrency)

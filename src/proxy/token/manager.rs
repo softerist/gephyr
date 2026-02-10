@@ -112,6 +112,7 @@ impl TokenManager {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn record_sticky_event(
         &self,
         action: &str,

@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use axum::{
         body::{to_bytes, Body},

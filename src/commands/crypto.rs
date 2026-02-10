@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct ReencryptReport {
@@ -9,11 +10,25 @@ pub struct ReencryptReport {
     pub failed_accounts: Vec<String>,
 }
 
-pub fn reencrypt_all_secrets() -> Result<ReencryptReport, String> {
-    let config = crate::modules::system::config::load_app_config()?;
-    crate::modules::system::config::save_app_config(&config)?;
+fn reencrypt_all_secrets_from_data_dir(data_dir: &Path) -> Result<ReencryptReport, String> {
+    let config_path = data_dir.join("config.json");
+    let config = if config_path.exists() {
+        let config_content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("failed_to_read_config_for_reencryption: {}", e))?;
+        serde_json::from_str::<crate::models::AppConfig>(&config_content)
+            .map_err(|e| format!("failed_to_parse_config_for_reencryption: {}", e))?
+    } else {
+        crate::models::AppConfig::default()
+    };
+    let rewritten_config = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("failed_to_serialize_config_for_reencryption: {}", e))?;
+    fs::write(&config_path, rewritten_config)
+        .map_err(|e| format!("failed_to_write_config_for_reencryption: {}", e))?;
 
-    let accounts_dir = crate::modules::auth::account::get_accounts_dir()?;
+    let accounts_dir = data_dir.join("accounts");
+    fs::create_dir_all(&accounts_dir)
+        .map_err(|e| format!("failed_to_prepare_accounts_dir_for_reencryption: {}", e))?;
+
     let mut report = ReencryptReport {
         config_rewritten: true,
         accounts_total: 0,
@@ -57,10 +72,36 @@ pub fn reencrypt_all_secrets() -> Result<ReencryptReport, String> {
         };
 
         report.accounts_total += 1;
-        let rewrite_result =
-            crate::modules::auth::account::load_account(&account_id).and_then(|account| {
-                crate::modules::auth::account::save_account(&account)?;
-                Ok(())
+        let rewrite_result = fs::read_to_string(&path)
+            .map_err(|e| {
+                format!(
+                    "failed_to_read_account_for_reencryption({account_id}): {}",
+                    e
+                )
+            })
+            .and_then(|content| {
+                serde_json::from_str::<crate::models::Account>(&content).map_err(|e| {
+                    format!(
+                        "failed_to_parse_account_for_reencryption({account_id}): {}",
+                        e
+                    )
+                })
+            })
+            .and_then(|account| {
+                serde_json::to_string_pretty(&account).map_err(|e| {
+                    format!(
+                        "failed_to_serialize_account_for_reencryption({account_id}): {}",
+                        e
+                    )
+                })
+            })
+            .and_then(|rewritten| {
+                fs::write(&path, rewritten).map_err(|e| {
+                    format!(
+                        "failed_to_write_account_for_reencryption({account_id}): {}",
+                        e
+                    )
+                })
             });
 
         if rewrite_result.is_ok() {
@@ -81,9 +122,14 @@ pub fn reencrypt_all_secrets() -> Result<ReencryptReport, String> {
     Ok(report)
 }
 
+pub fn reencrypt_all_secrets() -> Result<ReencryptReport, String> {
+    let data_dir = crate::modules::auth::account::get_data_dir()?;
+    reencrypt_all_secrets_from_data_dir(&data_dir)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::reencrypt_all_secrets;
+    use super::reencrypt_all_secrets_from_data_dir;
     use crate::models::{Account, TokenData};
     use crate::proxy::config::{ProxyAuth, ProxyEntry, ProxySelectionStrategy};
     use std::sync::{Mutex, OnceLock};
@@ -127,6 +173,7 @@ mod tests {
 
     #[test]
     fn reencrypt_command_rewrites_mixed_legacy_and_v2_records() {
+        let _security_guard = crate::proxy::tests::acquire_security_test_lock();
         let _guard = REENCRYPT_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -137,7 +184,6 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&data_dir).expect("create temp dir");
-        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
         let _enc_key_env = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "reencrypt-test-key");
 
         let mut cfg = crate::models::AppConfig::default();
@@ -160,20 +206,30 @@ mod tests {
             is_healthy: true,
             latency: None,
         }];
-        crate::modules::system::config::save_app_config(&cfg).expect("save config");
+        let config_path = data_dir.join("config.json");
+        let config_content = serde_json::to_string_pretty(&cfg).expect("serialize config");
+        std::fs::write(&config_path, config_content).expect("save config");
 
         let account_v2 = build_test_account("acct-v2", "v2@example.com");
-        crate::modules::auth::account::save_account(&account_v2).expect("save v2 account");
-
         let account_legacy = build_test_account("acct-legacy", "legacy@example.com");
-        crate::modules::auth::account::save_account(&account_legacy).expect("save legacy account");
+        let accounts_dir = data_dir.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).expect("create accounts dir");
+        std::fs::write(
+            accounts_dir.join("acct-v2.json"),
+            serde_json::to_string_pretty(&account_v2).expect("serialize v2 account"),
+        )
+        .expect("save v2 account");
+        std::fs::write(
+            accounts_dir.join("acct-legacy.json"),
+            serde_json::to_string_pretty(&account_legacy).expect("serialize legacy account"),
+        )
+        .expect("save legacy account");
 
-        let config_path = data_dir.join("config.json");
         let mut config_content = std::fs::read_to_string(&config_path).expect("read config");
         config_content = config_content.replacen("v2:", "", 1);
         std::fs::write(&config_path, config_content).expect("write legacy config");
 
-        let legacy_account_path = data_dir.join("accounts").join("acct-legacy.json");
+        let legacy_account_path = accounts_dir.join("acct-legacy.json");
         let legacy_account_content =
             std::fs::read_to_string(&legacy_account_path).expect("read legacy account file");
         std::fs::write(
@@ -182,7 +238,8 @@ mod tests {
         )
         .expect("write legacy account file");
 
-        let report = reencrypt_all_secrets().expect("reencrypt should succeed");
+        let report =
+            reencrypt_all_secrets_from_data_dir(&data_dir).expect("reencrypt should succeed");
         assert!(report.config_rewritten);
         assert_eq!(report.accounts_total, 2);
         assert_eq!(report.accounts_rewritten, 2);
@@ -202,8 +259,10 @@ mod tests {
             "account secrets should be stored in v2 format"
         );
 
-        let loaded_account =
-            crate::modules::auth::account::load_account("acct-legacy").expect("load account");
+        let loaded_account: Account = serde_json::from_str(
+            &std::fs::read_to_string(&legacy_account_path).expect("read rewritten account"),
+        )
+        .expect("deserialize rewritten account");
         assert_eq!(loaded_account.email, "legacy@example.com");
 
         let _ = std::fs::remove_dir_all(&data_dir);

@@ -603,6 +603,7 @@ mod ip_filter_middleware_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod middleware_consistency_tests {
     use axum::{
         body::Body,

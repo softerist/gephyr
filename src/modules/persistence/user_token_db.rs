@@ -569,6 +569,7 @@ mod tests {
 
     #[test]
     fn test_create_and_query_token() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
         let _ = init_db();
         let username = format!("TestUser_{}", Uuid::new_v4());
         let token_res = create_token(
