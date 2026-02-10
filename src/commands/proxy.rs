@@ -123,7 +123,9 @@ pub async fn internal_start_proxy_service(
         let zai_enabled = config.zai.enabled
             && !matches!(config.zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
         if !zai_enabled {
-            tracing::warn!("No available accounts. Proxy logic will pause. Please add them via the management interface.");
+            tracing::warn!(
+                "[W-PROXY-NO-ACCOUNTS] no_available_accounts_proxy_logic_paused_add_accounts_via_management_interface"
+            );
             return Ok(ProxyStatus {
                 running: false,
                 port: config.port,
@@ -217,10 +219,15 @@ pub async fn internal_stop_proxy_service(state: &ProxyServiceState) -> Result<()
                 tracing::info!("Proxy server task exited cleanly");
             }
             Ok(Err(e)) => {
-                tracing::warn!("Proxy server task join error during shutdown: {}", e);
+                tracing::warn!(
+                    "[W-SHUTDOWN-JOIN] proxy_server_task_join_error_during_shutdown: {}",
+                    e
+                );
             }
             Err(_) => {
-                tracing::warn!("Proxy server shutdown timed out; aborting server task");
+                tracing::warn!(
+                    "[W-SHUTDOWN-TIMEOUT] proxy_server_shutdown_timed_out_aborting_server_task"
+                );
                 server_handle.abort();
                 let _ = server_handle.await;
             }

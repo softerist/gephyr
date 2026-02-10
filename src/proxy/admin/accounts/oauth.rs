@@ -139,7 +139,10 @@ pub(crate) async fn handle_oauth_callback(
             Some(detail.clone()),
             None,
         );
-        error!("OAuth callback returned error: {}", detail);
+        error!(
+            "[E-OAUTH-CALLBACK-ERROR] oauth_callback_returned_error: {}",
+            detail
+        );
         return Ok(Html(format!(
             r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
             detail
@@ -162,7 +165,7 @@ pub(crate) async fn handle_oauth_callback(
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <title>Authorization Successful</title>
+                    <title>Authorization Received</title>
                     <style>
                         body {{ font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #f9fafb; padding: 20px; box-sizing: border-box; }}
                         .card {{ background: white; padding: 2rem; border-radius: 1.5rem; box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1); text-align: center; max-width: 500px; width: 100%; }}
@@ -215,7 +218,10 @@ pub(crate) async fn handle_oauth_callback(
             .to_string(),
         )),
         Err(e) => {
-            error!("OAuth callback submission failed: {}", e);
+            error!(
+                "[E-OAUTH-CALLBACK-SUBMIT] oauth_callback_submission_failed: {}",
+                e
+            );
             Ok(Html(format!(
                 r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
                 e
@@ -292,7 +298,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                             Some(user_info.email.clone()),
                                         );
                                         crate::modules::system::logger::log_error(&format!(
-                                            "Failed to save account in background OAuth: {}",
+                                            "[E-OAUTH-ACCOUNT-SAVE] oauth_background_save_account_failed: {}",
                                             e
                                         ));
                                     } else {
@@ -314,7 +320,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                         None,
                                     );
                                     crate::modules::system::logger::log_error(&format!(
-                                        "Failed to fetch user info in background OAuth: {}",
+                                        "[E-OAUTH-USERINFO] oauth_background_fetch_user_info_failed: {}",
                                         e
                                     ));
                                 }
@@ -326,7 +332,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                 None,
                             );
                             crate::modules::system::logger::log_error(
-                                "Background OAuth error: Google did not return a refresh_token.",
+                                "[E-OAUTH-REFRESH-TOKEN] oauth_background_refresh_token_missing",
                             );
                         }
                     }
@@ -337,7 +343,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                             None,
                         );
                         crate::modules::system::logger::log_error(&format!(
-                            "Background OAuth exchange failed: {}",
+                            "[E-OAUTH-EXCHANGE] oauth_background_exchange_failed: {}",
                             e
                         ));
                     }
@@ -350,7 +356,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                     None,
                 );
                 crate::modules::system::logger::log_error(&format!(
-                    "Background OAuth flow error: {}",
+                    "[E-OAUTH-BACKGROUND] oauth_background_flow_error: {}",
                     e
                 ));
             }

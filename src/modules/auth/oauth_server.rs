@@ -221,8 +221,9 @@ fn oauth_success_html() -> &'static str {
     "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
     <html>\
     <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
-    <h1 style='color: green;'>✅ Authorization Successful!</h1>\
-    <p>You can close this window and return to the application.</p>\
+    <h1 style='color: green;'>✅ Authorization Received</h1>\
+    <p>The authorization code was received. You can close this window and return to the application.</p>\
+    <p>Account linking continues after this step and may still fail; check terminal logs if needed.</p>\
     <script>setTimeout(function() { window.close(); }, 2000);</script>\
     </body>\
     </html>"
@@ -316,7 +317,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                 Ok(l4) => ipv4_listener = Some(l4),
                 Err(e) => {
                     crate::modules::system::logger::log_warn(&format!(
-                        "failed_to_bind_ipv4_callback_port_127_0_0_1:{} (will only listen on IPv6): {}",
+                        "[W-OAUTH-IPV4-BIND] failed_to_bind_ipv4_callback_port_127_0_0_1:{} (will only listen on IPv6): {}",
                         port, e
                     ));
                 }
@@ -336,7 +337,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                 Ok(l6) => ipv6_listener = Some(l6),
                 Err(e) => {
                     crate::modules::system::logger::log_warn(&format!(
-                        "failed_to_bind_ipv6_callback_port_::1:{} (will only listen on IPv4): {}",
+                        "[W-OAUTH-IPV6-BIND] failed_to_bind_ipv6_callback_port_::1:{} (will only listen on IPv4): {}",
                         port, e
                     ));
                 }
@@ -410,7 +411,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 if code.is_none() && bytes_read > 0 {
                     crate::modules::system::logger::log_error(&format!(
-                        "OAuth callback failed to parse code. Raw request (first 512 bytes): {}",
+                        "[E-OAUTH-CALLBACK-PARSE] oauth_callback_failed_to_parse_code_raw_request: {}",
                         &request.chars().take(512).collect::<String>()
                     ));
                 }
@@ -434,7 +435,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                             None,
                         );
                         crate::modules::system::logger::log_warn(
-                            "OAuth consent screen rejected by user",
+                            "[W-OAUTH-ACCESS-DENIED] oauth_consent_screen_rejected_by_user",
                         );
                         (
                             Err("OAuth access denied".to_string()),
@@ -449,7 +450,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         };
                         set_oauth_flow_status(OAuthFlowPhase::Failed, Some(detail.clone()), None);
                         crate::modules::system::logger::log_error(&format!(
-                            "OAuth callback returned error: {}",
+                            "[E-OAUTH-CALLBACK-ERROR] oauth_callback_returned_error: {}",
                             detail
                         ));
                         (Err(format!("OAuth error: {}", error)), oauth_fail_html())
@@ -472,7 +473,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                             None,
                         );
                         crate::modules::system::logger::log_error(
-                            "OAuth callback state mismatch (CSRF protection)",
+                            "[E-OAUTH-STATE-MISMATCH] oauth_callback_state_mismatch_csrf_protection",
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
                     }
@@ -547,7 +548,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 if code.is_none() && bytes_read > 0 {
                     crate::modules::system::logger::log_error(&format!(
-                        "OAuth callback failed to parse code (IPv6). Raw request: {}",
+                        "[E-OAUTH-CALLBACK-PARSE] oauth_callback_failed_to_parse_code_ipv6_raw_request: {}",
                         &request.chars().take(512).collect::<String>()
                     ));
                 }
@@ -571,7 +572,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                             None,
                         );
                         crate::modules::system::logger::log_warn(
-                            "OAuth consent screen rejected by user (IPv6)",
+                            "[W-OAUTH-ACCESS-DENIED] oauth_consent_screen_rejected_by_user_ipv6",
                         );
                         (
                             Err("OAuth access denied".to_string()),
@@ -586,7 +587,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                         };
                         set_oauth_flow_status(OAuthFlowPhase::Failed, Some(detail.clone()), None);
                         crate::modules::system::logger::log_error(&format!(
-                            "OAuth callback returned error (IPv6): {}",
+                            "[E-OAUTH-CALLBACK-ERROR] oauth_callback_returned_error_ipv6: {}",
                             detail
                         ));
                         (Err(format!("OAuth error: {}", error)), oauth_fail_html())
@@ -609,7 +610,7 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
                             None,
                         );
                         crate::modules::system::logger::log_error(
-                            "OAuth callback state mismatch (IPv6 CSRF protection)",
+                            "[E-OAUTH-STATE-MISMATCH] oauth_callback_state_mismatch_ipv6_csrf_protection",
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
                     }

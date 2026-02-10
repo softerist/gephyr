@@ -29,7 +29,7 @@ fn increase_nofile_limit() {
                 if libc::setrlimit(libc::RLIMIT_NOFILE, &rl) == 0 {
                     info!("Successfully increased hard file limit to {}", target);
                 } else {
-                    warn!("Failed to increase file descriptor limit");
+                    warn!("[W-RUNTIME-NOFILE-LIMIT] failed_to_increase_file_descriptor_limit");
                 }
             }
         }
@@ -72,7 +72,9 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
 
     if let Ok(mode) = std::env::var("ABV_AUTH_MODE").or_else(|_| std::env::var("AUTH_MODE")) {
         if mode.trim().eq_ignore_ascii_case("auto") {
-            warn!("Auth mode 'auto' is deprecated; coercing to 'strict' in headless mode");
+            warn!(
+                "[W-AUTH-MODE-AUTO-DEPRECATED] auth_mode_auto_is_deprecated_coercing_to_strict_in_headless_mode"
+            );
             config.proxy.auth_mode = crate::proxy::ProxyAuthMode::Strict;
         } else {
             match parse_auth_mode(&mode) {
@@ -80,7 +82,10 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
                     info!("Using auth mode from environment: {:?}", parsed);
                     config.proxy.auth_mode = parsed;
                 }
-                None => warn!("Ignoring invalid auth mode value: {}", mode),
+                None => warn!(
+                    "[W-AUTH-MODE-INVALID] ignoring_invalid_auth_mode_value: {}",
+                    mode
+                ),
             }
         }
     }
@@ -95,14 +100,17 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
                 config.proxy.allow_lan_access
             );
         } else {
-            warn!("Ignoring invalid LAN access value: {}", allow_lan);
+            warn!(
+                "[W-LAN-ACCESS-INVALID] ignoring_invalid_lan_access_value: {}",
+                allow_lan
+            );
         }
     }
 }
 
 fn apply_security_hardening(config: &mut crate::models::AppConfig) {
     if matches!(config.proxy.auth_mode, crate::proxy::ProxyAuthMode::Off) {
-        warn!("Auth mode was Off, forcing Strict in headless mode");
+        warn!("[W-AUTH-MODE-HARDENED] auth_mode_off_forcing_strict_in_headless_mode");
         config.proxy.auth_mode = crate::proxy::ProxyAuthMode::Strict;
     }
 }
@@ -136,7 +144,7 @@ async fn start_headless_runtime() -> Result<commands::proxy::ProxyServiceState, 
         config.proxy.port
     );
     if config.proxy.allow_lan_access {
-        warn!("LAN access is enabled (bind address will be 0.0.0.0)");
+        warn!("[W-LAN-ACCESS-ENABLED] lan_access_enabled_bind_address_0_0_0_0");
     } else {
         info!("LAN access is disabled (bind address will be 127.0.0.1)");
     }
@@ -161,13 +169,22 @@ pub fn run() {
     logger::init_logger();
 
     if let Err(e) = modules::stats::token_stats::init_db() {
-        error!("Failed to initialize token stats database: {}", e);
+        error!(
+            "[E-DB-TOKEN-STATS-INIT] failed_to_initialize_token_stats_database: {}",
+            e
+        );
     }
     if let Err(e) = modules::persistence::security_db::init_db() {
-        error!("Failed to initialize security database: {}", e);
+        error!(
+            "[E-DB-SECURITY-INIT] failed_to_initialize_security_database: {}",
+            e
+        );
     }
     if let Err(e) = modules::persistence::user_token_db::init_db() {
-        error!("Failed to initialize user token database: {}", e);
+        error!(
+            "[E-DB-USER-TOKEN-INIT] failed_to_initialize_user_token_database: {}",
+            e
+        );
     }
 
     let args: Vec<String> = std::env::args().collect();
@@ -185,14 +202,14 @@ pub fn run() {
                 return;
             }
             Err(e) => {
-                error!("Secret re-encryption failed: {}", e);
+                error!("[E-SECRET-REENCRYPT] secret_reencryption_failed: {}", e);
                 std::process::exit(1);
             }
         }
     }
 
     if !args.iter().any(|arg| arg == "--headless") {
-        warn!("Starting headless runtime (`--headless` is optional).");
+        warn!("[W-RUNTIME-HEADLESS-DEFAULT] starting_headless_runtime_headless_flag_is_optional");
     }
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
@@ -200,7 +217,7 @@ pub fn run() {
         let proxy_state = match start_headless_runtime().await {
             Ok(state) => state,
             Err(e) => {
-                error!("{}", e);
+                error!("[E-RUNTIME-STARTUP] {}", e);
                 std::process::exit(1);
             }
         };
@@ -209,7 +226,10 @@ pub fn run() {
         let _ = tokio::signal::ctrl_c().await;
         info!("Shutting down headless service");
         if let Err(e) = commands::proxy::internal_stop_proxy_service(&proxy_state).await {
-            warn!("Failed to stop proxy service cleanly: {}", e);
+            warn!(
+                "[W-RUNTIME-STOP] failed_to_stop_proxy_service_cleanly: {}",
+                e
+            );
         }
     });
 }

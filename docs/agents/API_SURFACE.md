@@ -24,7 +24,7 @@ Defined in `src/proxy/routes/admin.rs`; mounted under `/api` only if `ABV_ENABLE
 
 Primary groups:
 
-- Accounts:
+  Accounts:
 - list/add/current/switch/refresh/delete
 - bind device/profile, version list/restore/delete
 - import v1/db/custom-db, sync-db
@@ -35,10 +35,11 @@ Primary groups:
 - web auth URL + callback flow
 - status: `GET /api/auth/status` returns phase + detail
 - phases include `idle`, `prepared`, `callback_received`, `exchanging_token`, `fetching_user_info`, `saving_account`, `linked`, `rejected`, `failed`, `cancelled`
+- `linked` is the terminal "connected" success state 
 - `GET /api/auth/status` also includes `recent_events` (ring buffer of the latest phase transitions) to make short-lived phases observable in polling clients
 - `GET /api/auth/status` includes `counters` (prepared/callback/exchange/linked/rejected/cancelled/failed totals and `failed_by_code` map, e.g. `oauth.exchange_failed`, `oauth.account_save_failed`)
 - OAuth consent denial from callback (`error=access_denied`) is mapped to `phase=rejected` with `detail=oauth_access_denied`
-- Proxy control:
+  Proxy control:
 - status/start/stop
 - model mapping update
 - api-key generation

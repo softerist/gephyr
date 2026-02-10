@@ -78,7 +78,7 @@ fn resolve_shutdown_drain_timeout() -> Duration {
         if !trimmed.is_empty() {
             match trimmed.parse::<u64>() {
                 Ok(parsed) if parsed != secs => warn!(
-                    "{}={} is out of supported range ({}-{}); using {} seconds",
+                    "[W-SHUTDOWN-DRAIN-TIMEOUT-RANGE] {}={} is out of supported range ({}-{}); using {} seconds",
                     SHUTDOWN_DRAIN_TIMEOUT_ENV,
                     parsed,
                     MIN_SHUTDOWN_DRAIN_TIMEOUT_SECS,
@@ -87,7 +87,7 @@ fn resolve_shutdown_drain_timeout() -> Duration {
                 ),
                 Ok(_) => {}
                 Err(_) => warn!(
-                    "Invalid {} value '{}'; using default {} seconds",
+                    "[W-SHUTDOWN-DRAIN-TIMEOUT-INVALID] invalid {} value '{}'; using default {} seconds",
                     SHUTDOWN_DRAIN_TIMEOUT_ENV, trimmed, DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECS
                 ),
             }
@@ -284,7 +284,7 @@ impl AxumServer {
         let app = {
             let base = Router::new().merge(proxy_routes);
             let base = if enable_admin_api {
-                tracing::warn!("Admin API enabled at /api");
+                tracing::warn!("[W-ADMIN-API-ENABLED] admin_api_enabled_at_/api");
                 base.nest("/api", admin_routes).route(
                     "/auth/callback",
                     get(crate::proxy::admin::handle_oauth_callback),
@@ -365,7 +365,7 @@ impl AxumServer {
                                 });
                             }
                             Err(e) => {
-                                error!("Failed to accept connection: {:?}", e);
+                                error!("[E-SERVER-ACCEPT] failed_to_accept_connection: {:?}", e);
                             }
                         }
                     }
@@ -378,7 +378,9 @@ impl AxumServer {
             .await;
 
             if drain_result.is_err() {
-                warn!("Timed out draining active connections; aborting remaining tasks");
+                warn!(
+                    "[W-SHUTDOWN-DRAIN-TIMEOUT] timed_out_draining_active_connections_aborting_remaining_tasks"
+                );
                 connection_tasks.abort_all();
                 while connection_tasks.join_next().await.is_some() {}
             }
