@@ -36,6 +36,7 @@ Primary groups:
 - status: `GET /api/auth/status` returns phase + detail
 - phases include `idle`, `prepared`, `callback_received`, `exchanging_token`, `fetching_user_info`, `saving_account`, `linked`, `rejected`, `failed`, `cancelled`
 - `GET /api/auth/status` also includes `recent_events` (ring buffer of the latest phase transitions) to make short-lived phases observable in polling clients
+- `GET /api/auth/status` includes `counters` (prepared/callback/exchange/linked/rejected/cancelled/failed totals and `failed_by_code` map, e.g. `oauth.exchange_failed`, `oauth.account_save_failed`)
 - OAuth consent denial from callback (`error=access_denied`) is mapped to `phase=rejected` with `detail=oauth_access_denied`
 - Proxy control:
 - status/start/stop

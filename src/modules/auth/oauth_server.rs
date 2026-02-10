@@ -1,5 +1,6 @@
 use crate::modules::auth::oauth;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,6 +22,7 @@ struct OAuthFlowState {
 static OAUTH_FLOW_STATE: OnceLock<Mutex<Option<OAuthFlowState>>> = OnceLock::new();
 static OAUTH_FLOW_STATUS: OnceLock<Mutex<OAuthFlowStatusSnapshot>> = OnceLock::new();
 static OAUTH_FLOW_HISTORY: OnceLock<Mutex<Vec<OAuthFlowStatusEvent>>> = OnceLock::new();
+static OAUTH_FLOW_COUNTERS: OnceLock<Mutex<OAuthFlowCounters>> = OnceLock::new();
 
 fn get_oauth_flow_state() -> &'static Mutex<Option<OAuthFlowState>> {
     OAUTH_FLOW_STATE.get_or_init(|| Mutex::new(None))
@@ -48,6 +50,7 @@ pub struct OAuthFlowStatusSnapshot {
     pub account_email: Option<String>,
     pub updated_at_unix: i64,
     pub recent_events: Vec<OAuthFlowStatusEvent>,
+    pub counters: OAuthFlowCounters,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +61,18 @@ pub struct OAuthFlowStatusEvent {
     pub updated_at_unix: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct OAuthFlowCounters {
+    pub prepared_total: u64,
+    pub callback_received_total: u64,
+    pub exchanging_token_total: u64,
+    pub linked_total: u64,
+    pub rejected_total: u64,
+    pub cancelled_total: u64,
+    pub failed_total: u64,
+    pub failed_by_code: HashMap<String, u64>,
+}
+
 impl OAuthFlowStatusSnapshot {
     fn idle() -> Self {
         Self {
@@ -66,6 +81,7 @@ impl OAuthFlowStatusSnapshot {
             account_email: None,
             updated_at_unix: chrono::Utc::now().timestamp(),
             recent_events: Vec::new(),
+            counters: OAuthFlowCounters::default(),
         }
     }
 }
@@ -78,12 +94,70 @@ fn get_oauth_flow_history_state() -> &'static Mutex<Vec<OAuthFlowStatusEvent>> {
     OAUTH_FLOW_HISTORY.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn get_oauth_flow_counters_state() -> &'static Mutex<OAuthFlowCounters> {
+    OAUTH_FLOW_COUNTERS.get_or_init(|| Mutex::new(OAuthFlowCounters::default()))
+}
+
+fn classify_failure_code(detail: Option<&str>) -> String {
+    let value = detail.unwrap_or_default();
+    if value.contains("oauth_state_mismatch") {
+        "oauth.state_mismatch".to_string()
+    } else if value.contains("oauth_state_missing") {
+        "oauth.state_missing".to_string()
+    } else if value.contains("oauth_flow_not_active") {
+        "oauth.flow_not_active".to_string()
+    } else if value.contains("oauth_exchange_failed") {
+        "oauth.exchange_failed".to_string()
+    } else if value.contains("oauth_refresh_token_missing") {
+        "oauth.refresh_token_missing".to_string()
+    } else if value.contains("oauth_user_info_failed") {
+        "oauth.user_info_failed".to_string()
+    } else if value.contains("oauth_save_account_failed") {
+        "oauth.account_save_failed".to_string()
+    } else if value.contains("oauth_access_denied") {
+        "oauth.access_denied".to_string()
+    } else if value.contains("oauth_background_flow_failed") {
+        "oauth.background_flow_failed".to_string()
+    } else if value.contains("oauth_flow_channel_closed")
+        || value.contains("oauth_flow_receiver_dropped")
+    {
+        "oauth.channel_error".to_string()
+    } else if value.contains("encryption_key_unavailable")
+        || value.contains("E-CRYPTO-KEY-UNAVAILABLE")
+    {
+        "oauth.key_unavailable".to_string()
+    } else {
+        "oauth.unknown_failure".to_string()
+    }
+}
+
+fn update_oauth_counters(phase: &OAuthFlowPhase, detail: Option<&str>) {
+    if let Ok(mut counters) = get_oauth_flow_counters_state().lock() {
+        match phase {
+            OAuthFlowPhase::Prepared => counters.prepared_total += 1,
+            OAuthFlowPhase::CallbackReceived => counters.callback_received_total += 1,
+            OAuthFlowPhase::ExchangingToken => counters.exchanging_token_total += 1,
+            OAuthFlowPhase::Linked => counters.linked_total += 1,
+            OAuthFlowPhase::Rejected => counters.rejected_total += 1,
+            OAuthFlowPhase::Cancelled => counters.cancelled_total += 1,
+            OAuthFlowPhase::Failed => {
+                counters.failed_total += 1;
+                let code = classify_failure_code(detail);
+                let entry = counters.failed_by_code.entry(code).or_insert(0);
+                *entry += 1;
+            }
+            _ => {}
+        }
+    }
+}
+
 fn set_oauth_flow_status(
     phase: OAuthFlowPhase,
     detail: Option<String>,
     account_email: Option<String>,
 ) {
     let updated_at_unix = chrono::Utc::now().timestamp();
+    update_oauth_counters(&phase, detail.as_deref());
     if let Ok(mut history) = get_oauth_flow_history_state().lock() {
         history.push(OAuthFlowStatusEvent {
             phase: phase.clone(),
@@ -103,6 +177,7 @@ fn set_oauth_flow_status(
             account_email,
             updated_at_unix,
             recent_events: Vec::new(),
+            counters: OAuthFlowCounters::default(),
         };
     }
 }
@@ -123,7 +198,23 @@ pub fn get_oauth_flow_status() -> OAuthFlowStatusSnapshot {
     if let Ok(history) = get_oauth_flow_history_state().lock() {
         snapshot.recent_events = history.clone();
     }
+    if let Ok(counters) = get_oauth_flow_counters_state().lock() {
+        snapshot.counters = counters.clone();
+    }
     snapshot
+}
+
+#[cfg(test)]
+pub fn reset_oauth_observability_for_tests() {
+    if let Ok(mut status) = get_oauth_flow_status_state().lock() {
+        *status = OAuthFlowStatusSnapshot::idle();
+    }
+    if let Ok(mut history) = get_oauth_flow_history_state().lock() {
+        history.clear();
+    }
+    if let Ok(mut counters) = get_oauth_flow_counters_state().lock() {
+        *counters = OAuthFlowCounters::default();
+    }
 }
 
 fn oauth_success_html() -> &'static str {

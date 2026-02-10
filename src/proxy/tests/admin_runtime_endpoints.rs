@@ -264,6 +264,7 @@ mod tests {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()
             .expect("admin endpoint test lock");
+        crate::modules::auth::oauth_server::reset_oauth_observability_for_tests();
         let api_key = "admin-test-key";
         let router = build_test_router(api_key);
 
@@ -280,6 +281,15 @@ mod tests {
         assert!(body["detail"].is_null() || body["detail"].is_string());
         assert!(body["account_email"].is_null() || body["account_email"].is_string());
         assert!(body["recent_events"].is_array());
+        assert!(body["counters"].is_object());
+        assert!(body["counters"]["prepared_total"].is_number());
+        assert!(body["counters"]["callback_received_total"].is_number());
+        assert!(body["counters"]["exchanging_token_total"].is_number());
+        assert!(body["counters"]["linked_total"].is_number());
+        assert!(body["counters"]["rejected_total"].is_number());
+        assert!(body["counters"]["cancelled_total"].is_number());
+        assert!(body["counters"]["failed_total"].is_number());
+        assert!(body["counters"]["failed_by_code"].is_object());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -287,6 +297,7 @@ mod tests {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()
             .expect("admin endpoint test lock");
+        crate::modules::auth::oauth_server::reset_oauth_observability_for_tests();
         let api_key = "admin-test-key";
         let router = build_test_router(api_key);
 
@@ -334,6 +345,7 @@ mod tests {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()
             .expect("admin endpoint test lock");
+        crate::modules::auth::oauth_server::reset_oauth_observability_for_tests();
         let api_key = "admin-test-key";
         seed_runtime_config_api_key(api_key);
         let state = build_test_state(api_key);
@@ -367,6 +379,55 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["phase"], Value::from("rejected"));
         assert_eq!(body["detail"], Value::from("oauth_access_denied"));
+        assert_eq!(body["counters"]["rejected_total"], Value::from(1));
+        assert_eq!(body["counters"]["failed_total"], Value::from(0));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_oauth_status_failure_counters_track_by_code() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        crate::modules::auth::oauth_server::reset_oauth_observability_for_tests();
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+            Some("oauth_exchange_failed: mocked".to_string()),
+            None,
+        );
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+            Some("oauth_refresh_token_missing".to_string()),
+            None,
+        );
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+            Some("oauth_save_account_failed: E-CRYPTO-KEY-UNAVAILABLE".to_string()),
+            None,
+        );
+
+        let request = Request::builder()
+            .uri("/auth/status")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (status, body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["counters"]["failed_total"], Value::from(3));
+        assert_eq!(
+            body["counters"]["failed_by_code"]["oauth.exchange_failed"],
+            Value::from(1)
+        );
+        assert_eq!(
+            body["counters"]["failed_by_code"]["oauth.refresh_token_missing"],
+            Value::from(1)
+        );
+        assert_eq!(
+            body["counters"]["failed_by_code"]["oauth.account_save_failed"],
+            Value::from(1)
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
