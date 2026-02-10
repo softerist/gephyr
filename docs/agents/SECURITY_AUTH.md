@@ -76,3 +76,16 @@ From `src/utils/crypto.rs`:
 - Fallback source: machine UID (when available)
 - No constant/default shared fallback key
 - Encrypted payloads fail closed when no key source is available (plaintext compatibility remains for non-encrypted values)
+- New encrypted writes use versioned ciphertext format (`v2:<base64>`).
+- Legacy unversioned ciphertext remains decryptable for backward compatibility.
+
+## Secret Re-encryption Migration
+
+From `src/commands/crypto.rs` and `src/lib.rs`:
+
+- One-time migration command: run the binary with `--reencrypt-secrets`.
+- Flow:
+- load + save app config to rewrite encrypted fields to v2 format
+- iterate account JSON files and load + save each account to rewrite encrypted fields
+- startup exits after migration completes (service does not stay running in this mode)
+- Migration requires a valid key source (`ABV_ENCRYPTION_KEY` recommended).

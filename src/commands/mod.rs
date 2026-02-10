@@ -1,3 +1,4 @@
+pub mod crypto;
 pub mod proxy;
 pub mod user_token;
 

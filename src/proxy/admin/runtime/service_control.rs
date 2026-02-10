@@ -11,6 +11,21 @@ use axum::{
 use serde::Deserialize;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::Ordering;
+
+fn parse_env_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn admin_stop_shutdown_hook_enabled() -> bool {
+    std::env::var("ABV_ADMIN_STOP_SHUTDOWN")
+        .ok()
+        .map(|value| parse_env_flag(&value))
+        .unwrap_or(false)
+}
+
 pub(crate) async fn admin_get_proxy_status(
     State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
@@ -62,6 +77,18 @@ pub(crate) async fn admin_stop_proxy_service(State(state): State<AdminState>) ->
     let mut running = state.runtime.is_running.write().await;
     *running = false;
     logger::log_info("[API] Proxy service disabled (Axum mode / Persistence synced)");
+
+    if admin_stop_shutdown_hook_enabled() {
+        if crate::proxy::server::request_global_shutdown() {
+            logger::log_warn(
+                "[API] ABV_ADMIN_STOP_SHUTDOWN enabled: requested graceful server shutdown",
+            );
+        } else {
+            logger::log_warn(
+                "[API] ABV_ADMIN_STOP_SHUTDOWN enabled but no active server shutdown hook found",
+            );
+        }
+    }
     StatusCode::OK
 }
 
@@ -177,6 +204,30 @@ pub(crate) async fn admin_get_proxy_sticky_config(
         "scheduling": sticky.scheduling,
         "preferred_account_id": preferred_account_id
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_env_flag;
+
+    #[test]
+    fn parse_env_flag_supports_expected_truthy_values() {
+        assert!(parse_env_flag("true"));
+        assert!(parse_env_flag("TRUE"));
+        assert!(parse_env_flag("1"));
+        assert!(parse_env_flag(" yes "));
+        assert!(parse_env_flag("On"));
+    }
+
+    #[test]
+    fn parse_env_flag_rejects_non_truthy_values() {
+        assert!(!parse_env_flag("false"));
+        assert!(!parse_env_flag("0"));
+        assert!(!parse_env_flag("off"));
+        assert!(!parse_env_flag("no"));
+        assert!(!parse_env_flag("maybe"));
+        assert!(!parse_env_flag(""));
+    }
 }
 
 #[derive(Deserialize)]

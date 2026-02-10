@@ -12,7 +12,9 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
-- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s): `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`
+- One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
+- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ABV_ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
+- HTTP/2 is currently deferred after local HTTP/1.1 concurrency benchmark (`1500` requests @ `64` concurrency, `~1676.90 req/s`): `src/proxy/server.rs`
 
 ## Public Proxy API Surface
 
@@ -71,6 +73,7 @@ Main admin groups include:
 - `x-goog-api-key`
 - Admin strict auth checks admin password first (if configured), then API key fallback: `src/proxy/middleware/auth.rs`
 - API/admin secret comparison uses a constant-time helper in auth middleware: `src/proxy/middleware/auth.rs`
+- Secret encryption writes are versioned (`v2:<base64>`), while decrypt path remains backward-compatible with legacy unversioned payloads: `src/utils/crypto.rs`
 - IP filter supports whitelist mode, whitelist-priority mode, blacklist exact/CIDR matching, blocked-request JSON responses, and blocked log persistence: `src/proxy/middleware/ip_filter.rs`, `src/modules/persistence/security_db.rs`
 - Client IP resolution trusts forwarded headers only for socket peers in `proxy.trusted_proxies` (IP/CIDR); otherwise it uses socket `ConnectInfo` only: `src/proxy/middleware/client_ip.rs`, `src/proxy/config.rs`
 
@@ -226,6 +229,7 @@ Main admin groups include:
 - `ABV_ENCRYPTION_KEY`
 - `ABV_MAX_BODY_SIZE`
 - `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`
+- `ABV_ADMIN_STOP_SHUTDOWN`
 - `ABV_ENABLE_ADMIN_API`
 - `ABV_PUBLIC_URL`
 - `ABV_DATA_DIR`

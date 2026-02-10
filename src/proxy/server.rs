@@ -9,6 +9,8 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
 static PENDING_DELETE_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
+static GLOBAL_SHUTDOWN_TX: OnceLock<std::sync::RwLock<Option<tokio::sync::watch::Sender<bool>>>> =
+    OnceLock::new();
 const SHUTDOWN_DRAIN_TIMEOUT_ENV: &str = "ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS";
 const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 10;
 const MIN_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 1;
@@ -20,6 +22,34 @@ fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> 
 
 fn get_pending_delete_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
     PENDING_DELETE_ACCOUNTS.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
+}
+
+fn global_shutdown_slot() -> &'static std::sync::RwLock<Option<tokio::sync::watch::Sender<bool>>> {
+    GLOBAL_SHUTDOWN_TX.get_or_init(|| std::sync::RwLock::new(None))
+}
+
+fn register_global_shutdown_sender(sender: tokio::sync::watch::Sender<bool>) {
+    if let Ok(mut slot) = global_shutdown_slot().write() {
+        *slot = Some(sender);
+    }
+}
+
+fn clear_global_shutdown_sender() {
+    if let Ok(mut slot) = global_shutdown_slot().write() {
+        *slot = None;
+    }
+}
+
+pub fn request_global_shutdown() -> bool {
+    let sender = global_shutdown_slot()
+        .read()
+        .ok()
+        .and_then(|slot| slot.clone());
+    if let Some(tx) = sender {
+        tx.send(true).is_ok()
+    } else {
+        false
+    }
 }
 
 fn normalize_shutdown_drain_timeout_secs(raw: &str) -> Option<u64> {
@@ -279,6 +309,7 @@ impl AxumServer {
             .await
             .map_err(|e| format!("Address {} binding failed: {}", addr, e))?;
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        register_global_shutdown_sender(shutdown_tx.clone());
         let drain_timeout = resolve_shutdown_drain_timeout();
 
         tracing::info!("Proxy server started at http://{}", addr);
@@ -352,6 +383,7 @@ impl AxumServer {
                 while connection_tasks.join_next().await.is_some() {}
             }
 
+            clear_global_shutdown_sender();
             tracing::info!("Proxy server shutdown complete");
         });
 
@@ -361,7 +393,89 @@ impl AxumServer {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_shutdown_drain_timeout_secs;
+    use super::{
+        normalize_shutdown_drain_timeout_secs, AxumServer, AxumStartConfig,
+        SHUTDOWN_DRAIN_TIMEOUT_ENV,
+    };
+    use crate::modules::system::integration::SystemManager;
+    use crate::proxy::config::{
+        CorsConfig, DebugLoggingConfig, ExperimentalConfig, ProxyPoolConfig, UpstreamProxyConfig,
+        ZaiConfig,
+    };
+    use crate::proxy::monitor::ProxyMonitor;
+    use crate::proxy::{ProxyAuthMode, ProxySecurityConfig, TokenManager};
+    use futures::StreamExt;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio::time::Instant;
+
+    static SERVER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn reserve_local_port() -> u16 {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral test listener");
+        listener
+            .local_addr()
+            .expect("ephemeral listener local_addr")
+            .port()
+    }
+
+    fn test_start_config(port: u16) -> AxumStartConfig {
+        let data_dir = std::env::temp_dir().join(format!(
+            ".gephyr-shutdown-drain-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        AxumStartConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            token_manager: Arc::new(TokenManager::new(data_dir)),
+            custom_mapping: HashMap::new(),
+            request_timeout: 30,
+            upstream_proxy: UpstreamProxyConfig::default(),
+            user_agent_override: None,
+            cors_config: CorsConfig::default(),
+            security_config: ProxySecurityConfig {
+                auth_mode: ProxyAuthMode::Strict,
+                api_key: "test-api-key".to_string(),
+                admin_password: None,
+                allow_lan_access: false,
+                port,
+                security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+            },
+            zai_config: ZaiConfig::default(),
+            monitor: Arc::new(ProxyMonitor::new(64)),
+            experimental_config: ExperimentalConfig::default(),
+            debug_logging: DebugLoggingConfig::default(),
+            integration: SystemManager::Headless,
+            proxy_pool_config: ProxyPoolConfig::default(),
+        }
+    }
 
     #[test]
     fn normalize_shutdown_drain_timeout_accepts_valid_values() {
@@ -378,5 +492,124 @@ mod tests {
     fn normalize_shutdown_drain_timeout_clamps_to_supported_bounds() {
         assert_eq!(normalize_shutdown_drain_timeout_secs("0"), Some(1));
         assert_eq!(normalize_shutdown_drain_timeout_secs("99999"), Some(600));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_completes_with_in_flight_request_after_drain_timeout() {
+        let _guard = SERVER_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("server test lock");
+        let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "1");
+
+        let port = reserve_local_port();
+        let start_config = test_start_config(port);
+        let (server, mut handle) = AxumServer::start(start_config)
+            .await
+            .expect("server should start");
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to test server");
+        stream
+            .write_all(
+                b"POST /v1/messages HTTP/1.1\r\n\
+Host: 127.0.0.1\r\n\
+Authorization: Bearer test-api-key\r\n\
+Content-Type: application/json\r\n\
+Content-Length: 4096\r\n\
+\r\n\
+{\"model\":\"claude-3-5-haiku\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]",
+            )
+            .await
+            .expect("write partial request");
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        server.request_shutdown();
+
+        let joined = tokio::time::timeout(Duration::from_secs(4), &mut handle).await;
+        assert!(
+            joined.is_ok(),
+            "server task should finish after drain timeout and abort"
+        );
+        let join_result = joined.expect("join timeout result");
+        assert!(
+            join_result.is_ok(),
+            "server task should exit without panic: {join_result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn http1_health_concurrency_smoke_benchmark() {
+        let _guard = SERVER_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("server test lock");
+        let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "2");
+
+        let port = reserve_local_port();
+        let start_config = test_start_config(port);
+        let (server, mut handle) = AxumServer::start(start_config)
+            .await
+            .expect("server should start");
+
+        let client = reqwest::Client::builder()
+            .pool_max_idle_per_host(64)
+            .build()
+            .expect("reqwest client");
+        let total_requests = 1500usize;
+        let concurrency = 64usize;
+        let url = format!("http://127.0.0.1:{}/health", port);
+
+        let start = Instant::now();
+        let statuses: Vec<u16> = futures::stream::iter(0..total_requests)
+            .map(|_| {
+                let client = client.clone();
+                let url = url.clone();
+                async move {
+                    client
+                        .get(url)
+                        .header("Authorization", "Bearer test-api-key")
+                        .send()
+                        .await
+                        .expect("request should succeed")
+                        .status()
+                        .as_u16()
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+        let elapsed = start.elapsed();
+
+        let success_count = statuses.iter().filter(|&&status| status == 200).count();
+        let rps = total_requests as f64 / elapsed.as_secs_f64();
+
+        assert_eq!(
+            success_count, total_requests,
+            "all benchmark requests should return 200"
+        );
+        assert!(
+            rps > 200.0,
+            "unexpectedly low local HTTP/1.1 throughput: {:.2} req/s",
+            rps
+        );
+
+        println!(
+            "HTTP/1.1 benchmark: total={}, concurrency={}, elapsed_ms={}, rps={:.2}",
+            total_requests,
+            concurrency,
+            elapsed.as_millis(),
+            rps
+        );
+
+        server.request_shutdown();
+        let joined = tokio::time::timeout(Duration::from_secs(5), &mut handle).await;
+        assert!(joined.is_ok(), "server should stop after benchmark");
+        let join_result = joined.expect("join timeout result");
+        assert!(
+            join_result.is_ok(),
+            "server task should exit without panic: {join_result:?}"
+        );
     }
 }

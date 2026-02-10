@@ -9,6 +9,7 @@ use sha2::Digest;
 const NONCE_LEN: usize = 12;
 const GCM_TAG_LEN: usize = 16;
 const LEGACY_NONCE_SEED: &[u8] = b"antigravity_salt";
+const CIPHERTEXT_V2_PREFIX: &str = "v2:";
 // Packed payload is nonce + ciphertext+tag; ciphertext can be empty.
 const MIN_ENCRYPTED_BYTES: usize = NONCE_LEN + GCM_TAG_LEN;
 
@@ -56,8 +57,9 @@ fn get_encryption_key() -> Result<[u8; 32], String> {
 }
 
 fn looks_like_encrypted_payload(raw: &str) -> bool {
+    let encoded = raw.strip_prefix(CIPHERTEXT_V2_PREFIX).unwrap_or(raw);
     general_purpose::STANDARD
-        .decode(raw)
+        .decode(encoded)
         .map(|decoded| decoded.len() >= MIN_ENCRYPTED_BYTES)
         .unwrap_or(false)
 }
@@ -124,15 +126,24 @@ pub fn encrypt_string(password: &str) -> Result<String, String> {
     let mut packed = Vec::with_capacity(NONCE_LEN + ciphertext.len());
     packed.extend_from_slice(&nonce_bytes);
     packed.extend_from_slice(&ciphertext);
-    Ok(general_purpose::STANDARD.encode(packed))
+    Ok(format!(
+        "{}{}",
+        CIPHERTEXT_V2_PREFIX,
+        general_purpose::STANDARD.encode(packed)
+    ))
 }
 
 pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
     let key = get_encryption_key()?;
     let cipher = Aes256Gcm::new(&key.into());
 
+    let is_v2 = encrypted.starts_with(CIPHERTEXT_V2_PREFIX);
+    let encoded_payload = encrypted
+        .strip_prefix(CIPHERTEXT_V2_PREFIX)
+        .unwrap_or(encrypted);
+
     let decoded = general_purpose::STANDARD
-        .decode(encrypted)
+        .decode(encoded_payload)
         .map_err(|e| format!("Base64 decode failed: {}", e))?;
     if decoded.len() > NONCE_LEN {
         let (nonce_bytes, ciphertext) = decoded.split_at(NONCE_LEN);
@@ -141,6 +152,9 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
             return String::from_utf8(plaintext)
                 .map_err(|e| format!("UTF-8 conversion failed: {}", e));
         }
+    }
+    if is_v2 {
+        return Err("Decryption failed: invalid v2 payload or mismatched key".to_string());
     }
     let legacy_nonce = legacy_nonce_bytes();
     let nonce = Nonce::from_slice(&legacy_nonce);
@@ -153,6 +167,32 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static CRYPTO_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
 
     #[test]
     fn resolve_key_prefers_env_var_over_machine_uid() {
@@ -196,5 +236,52 @@ mod tests {
         let raw = general_purpose::STANDARD.encode(vec![7u8; MIN_ENCRYPTED_BYTES - 1]);
         let decrypted = decrypt_secret_or_plaintext(&raw).expect("fallback plaintext");
         assert_eq!(decrypted, raw);
+    }
+
+    #[test]
+    fn encrypted_values_decrypt_with_configured_key_source() {
+        let _guard = CRYPTO_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("crypto env lock");
+        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-migration-key");
+
+        let encrypted = encrypt_string("persisted-secret").expect("encrypt");
+        let decrypted = decrypt_secret_or_plaintext(&encrypted).expect("decrypt");
+
+        assert_eq!(decrypted, "persisted-secret");
+    }
+
+    #[test]
+    fn encrypt_string_uses_v2_prefix() {
+        let _guard = CRYPTO_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("crypto env lock");
+        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-v2-prefix-key");
+
+        let encrypted = encrypt_string("secret").expect("encrypt");
+        assert!(
+            encrypted.starts_with(CIPHERTEXT_V2_PREFIX),
+            "new ciphertext should use v2 prefix"
+        );
+    }
+
+    #[test]
+    fn decrypt_string_supports_unversioned_legacy_ciphertext() {
+        let _guard = CRYPTO_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("crypto env lock");
+        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-legacy-key");
+
+        let v2_encrypted = encrypt_string("legacy-plaintext").expect("encrypt");
+        let legacy_unversioned = v2_encrypted
+            .strip_prefix(CIPHERTEXT_V2_PREFIX)
+            .expect("v2 prefix")
+            .to_string();
+
+        let decrypted = decrypt_string(&legacy_unversioned).expect("decrypt legacy");
+        assert_eq!(decrypted, "legacy-plaintext");
     }
 }

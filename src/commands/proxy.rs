@@ -229,3 +229,75 @@ pub async fn internal_stop_proxy_service(state: &ProxyServiceState) -> Result<()
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{internal_start_proxy_service, internal_stop_proxy_service, ProxyServiceState};
+    use crate::modules::persistence::proxy_db;
+    use crate::modules::system::integration::SystemManager;
+    use crate::proxy::monitor::ProxyRequestLog;
+    use crate::proxy::ProxyConfig;
+    use std::sync::{Mutex, OnceLock};
+
+    static PROXY_STARTUP_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn reserve_local_port() -> u16 {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral test listener");
+        listener
+            .local_addr()
+            .expect("ephemeral listener local_addr")
+            .port()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn startup_runs_monitor_maintenance_and_initializes_proxy_db() {
+        let _guard = PROXY_STARTUP_TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("proxy startup test lock");
+        proxy_db::init_db().expect("proxy db init");
+        let old_log_id = format!("startup-maintenance-{}", uuid::Uuid::new_v4());
+        let old_timestamp = chrono::Utc::now().timestamp() - (40 * 24 * 3600);
+        let seeded_old_log = ProxyRequestLog {
+            id: old_log_id.clone(),
+            timestamp: old_timestamp,
+            method: "GET".to_string(),
+            url: "/maintenance-test".to_string(),
+            status: 200,
+            duration: 1,
+            model: None,
+            mapped_model: None,
+            account_email: None,
+            client_ip: Some("127.0.0.1".to_string()),
+            error: None,
+            request_body: None,
+            response_body: None,
+            input_tokens: None,
+            output_tokens: None,
+            protocol: None,
+            username: None,
+        };
+        proxy_db::save_log(&seeded_old_log).expect("seed old proxy log");
+
+        let mut config = ProxyConfig::default();
+        config.port = reserve_local_port();
+        config.enable_logging = false;
+
+        let state = ProxyServiceState::new();
+        let start_result =
+            internal_start_proxy_service(config, &state, SystemManager::Headless).await;
+        assert!(
+            start_result.is_ok(),
+            "service start should succeed: {:?}",
+            start_result.err()
+        );
+
+        assert!(
+            proxy_db::get_log_detail(&old_log_id).is_err(),
+            "startup maintenance should clean old proxy logs"
+        );
+
+        let _ = internal_stop_proxy_service(&state).await;
+    }
+}

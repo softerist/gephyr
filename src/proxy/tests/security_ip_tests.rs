@@ -603,6 +603,148 @@ mod ip_filter_middleware_tests {
 }
 
 #[cfg(test)]
+mod middleware_consistency_tests {
+    use axum::{
+        body::Body,
+        extract::ConnectInfo,
+        http::{Request, StatusCode},
+    };
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, AtomicUsize};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::RwLock;
+    use tower::ServiceExt;
+
+    use crate::modules::auth::account_service::AccountService;
+    use crate::modules::persistence::security_db::{
+        add_to_whitelist, clear_ip_access_logs, get_blacklist, get_whitelist, init_db,
+        remove_from_blacklist, remove_from_whitelist,
+    };
+    use crate::modules::system::integration::SystemManager;
+    use crate::proxy::config::{
+        DebugLoggingConfig, ExperimentalConfig, ProxyPoolConfig, SecurityMonitorConfig,
+        UpstreamProxyConfig, ZaiConfig,
+    };
+    use crate::proxy::monitor::ProxyMonitor;
+    use crate::proxy::proxy_pool::ProxyPoolManager;
+    use crate::proxy::routes::build_proxy_routes;
+    use crate::proxy::state::{AppState, ConfigState, CoreServices, RuntimeState};
+    use crate::proxy::{ProxyAuthMode, ProxySecurityConfig, TokenManager};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn cleanup_security_test_data() {
+        if let Ok(entries) = get_blacklist() {
+            for entry in entries {
+                let _ = remove_from_blacklist(&entry.id);
+            }
+        }
+        if let Ok(entries) = get_whitelist() {
+            for entry in entries {
+                let _ = remove_from_whitelist(&entry.id);
+            }
+        }
+        let _ = clear_ip_access_logs();
+    }
+
+    fn build_test_state(monitor: Arc<ProxyMonitor>) -> AppState {
+        let data_dir = std::env::temp_dir().join(format!(
+            ".gephyr-security-middleware-consistency-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let token_manager = Arc::new(TokenManager::new(data_dir));
+        let integration = SystemManager::Headless;
+        let account_service = Arc::new(AccountService::new(integration.clone()));
+        let proxy_pool_state = Arc::new(RwLock::new(ProxyPoolConfig::default()));
+        let proxy_pool_manager = Arc::new(ProxyPoolManager::new(proxy_pool_state.clone()));
+
+        let mut security_monitor = SecurityMonitorConfig::default();
+        security_monitor.whitelist.enabled = true;
+
+        let core = Arc::new(CoreServices {
+            token_manager,
+            upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
+                None, None,
+            )),
+            monitor,
+            integration: integration.clone(),
+            account_service,
+        });
+        let config = Arc::new(ConfigState {
+            custom_mapping: Arc::new(RwLock::new(HashMap::new())),
+            upstream_proxy: Arc::new(RwLock::new(UpstreamProxyConfig::default())),
+            zai: Arc::new(RwLock::new(ZaiConfig::default())),
+            experimental: Arc::new(RwLock::new(ExperimentalConfig::default())),
+            debug_logging: Arc::new(RwLock::new(DebugLoggingConfig::default())),
+            security: Arc::new(RwLock::new(ProxySecurityConfig {
+                auth_mode: ProxyAuthMode::Off,
+                api_key: "test-api-key".to_string(),
+                admin_password: None,
+                allow_lan_access: false,
+                port: 8045,
+                security_monitor,
+            })),
+            request_timeout: Arc::new(AtomicU64::new(30)),
+            update_lock: Arc::new(tokio::sync::Mutex::new(())),
+        });
+        let runtime = Arc::new(RuntimeState {
+            provider_rr: Arc::new(AtomicUsize::new(0)),
+            switching: Arc::new(RwLock::new(false)),
+            is_running: Arc::new(RwLock::new(true)),
+            port: 8045,
+            proxy_pool_state,
+            proxy_pool_manager,
+        });
+
+        AppState {
+            core,
+            config,
+            runtime,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spoofed_forwarded_headers_do_not_change_ip_across_middleware_paths() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        let _ = init_db();
+        cleanup_security_test_data();
+        crate::proxy::middleware::client_ip::set_trusted_proxies(vec![]);
+
+        let monitor = Arc::new(ProxyMonitor::new(64));
+        monitor.set_enabled(true);
+        let state = build_test_state(monitor.clone());
+        let router = build_proxy_routes(state.clone()).with_state(state);
+
+        add_to_whitelist("10.23.45.67", Some("socket ip allowed")).expect("insert whitelist entry");
+
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 23, 45, 67)), 8045);
+        let mut request = Request::builder()
+            .uri("/health")
+            .header("x-forwarded-for", "203.0.113.8, 198.51.100.2")
+            .header("x-real-ip", "203.0.113.9")
+            .body(Body::empty())
+            .expect("build request");
+        request.extensions_mut().insert(ConnectInfo(socket));
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("health request should be handled");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        let logs = monitor.logs.read().await;
+        assert!(
+            logs.iter()
+                .any(|log| log.url == "/health" && log.client_ip.as_deref() == Some("10.23.45.67")),
+            "monitor should log socket IP, not spoofed forwarded header"
+        );
+
+        cleanup_security_test_data();
+    }
+}
+
+#[cfg(test)]
 mod performance_benchmarks {
     use crate::modules::persistence::security_db::{
         add_to_blacklist, get_blacklist, init_db, is_ip_in_blacklist,

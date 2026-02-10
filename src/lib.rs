@@ -163,6 +163,26 @@ pub fn run() {
     }
 
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--reencrypt-secrets") {
+        info!("Running one-time secret re-encryption utility");
+        match commands::crypto::reencrypt_all_secrets() {
+            Ok(report) => {
+                info!(
+                    "Secret re-encryption completed: config_rewritten={}, accounts_total={}, accounts_rewritten={}, accounts_failed={}",
+                    report.config_rewritten,
+                    report.accounts_total,
+                    report.accounts_rewritten,
+                    report.accounts_failed
+                );
+                return;
+            }
+            Err(e) => {
+                error!("Secret re-encryption failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     if !args.iter().any(|arg| arg == "--headless") {
         warn!("Starting headless runtime (`--headless` is optional).");
     }
@@ -184,4 +204,66 @@ pub fn run() {
             warn!("Failed to stop proxy service cleanly: {}", e);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_headless_env_overrides, apply_security_hardening, parse_auth_mode};
+    use crate::models::AppConfig;
+    use crate::proxy::ProxyAuthMode;
+    use std::sync::{Mutex, OnceLock};
+
+    static LIB_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    #[test]
+    fn parse_auth_mode_rejects_auto() {
+        assert!(parse_auth_mode("auto").is_none());
+    }
+
+    #[test]
+    fn headless_env_auto_auth_mode_is_coerced_to_strict() {
+        let _guard = LIB_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lib env test lock");
+        let _auth_mode = ScopedEnvVar::set("AUTH_MODE", "auto");
+        let _abv_auth_mode = ScopedEnvVar::unset("ABV_AUTH_MODE");
+
+        let mut config = AppConfig::default();
+        config.proxy.auth_mode = ProxyAuthMode::AllExceptHealth;
+
+        apply_headless_env_overrides(&mut config);
+        apply_security_hardening(&mut config);
+
+        assert!(matches!(config.proxy.auth_mode, ProxyAuthMode::Strict));
+    }
 }

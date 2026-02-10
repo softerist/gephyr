@@ -28,6 +28,29 @@ mod tests {
 
     static ADMIN_ENDPOINT_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, original }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.as_deref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
     fn seed_runtime_config_api_key(api_key: &str) {
         let mut cfg = system_config::load_app_config().unwrap_or_default();
         cfg.proxy.api_key = api_key.to_string();
@@ -286,6 +309,52 @@ mod tests {
         assert!(policies.iter().any(|v| v == "always_hot_applied"));
         assert!(policies.iter().any(|v| v == "hot_applied_when_safe"));
         assert!(policies.iter().any(|v| v == "requires_restart"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_stop_disables_runtime_running_flag() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let stop_request = Request::builder()
+            .method("POST")
+            .uri("/proxy/stop")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (stop_status, _) = send(&router, stop_request).await;
+        assert_eq!(stop_status, StatusCode::OK);
+
+        let status_request = Request::builder()
+            .uri("/proxy/status")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (status_code, status_body) = send(&router, status_request).await;
+        assert_eq!(status_code, StatusCode::OK);
+        assert_eq!(status_body["running"], Value::from(false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_stop_hook_env_keeps_stop_endpoint_functional() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let _shutdown_hook = ScopedEnvVar::set("ABV_ADMIN_STOP_SHUTDOWN", "true");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let stop_request = Request::builder()
+            .method("POST")
+            .uri("/proxy/stop")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (stop_status, _) = send(&router, stop_request).await;
+        assert_eq!(stop_status, StatusCode::OK);
     }
 
     #[tokio::test(flavor = "current_thread")]

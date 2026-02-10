@@ -131,6 +131,9 @@ Operational snapshot endpoint:
 - Persisted config errors:
   - validation failure -> request rejected (400)
   - save/read failure -> internal error (500)
+- Secret migration path:
+  - run binary with `--reencrypt-secrets` to rewrite encrypted config/account fields into current ciphertext format
+  - command exits after migration; normal proxy service startup is skipped in this mode
 - Runtime drift risks:
   - minimized via shared scoped patch helper and explicit runtime apply policy
 - Session stickiness restart behavior:
@@ -140,9 +143,20 @@ Operational snapshot endpoint:
   - `POST /api/config` preserves existing API key when blank input is submitted
 - Graceful shutdown path:
   - Ctrl+C signals accept-loop shutdown
+  - optional admin stop hook can also signal graceful shutdown when `ABV_ADMIN_STOP_SHUTDOWN=true` and `POST /api/proxy/stop` is called
   - listener stops accepting new sockets
   - active connections are drained with bounded timeout (`ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s, range 1-600), then aborted if needed
   - long-running streams may be aborted on shutdown once drain timeout is exceeded
+
+## HTTP/2 Evaluation
+
+- Current server runtime is HTTP/1.1 (`hyper::server::conn::http1::Builder`) by design.
+- Local concurrency benchmark (`src/proxy/server.rs` test `http1_health_concurrency_smoke_benchmark`) measured:
+  - `1500` requests
+  - concurrency `64`
+  - elapsed `~894ms`
+  - throughput `~1676.90 req/s`
+- Decision: no immediate HTTP/2 implementation; revisit only if real workloads show sustained multiplexing bottlenecks.
 
 ## Test Strategy Map
 
