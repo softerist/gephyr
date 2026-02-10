@@ -149,7 +149,14 @@ function Get-AuthHeaders {
 
 function Assert-DockerReady {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        throw "Docker CLI not found in PATH."
+        Write-Host ""
+        Write-Host "Docker CLI not found in PATH." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Install Docker:" -ForegroundColor Yellow
+        Write-Host "  Docker Desktop : https://docs.docker.com/desktop/install/windows-install/"
+        Write-Host "  winget         : winget install Docker.DockerDesktop"
+        Write-Host "  choco          : choco install docker-desktop"
+        throw "Missing prerequisite: docker"
     }
     docker info *> $null
     if ($LASTEXITCODE -ne 0) {
