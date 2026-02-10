@@ -7,8 +7,10 @@ use rand::RngCore;
 use sha2::Digest;
 
 const NONCE_LEN: usize = 12;
+const GCM_TAG_LEN: usize = 16;
 const LEGACY_NONCE_SEED: &[u8] = b"antigravity_salt";
-const MIN_ENCRYPTED_BYTES: usize = 16;
+// Packed payload is nonce + ciphertext+tag; ciphertext can be empty.
+const MIN_ENCRYPTED_BYTES: usize = NONCE_LEN + GCM_TAG_LEN;
 
 fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
@@ -184,8 +186,15 @@ mod tests {
 
     #[test]
     fn encrypted_like_payload_does_not_fallback_to_plaintext() {
-        let raw = general_purpose::STANDARD.encode(vec![7u8; 24]);
+        let raw = general_purpose::STANDARD.encode(vec![7u8; MIN_ENCRYPTED_BYTES]);
         let err = decrypt_secret_or_plaintext(&raw).expect_err("should fail closed");
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn base64_payload_below_encrypted_threshold_falls_back_to_plaintext() {
+        let raw = general_purpose::STANDARD.encode(vec![7u8; MIN_ENCRYPTED_BYTES - 1]);
+        let decrypted = decrypt_secret_or_plaintext(&raw).expect("fallback plaintext");
+        assert_eq!(decrypted, raw);
     }
 }

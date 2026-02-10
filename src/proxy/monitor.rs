@@ -40,27 +40,33 @@ pub struct ProxyMonitor {
 
 impl ProxyMonitor {
     pub fn new(max_logs: usize) -> Self {
-        if let Err(e) = crate::modules::persistence::proxy_db::init_db() {
-            tracing::error!("Failed to initialize proxy DB: {}", e);
-        }
-        tokio::spawn(async {
-            match crate::modules::persistence::proxy_db::cleanup_old_logs(30) {
-                Ok(deleted) => {
-                    if deleted > 0 {
-                        tracing::info!("Auto cleanup: removed {} old logs (>30 days)", deleted);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to cleanup old logs: {}", e);
-                }
-            }
-        });
-
         Self {
             logs: RwLock::new(VecDeque::with_capacity(max_logs)),
             stats: RwLock::new(ProxyStats::default()),
             max_logs,
             enabled: AtomicBool::new(false),
+        }
+    }
+
+    pub async fn run_startup_maintenance(&self) {
+        let result = tokio::task::spawn_blocking(|| {
+            crate::modules::persistence::proxy_db::init_db()?;
+            crate::modules::persistence::proxy_db::cleanup_old_logs(30)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(deleted)) => {
+                if deleted > 0 {
+                    tracing::info!("Auto cleanup: removed {} old logs (>30 days)", deleted);
+                }
+            }
+            Ok(Err(e)) => {
+                tracing::error!("Monitor startup maintenance failed: {}", e);
+            }
+            Err(e) => {
+                tracing::error!("Monitor startup maintenance join failed: {}", e);
+            }
         }
     }
 
@@ -215,5 +221,19 @@ impl ProxyMonitor {
             }
         })
         .await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProxyMonitor;
+
+    #[test]
+    fn constructor_is_runtime_safe() {
+        let result = std::panic::catch_unwind(|| ProxyMonitor::new(16));
+        assert!(
+            result.is_ok(),
+            "constructor should not require Tokio runtime"
+        );
     }
 }

@@ -43,6 +43,26 @@ impl Drop for StartingGuard {
         self.0.store(false, Ordering::SeqCst);
     }
 }
+
+async fn ensure_monitor(state: &ProxyServiceState) -> Arc<ProxyMonitor> {
+    let (monitor, needs_startup_maintenance) = {
+        let mut monitor_lock = state.monitor.write().await;
+        if let Some(existing) = monitor_lock.as_ref() {
+            (existing.clone(), false)
+        } else {
+            let created = Arc::new(ProxyMonitor::new(1000));
+            *monitor_lock = Some(created.clone());
+            (created, true)
+        }
+    };
+
+    if needs_startup_maintenance {
+        monitor.run_startup_maintenance().await;
+    }
+
+    monitor
+}
+
 pub async fn internal_start_proxy_service(
     config: ProxyConfig,
     state: &ProxyServiceState,
@@ -62,17 +82,9 @@ pub async fn internal_start_proxy_service(
         return Err("Service is starting, please wait...".to_string());
     }
     let _starting_guard = StartingGuard(state.starting.clone());
-    {
-        let mut monitor_lock = state.monitor.write().await;
-        if monitor_lock.is_none() {
-            *monitor_lock = Some(Arc::new(ProxyMonitor::new(1000)));
-        }
-        if let Some(monitor) = monitor_lock.as_ref() {
-            monitor.set_enabled(config.enable_logging);
-        }
-    }
+    let monitor = ensure_monitor(state).await;
+    monitor.set_enabled(config.enable_logging);
 
-    let _monitor = state.monitor.read().await.as_ref().unwrap().clone();
     ensure_admin_server(config.clone(), state, integration.clone()).await?;
     let token_manager = {
         let admin_lock = state.admin_server.read().await;
@@ -144,13 +156,7 @@ pub async fn ensure_admin_server(
     if admin_lock.is_some() {
         return Ok(());
     }
-    let monitor = {
-        let mut monitor_lock = state.monitor.write().await;
-        if monitor_lock.is_none() {
-            *monitor_lock = Some(Arc::new(ProxyMonitor::new(1000)));
-        }
-        monitor_lock.as_ref().unwrap().clone()
-    };
+    let monitor = ensure_monitor(state).await;
     let app_data_dir = crate::modules::auth::account::get_data_dir()?;
     let token_manager = Arc::new(TokenManager::new(app_data_dir));
     let _ = token_manager.load_accounts().await;
