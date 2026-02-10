@@ -107,6 +107,12 @@ fn apply_security_hardening(config: &mut crate::models::AppConfig) {
 
 async fn start_headless_runtime() -> Result<commands::proxy::ProxyServiceState, String> {
     let proxy_state = commands::proxy::ProxyServiceState::new();
+    crate::utils::crypto::validate_encryption_key_prerequisites().map_err(|e| {
+        format!(
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] startup_encryption_preflight_failed: {} Refusing to start because encrypted token/config operations would fail at runtime. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY (for example in .env.local/.env or container env), restart Gephyr, then rerun OAuth login.",
+            e
+        )
+    })?;
     let mut config = modules::system::config::load_app_config()
         .map_err(|e| format!("failed_to_load_config_for_headless_mode: {}", e))?;
 

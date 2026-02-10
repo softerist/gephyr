@@ -50,7 +50,25 @@ fn get_encryption_key() -> Result<[u8; 32], String> {
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     resolve_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
-            "encryption_key_unavailable: {}. Set ABV_ENCRYPTION_KEY or ensure machine UID is available.",
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
+            e
+        )
+    })
+}
+
+fn validate_encryption_key_from_sources(
+    env_key: Option<&str>,
+    machine_uid_result: Result<String, String>,
+) -> Result<(), String> {
+    resolve_encryption_key_from_sources(env_key, machine_uid_result).map(|_| ())
+}
+
+pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
+    let env_key = std::env::var("ABV_ENCRYPTION_KEY").ok();
+    let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
+    validate_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
+        format!(
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
             e
         )
     })
@@ -214,6 +232,22 @@ mod tests {
         let err =
             resolve_encryption_key_from_sources(Some(""), Err("uid-not-available".to_string()))
                 .expect_err("should fail");
+        assert!(err.contains("uid-not-available"));
+    }
+
+    #[test]
+    fn preflight_accepts_env_key_when_machine_uid_missing() {
+        let result = validate_encryption_key_from_sources(
+            Some("test-env-key"),
+            Err("uid-not-available".to_string()),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn preflight_fails_when_no_env_and_machine_uid_missing() {
+        let err = validate_encryption_key_from_sources(None, Err("uid-not-available".to_string()))
+            .expect_err("should fail");
         assert!(err.contains("uid-not-available"));
     }
 

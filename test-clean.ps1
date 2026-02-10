@@ -127,51 +127,107 @@ function Wait-OAuthAccountLink {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     $startAt = Get-Date
     $nextProgressAt = $startAt.AddSeconds(10)
+    $statusEndpointSupported = $true
+    $lastKnownPhase = $null
 
     Write-Host "Waiting for OAuth callback/account link (timeout: ${TimeoutSec}s)..."
     Write-Host "Complete login in your browser, then this script will continue automatically."
 
     while ((Get-Date) -lt $deadline) {
-        try {
-            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 8
-            $count = 0
-            if ($resp -and $resp.accounts) {
-                $count = @($resp.accounts).Count
-            }
-            if ($count -gt 0) {
-                Write-Host "OAuth account linked ($count account(s) found)."
-                return $true
-            }
-        } catch {
-            $statusCode = $null
-            if ($_.Exception -and $_.Exception.Response -and $_.Exception.Response.StatusCode) {
-                try {
-                    $statusCode = [int]$_.Exception.Response.StatusCode
-                } catch {
-                    $statusCode = $null
+        if ($statusEndpointSupported) {
+            try {
+                $statusResp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/auth/status" -Headers $headers -Method Get -TimeoutSec 8
+                $phase = ""
+                if ($statusResp -and $statusResp.phase) {
+                    $phase = "$($statusResp.phase)".ToLowerInvariant()
+                }
+                if ($phase) {
+                    $lastKnownPhase = $phase
+                }
+
+                if ($phase -eq "linked") {
+                    if ($statusResp.account_email) {
+                        Write-Host "OAuth account linked ($($statusResp.account_email))."
+                    } else {
+                        Write-Host "OAuth account linked."
+                    }
+                    return $true
+                }
+                if ($phase -eq "failed") {
+                    $detail = if ($statusResp -and $statusResp.detail) { "$($statusResp.detail)" } else { "unknown_error" }
+                    Write-Warning "OAuth wait aborted [E-OAUTH-FLOW-FAILED]: $detail"
+                    return $false
+                }
+                if ($phase -eq "cancelled") {
+                    $detail = if ($statusResp -and $statusResp.detail) { "$($statusResp.detail)" } else { "oauth_flow_cancelled" }
+                    Write-Warning "OAuth wait aborted [E-OAUTH-FLOW-CANCELLED]: $detail"
+                    return $false
+                }
+            } catch {
+                $statusCode = $null
+                if ($_.Exception -and $_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                    try {
+                        $statusCode = [int]$_.Exception.Response.StatusCode
+                    } catch {
+                        $statusCode = $null
+                    }
+                }
+
+                if ($statusCode -eq 401) {
+                    Write-Warning "OAuth wait aborted [E-OAUTH-STATUS-401]: /api/auth/status returned 401 Unauthorized. Verify GEPHYR_API_KEY in shell/.env.local and restart container."
+                    return $false
+                }
+                if ($statusCode -eq 404) {
+                    Write-Warning "OAuth status endpoint not available on this runtime; falling back to legacy /api/accounts polling."
+                    $statusEndpointSupported = $false
                 }
             }
+        }
 
-            if ($statusCode -eq 401) {
-                Write-Warning "OAuth wait aborted: /api/accounts returned 401 Unauthorized. Verify GEPHYR_API_KEY in shell/.env.local and restart container."
-                return $false
-            }
-            if ($statusCode -eq 404) {
-                Write-Warning "OAuth wait aborted: /api/accounts returned 404. Ensure admin API is enabled (ABV_ENABLE_ADMIN_API=true)."
-                return $false
-            }
+        if (-not $statusEndpointSupported) {
+            try {
+                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 8
+                $count = 0
+                if ($resp -and $resp.accounts) {
+                    $count = @($resp.accounts).Count
+                }
+                if ($count -gt 0) {
+                    Write-Host "OAuth account linked ($count account(s) found)."
+                    return $true
+                }
+            } catch {
+                $statusCode = $null
+                if ($_.Exception -and $_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                    try {
+                        $statusCode = [int]$_.Exception.Response.StatusCode
+                    } catch {
+                        $statusCode = $null
+                    }
+                }
 
-            # Service may still be transitioning; keep polling.
+                if ($statusCode -eq 401) {
+                    Write-Warning "OAuth wait aborted [E-OAUTH-ACCOUNTS-401]: /api/accounts returned 401 Unauthorized. Verify GEPHYR_API_KEY in shell/.env.local and restart container."
+                    return $false
+                }
+                if ($statusCode -eq 404) {
+                    Write-Warning "OAuth wait aborted [E-OAUTH-ACCOUNTS-404]: /api/accounts returned 404. Ensure admin API is enabled (ABV_ENABLE_ADMIN_API=true)."
+                    return $false
+                }
+            }
         }
 
         $now = Get-Date
         if ($now -ge $nextProgressAt) {
             $elapsed = [int]($now - $startAt).TotalSeconds
-            Write-Host "Still waiting for OAuth linkage... ${elapsed}s elapsed."
+            if ($lastKnownPhase) {
+                Write-Host "Still waiting for OAuth linkage... ${elapsed}s elapsed (phase: $lastKnownPhase)."
+            } else {
+                Write-Host "Still waiting for OAuth linkage... ${elapsed}s elapsed."
+            }
             try {
                 $recentLogs = docker logs --tail 160 gephyr 2>&1
                 if ($recentLogs -match "encryption_key_unavailable|Failed to save account in background OAuth") {
-                    Write-Warning "OAuth callback succeeded but account persistence failed (missing/invalid ABV_ENCRYPTION_KEY inside container). Set ABV_ENCRYPTION_KEY in .env.local, then rerun login."
+                    Write-Warning "OAuth callback succeeded but account persistence failed [E-CRYPTO-KEY-UNAVAILABLE] (missing/invalid ABV_ENCRYPTION_KEY; in Docker/container environments machine UID may be unavailable). Remediation: set ABV_ENCRYPTION_KEY in .env.local, restart container, then rerun login."
                     return $false
                 }
                 if ($recentLogs -match "OAuth callback state mismatch") {
@@ -242,7 +298,7 @@ if (-not $SkipLogin) {
             }
         }
         if (-not $hasEncryptionKey) {
-            Write-Warning "ABV_ENCRYPTION_KEY is not set. OAuth callback may succeed in browser but account save can fail in container."
+            Write-Warning "[W-CRYPTO-KEY-MISSING] ABV_ENCRYPTION_KEY is not set. In Docker/container environments machine UID may be unavailable, so OAuth callback may succeed in browser while account save fails. Remediation: set ABV_ENCRYPTION_KEY, restart container, then rerun login."
         }
     }
 

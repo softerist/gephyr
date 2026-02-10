@@ -6,6 +6,7 @@ use crate::proxy::{admin, health};
 
 const ADMIN_PATH_HEALTH: &str = "/health";
 const ADMIN_PATH_VERSION_ROUTES: &str = "/version/routes";
+const ADMIN_PATH_AUTH_STATUS: &str = "/auth/status";
 const ADMIN_PATH_CONFIG: &str = "/config";
 const ADMIN_PATH_PROXY_STATUS: &str = "/proxy/status";
 const ADMIN_PATH_PROXY_REQUEST_TIMEOUT: &str = "/proxy/request-timeout";
@@ -19,6 +20,7 @@ const ADMIN_PATH_PROXY_METRICS: &str = "/proxy/metrics";
 
 const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("GET", ADMIN_PATH_HEALTH),
+    ("GET", ADMIN_PATH_AUTH_STATUS),
     ("GET", ADMIN_PATH_CONFIG),
     ("POST", ADMIN_PATH_CONFIG),
     ("GET", ADMIN_PATH_PROXY_REQUEST_TIMEOUT),

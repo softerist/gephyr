@@ -20,7 +20,7 @@ pub(crate) use import_sync::{
     admin_import_v1_accounts, admin_sync_account_from_db,
 };
 pub(crate) use oauth::{
-    admin_cancel_oauth_login, admin_complete_oauth_login, admin_prepare_oauth_url,
-    admin_prepare_oauth_url_web, admin_start_oauth_login, admin_submit_oauth_code,
-    handle_oauth_callback,
+    admin_cancel_oauth_login, admin_complete_oauth_login, admin_get_oauth_flow_status,
+    admin_prepare_oauth_url, admin_prepare_oauth_url_web, admin_start_oauth_login,
+    admin_submit_oauth_code, handle_oauth_callback,
 };

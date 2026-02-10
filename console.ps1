@@ -495,6 +495,10 @@ function Start-OAuthFlow {
         throw "Service did not become ready on http://127.0.0.1:$Port."
     }
 
+    if (-not $env:ABV_ENCRYPTION_KEY) {
+        Write-Warning "[W-CRYPTO-KEY-MISSING] ABV_ENCRYPTION_KEY is not set in your shell/.env.local. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY, restart container, then rerun login."
+    }
+
     $headers = Get-AuthHeaders
     $oauth = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/auth/url" -Headers $headers -Method Get -TimeoutSec 15
     if (-not $oauth.url) {

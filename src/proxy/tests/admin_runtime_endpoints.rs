@@ -209,6 +209,7 @@ mod tests {
 
         let (status, body) = send(&router, request).await;
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["routes"]["GET /api/auth/status"], true);
         assert_eq!(body["routes"]["GET /api/proxy/request-timeout"], true);
         assert_eq!(body["routes"]["POST /api/proxy/request-timeout"], true);
         assert_eq!(body["routes"]["GET /api/proxy/pool/runtime"], true);
@@ -233,6 +234,7 @@ mod tests {
 
         let probes = [
             "/accounts",
+            "/auth/status",
             "/proxy/status",
             "/logs",
             "/system/data-dir",
@@ -254,6 +256,28 @@ mod tests {
                 "route {path} is unexpectedly missing"
             );
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_oauth_status_returns_shape() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let request = Request::builder()
+            .uri("/auth/status")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+
+        let (status, body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["phase"].is_string());
+        assert!(body["updated_at_unix"].is_number());
+        assert!(body["detail"].is_null() || body["detail"].is_string());
+        assert!(body["account_email"].is_null() || body["account_email"].is_string());
     }
 
     #[tokio::test(flavor = "current_thread")]

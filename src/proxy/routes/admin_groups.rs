@@ -87,6 +87,7 @@ pub(super) fn add_account_routes(router: Router<AppState>) -> Router<AppState> {
             post(admin::admin_toggle_proxy_status),
         )
         .route("/auth/url", get(admin::admin_prepare_oauth_url_web))
+        .route("/auth/status", get(admin::admin_get_oauth_flow_status))
 }
 
 pub(super) fn add_proxy_routes(router: Router<AppState>) -> Router<AppState> {

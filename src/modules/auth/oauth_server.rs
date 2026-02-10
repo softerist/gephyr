@@ -1,4 +1,5 @@
 use crate::modules::auth::oauth;
+use serde::Serialize;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,9 +19,77 @@ struct OAuthFlowState {
 }
 
 static OAUTH_FLOW_STATE: OnceLock<Mutex<Option<OAuthFlowState>>> = OnceLock::new();
+static OAUTH_FLOW_STATUS: OnceLock<Mutex<OAuthFlowStatusSnapshot>> = OnceLock::new();
 
 fn get_oauth_flow_state() -> &'static Mutex<Option<OAuthFlowState>> {
     OAUTH_FLOW_STATE.get_or_init(|| Mutex::new(None))
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthFlowPhase {
+    Idle,
+    Prepared,
+    CallbackReceived,
+    ExchangingToken,
+    FetchingUserInfo,
+    SavingAccount,
+    Linked,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthFlowStatusSnapshot {
+    pub phase: OAuthFlowPhase,
+    pub detail: Option<String>,
+    pub account_email: Option<String>,
+    pub updated_at_unix: i64,
+}
+
+impl OAuthFlowStatusSnapshot {
+    fn idle() -> Self {
+        Self {
+            phase: OAuthFlowPhase::Idle,
+            detail: None,
+            account_email: None,
+            updated_at_unix: chrono::Utc::now().timestamp(),
+        }
+    }
+}
+
+fn get_oauth_flow_status_state() -> &'static Mutex<OAuthFlowStatusSnapshot> {
+    OAUTH_FLOW_STATUS.get_or_init(|| Mutex::new(OAuthFlowStatusSnapshot::idle()))
+}
+
+fn set_oauth_flow_status(
+    phase: OAuthFlowPhase,
+    detail: Option<String>,
+    account_email: Option<String>,
+) {
+    if let Ok(mut status) = get_oauth_flow_status_state().lock() {
+        *status = OAuthFlowStatusSnapshot {
+            phase,
+            detail,
+            account_email,
+            updated_at_unix: chrono::Utc::now().timestamp(),
+        };
+    }
+}
+
+pub fn mark_oauth_flow_status(
+    phase: OAuthFlowPhase,
+    detail: Option<String>,
+    account_email: Option<String>,
+) {
+    set_oauth_flow_status(phase, detail, account_email);
+}
+
+pub fn get_oauth_flow_status() -> OAuthFlowStatusSnapshot {
+    get_oauth_flow_status_state()
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| OAuthFlowStatusSnapshot::idle())
 }
 
 fn oauth_success_html() -> &'static str {
@@ -80,10 +149,20 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.as_mut() {
             if s.code_rx.is_some() {
+                set_oauth_flow_status(
+                    OAuthFlowPhase::Prepared,
+                    Some("oauth_flow_reused".to_string()),
+                    None,
+                );
                 return Ok(s.auth_url.clone());
             } else {
                 let _ = s.cancel_tx.send(true);
                 *state = None;
+                set_oauth_flow_status(
+                    OAuthFlowPhase::Cancelled,
+                    Some("oauth_flow_superseded".to_string()),
+                    None,
+                );
             }
         }
     }
@@ -208,19 +287,36 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
+                        set_oauth_flow_status(
+                            OAuthFlowPhase::CallbackReceived,
+                            Some("authorization_code_captured_ipv4".to_string()),
+                            None,
+                        );
                         crate::modules::system::logger::log_info(
                             "Successfully captured OAuth code from IPv4 listener",
                         );
                         (Ok(code), oauth_success_html())
                     }
                     (Some(_), false) => {
+                        set_oauth_flow_status(
+                            OAuthFlowPhase::Failed,
+                            Some("oauth_state_mismatch".to_string()),
+                            None,
+                        );
                         crate::modules::system::logger::log_error(
                             "OAuth callback state mismatch (CSRF protection)",
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
                     }
                     (None, _) => (
-                        Err("Failed to get Authorization Code in callback".to_string()),
+                        {
+                            set_oauth_flow_status(
+                                OAuthFlowPhase::Failed,
+                                Some("authorization_code_missing_in_callback".to_string()),
+                                None,
+                            );
+                            Err("Failed to get Authorization Code in callback".to_string())
+                        },
                         oauth_fail_html(),
                     ),
                 };
@@ -295,19 +391,36 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
+                        set_oauth_flow_status(
+                            OAuthFlowPhase::CallbackReceived,
+                            Some("authorization_code_captured_ipv6".to_string()),
+                            None,
+                        );
                         crate::modules::system::logger::log_info(
                             "Successfully captured OAuth code from IPv6 listener",
                         );
                         (Ok(code), oauth_success_html())
                     }
                     (Some(_), false) => {
+                        set_oauth_flow_status(
+                            OAuthFlowPhase::Failed,
+                            Some("oauth_state_mismatch".to_string()),
+                            None,
+                        );
                         crate::modules::system::logger::log_error(
                             "OAuth callback state mismatch (IPv6 CSRF protection)",
                         );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
                     }
                     (None, _) => (
-                        Err("Failed to get Authorization Code in callback".to_string()),
+                        {
+                            set_oauth_flow_status(
+                                OAuthFlowPhase::Failed,
+                                Some("authorization_code_missing_in_callback".to_string()),
+                                None,
+                            );
+                            Err("Failed to get Authorization Code in callback".to_string())
+                        },
                         oauth_fail_html(),
                     ),
                 };
@@ -330,6 +443,11 @@ async fn ensure_oauth_flow_prepared() -> Result<String, String> {
             code_rx: Some(code_rx),
         });
     }
+    set_oauth_flow_status(
+        OAuthFlowPhase::Prepared,
+        Some("oauth_flow_prepared".to_string()),
+        None,
+    );
 
     Ok(auth_url)
 }
@@ -341,6 +459,11 @@ pub fn cancel_oauth_flow() {
         if let Some(s) = state.take() {
             let _ = s.cancel_tx.send(true);
             crate::modules::system::logger::log_info("Sent OAuth cancellation signal");
+            set_oauth_flow_status(
+                OAuthFlowPhase::Cancelled,
+                Some("oauth_flow_cancelled".to_string()),
+                None,
+            );
         }
     }
 }
@@ -366,15 +489,40 @@ pub async fn start_oauth_flow() -> Result<oauth::TokenResponse, String> {
         (rx, state.redirect_uri.clone(), state.code_verifier.clone())
     };
     let code = match code_rx.recv().await {
-        Some(Ok(code)) => code,
-        Some(Err(e)) => return Err(e),
-        None => return Err("OAuth flow channel closed unexpectedly".to_string()),
+        Some(Ok(code)) => {
+            set_oauth_flow_status(
+                OAuthFlowPhase::CallbackReceived,
+                Some("authorization_code_received".to_string()),
+                None,
+            );
+            code
+        }
+        Some(Err(e)) => {
+            set_oauth_flow_status(OAuthFlowPhase::Failed, Some(e.clone()), None);
+            return Err(e);
+        }
+        None => {
+            set_oauth_flow_status(
+                OAuthFlowPhase::Failed,
+                Some("oauth_flow_channel_closed".to_string()),
+                None,
+            );
+            return Err("OAuth flow channel closed unexpectedly".to_string());
+        }
     };
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         *lock = None;
     }
-
-    oauth::exchange_code(&code, &redirect_uri, &code_verifier).await
+    set_oauth_flow_status(
+        OAuthFlowPhase::ExchangingToken,
+        Some("oauth_token_exchange_started".to_string()),
+        None,
+    );
+    oauth::exchange_code(&code, &redirect_uri, &code_verifier)
+        .await
+        .inspect_err(|e| {
+            set_oauth_flow_status(OAuthFlowPhase::Failed, Some(e.clone()), None);
+        })
 }
 pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
     let _ = ensure_oauth_flow_prepared().await?;
@@ -393,16 +541,41 @@ pub async fn complete_oauth_flow() -> Result<oauth::TokenResponse, String> {
     };
 
     let code = match code_rx.recv().await {
-        Some(Ok(code)) => code,
-        Some(Err(e)) => return Err(e),
-        None => return Err("OAuth flow channel closed unexpectedly".to_string()),
+        Some(Ok(code)) => {
+            set_oauth_flow_status(
+                OAuthFlowPhase::CallbackReceived,
+                Some("authorization_code_received".to_string()),
+                None,
+            );
+            code
+        }
+        Some(Err(e)) => {
+            set_oauth_flow_status(OAuthFlowPhase::Failed, Some(e.clone()), None);
+            return Err(e);
+        }
+        None => {
+            set_oauth_flow_status(
+                OAuthFlowPhase::Failed,
+                Some("oauth_flow_channel_closed".to_string()),
+                None,
+            );
+            return Err("OAuth flow channel closed unexpectedly".to_string());
+        }
     };
 
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         *lock = None;
     }
-
-    oauth::exchange_code(&code, &redirect_uri, &code_verifier).await
+    set_oauth_flow_status(
+        OAuthFlowPhase::ExchangingToken,
+        Some("oauth_token_exchange_started".to_string()),
+        None,
+    );
+    oauth::exchange_code(&code, &redirect_uri, &code_verifier)
+        .await
+        .inspect_err(|e| {
+            set_oauth_flow_status(OAuthFlowPhase::Failed, Some(e.clone()), None);
+        })
 }
 pub async fn submit_oauth_code(
     code_input: String,
@@ -413,13 +586,28 @@ pub async fn submit_oauth_code(
         if let Some(state) = lock.as_ref() {
             if let Some(provided_state) = state_input {
                 if provided_state != state.state {
+                    set_oauth_flow_status(
+                        OAuthFlowPhase::Failed,
+                        Some("oauth_state_mismatch".to_string()),
+                        None,
+                    );
                     return Err("OAuth state mismatch (CSRF protection)".to_string());
                 }
             } else {
+                set_oauth_flow_status(
+                    OAuthFlowPhase::Failed,
+                    Some("oauth_state_missing".to_string()),
+                    None,
+                );
                 return Err("Missing OAuth state (CSRF protection)".to_string());
             }
             state.code_tx.clone()
         } else {
+            set_oauth_flow_status(
+                OAuthFlowPhase::Failed,
+                Some("oauth_flow_not_active".to_string()),
+                None,
+            );
             return Err("No active OAuth flow found".to_string());
         }
     };
@@ -437,9 +625,19 @@ pub async fn submit_oauth_code(
     };
 
     crate::modules::system::logger::log_info("Received manual OAuth code submission");
-    tx.send(Ok(code))
-        .await
-        .map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
+    set_oauth_flow_status(
+        OAuthFlowPhase::CallbackReceived,
+        Some("authorization_code_received".to_string()),
+        None,
+    );
+    tx.send(Ok(code)).await.map_err(|_| {
+        set_oauth_flow_status(
+            OAuthFlowPhase::Failed,
+            Some("oauth_flow_receiver_dropped".to_string()),
+            None,
+        );
+        "Failed to send code to OAuth flow (receiver dropped)".to_string()
+    })?;
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         *lock = None;
     }
@@ -459,6 +657,11 @@ pub fn prepare_oauth_flow_manually(
         if let Some(s) = lock.as_mut() {
             let _ = s.cancel_tx.send(true);
             *lock = None;
+            set_oauth_flow_status(
+                OAuthFlowPhase::Cancelled,
+                Some("oauth_flow_superseded".to_string()),
+                None,
+            );
         }
     }
 
@@ -476,6 +679,11 @@ pub fn prepare_oauth_flow_manually(
             code_rx: None,
         });
     }
+    set_oauth_flow_status(
+        OAuthFlowPhase::Prepared,
+        Some("oauth_flow_prepared".to_string()),
+        None,
+    );
 
     Ok((auth_url, code_verifier, code_rx))
 }

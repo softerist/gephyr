@@ -218,6 +218,11 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                 crate::modules::system::logger::log_info(
                     "Consuming manually submitted OAuth code in background",
                 );
+                crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                    crate::modules::auth::oauth_server::OAuthFlowPhase::ExchangingToken,
+                    Some("oauth_token_exchange_started".to_string()),
+                    None,
+                );
                 match crate::modules::auth::oauth::exchange_code(
                     &code,
                     &redirect_uri_clone,
@@ -227,17 +232,37 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                 {
                     Ok(token_resp) => {
                         if let Some(refresh_token) = &token_resp.refresh_token {
+                            crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                                crate::modules::auth::oauth_server::OAuthFlowPhase::FetchingUserInfo,
+                                Some("oauth_fetch_user_info".to_string()),
+                                None,
+                            );
                             match token_manager.get_user_info(refresh_token).await {
                                 Ok(user_info) => {
+                                    crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                                        crate::modules::auth::oauth_server::OAuthFlowPhase::SavingAccount,
+                                        Some("oauth_save_account".to_string()),
+                                        Some(user_info.email.clone()),
+                                    );
                                     if let Err(e) = token_manager
                                         .add_account(&user_info.email, refresh_token)
                                         .await
                                     {
+                                        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                                            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+                                            Some(format!("oauth_save_account_failed: {}", e)),
+                                            Some(user_info.email.clone()),
+                                        );
                                         crate::modules::system::logger::log_error(&format!(
                                             "Failed to save account in background OAuth: {}",
                                             e
                                         ));
                                     } else {
+                                        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                                            crate::modules::auth::oauth_server::OAuthFlowPhase::Linked,
+                                            Some("oauth_account_linked".to_string()),
+                                            Some(user_info.email.clone()),
+                                        );
                                         crate::modules::system::logger::log_info(&format!(
                                             "Successfully added account {} via background OAuth",
                                             user_info.email
@@ -245,6 +270,11 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                     }
                                 }
                                 Err(e) => {
+                                    crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                                        crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+                                        Some(format!("oauth_user_info_failed: {}", e)),
+                                        None,
+                                    );
                                     crate::modules::system::logger::log_error(&format!(
                                         "Failed to fetch user info in background OAuth: {}",
                                         e
@@ -252,12 +282,22 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                 }
                             }
                         } else {
+                            crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                                crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+                                Some("oauth_refresh_token_missing".to_string()),
+                                None,
+                            );
                             crate::modules::system::logger::log_error(
                                 "Background OAuth error: Google did not return a refresh_token.",
                             );
                         }
                     }
                     Err(e) => {
+                        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                            crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+                            Some(format!("oauth_exchange_failed: {}", e)),
+                            None,
+                        );
                         crate::modules::system::logger::log_error(&format!(
                             "Background OAuth exchange failed: {}",
                             e
@@ -266,12 +306,22 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                 }
             }
             Some(Err(e)) => {
+                crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                    crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
+                    Some(format!("oauth_background_flow_failed: {}", e)),
+                    None,
+                );
                 crate::modules::system::logger::log_error(&format!(
                     "Background OAuth flow error: {}",
                     e
                 ));
             }
             None => {
+                crate::modules::auth::oauth_server::mark_oauth_flow_status(
+                    crate::modules::auth::oauth_server::OAuthFlowPhase::Cancelled,
+                    Some("oauth_background_channel_closed".to_string()),
+                    None,
+                );
                 crate::modules::system::logger::log_info("Background OAuth flow channel closed");
             }
         }
@@ -282,6 +332,11 @@ pub(crate) async fn admin_prepare_oauth_url_web(
         "state": state_str
     })))
 }
+
+pub(crate) async fn admin_get_oauth_flow_status() -> impl IntoResponse {
+    Json(crate::modules::auth::oauth_server::get_oauth_flow_status())
+}
+
 fn get_oauth_redirect_uri(port: u16, _host: Option<&str>, _proto: Option<&str>) -> String {
     if let Ok(public_url) = std::env::var("ABV_PUBLIC_URL") {
         let base = public_url.trim_end_matches('/');
