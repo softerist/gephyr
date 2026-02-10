@@ -4,10 +4,15 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
 static PENDING_DELETE_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
+const SHUTDOWN_DRAIN_TIMEOUT_ENV: &str = "ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS";
+const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 10;
+const MIN_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 1;
+const MAX_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 600;
 
 fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
     PENDING_RELOAD_ACCOUNTS.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
@@ -16,6 +21,52 @@ fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> 
 fn get_pending_delete_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
     PENDING_DELETE_ACCOUNTS.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
 }
+
+fn normalize_shutdown_drain_timeout_secs(raw: &str) -> Option<u64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    trimmed.parse::<u64>().ok().map(|secs| {
+        secs.clamp(
+            MIN_SHUTDOWN_DRAIN_TIMEOUT_SECS,
+            MAX_SHUTDOWN_DRAIN_TIMEOUT_SECS,
+        )
+    })
+}
+
+fn resolve_shutdown_drain_timeout() -> Duration {
+    let raw = std::env::var(SHUTDOWN_DRAIN_TIMEOUT_ENV).ok();
+    let secs = raw
+        .as_deref()
+        .and_then(normalize_shutdown_drain_timeout_secs)
+        .unwrap_or(DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECS);
+
+    if let Some(raw_value) = raw.as_deref() {
+        let trimmed = raw_value.trim();
+        if !trimmed.is_empty() {
+            match trimmed.parse::<u64>() {
+                Ok(parsed) if parsed != secs => warn!(
+                    "{}={} is out of supported range ({}-{}); using {} seconds",
+                    SHUTDOWN_DRAIN_TIMEOUT_ENV,
+                    parsed,
+                    MIN_SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                    MAX_SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                    secs
+                ),
+                Ok(_) => {}
+                Err(_) => warn!(
+                    "Invalid {} value '{}'; using default {} seconds",
+                    SHUTDOWN_DRAIN_TIMEOUT_ENV, trimmed, DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECS
+                ),
+            }
+        }
+    }
+
+    Duration::from_secs(secs)
+}
+
 pub fn trigger_account_reload(account_id: &str) {
     if let Ok(mut pending) = get_pending_reload_accounts().write() {
         pending.insert(account_id.to_string());
@@ -228,8 +279,14 @@ impl AxumServer {
             .await
             .map_err(|e| format!("Address {} binding failed: {}", addr, e))?;
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let drain_timeout = resolve_shutdown_drain_timeout();
 
         tracing::info!("Proxy server started at http://{}", addr);
+        tracing::info!(
+            "Graceful shutdown drain timeout: {}s (env: {})",
+            drain_timeout.as_secs(),
+            SHUTDOWN_DRAIN_TIMEOUT_ENV
+        );
 
         let server_instance = Self {
             is_running: is_running_state,
@@ -284,7 +341,6 @@ impl AxumServer {
                 }
             }
 
-            let drain_timeout = std::time::Duration::from_secs(10);
             let drain_result = tokio::time::timeout(drain_timeout, async {
                 while connection_tasks.join_next().await.is_some() {}
             })
@@ -300,5 +356,27 @@ impl AxumServer {
         });
 
         Ok((server_instance, handle))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_shutdown_drain_timeout_secs;
+
+    #[test]
+    fn normalize_shutdown_drain_timeout_accepts_valid_values() {
+        assert_eq!(normalize_shutdown_drain_timeout_secs("15"), Some(15));
+    }
+
+    #[test]
+    fn normalize_shutdown_drain_timeout_rejects_invalid_or_empty_values() {
+        assert_eq!(normalize_shutdown_drain_timeout_secs(""), None);
+        assert_eq!(normalize_shutdown_drain_timeout_secs("abc"), None);
+    }
+
+    #[test]
+    fn normalize_shutdown_drain_timeout_clamps_to_supported_bounds() {
+        assert_eq!(normalize_shutdown_drain_timeout_secs("0"), Some(1));
+        assert_eq!(normalize_shutdown_drain_timeout_secs("99999"), Some(600));
     }
 }

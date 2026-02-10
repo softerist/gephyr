@@ -85,6 +85,7 @@ pub async fn internal_start_proxy_service(
     let _starting_guard = StartingGuard(state.starting.clone());
     let monitor = ensure_monitor(state).await;
     monitor.set_enabled(config.enable_logging);
+    crate::proxy::middleware::client_ip::set_trusted_proxies(config.trusted_proxies.clone());
 
     ensure_admin_server(config.clone(), state, integration.clone()).await?;
     let token_manager = {
@@ -157,6 +158,7 @@ pub async fn ensure_admin_server(
     if admin_lock.is_some() {
         return Ok(());
     }
+    crate::proxy::middleware::client_ip::set_trusted_proxies(config.trusted_proxies.clone());
     let monitor = ensure_monitor(state).await;
     let app_data_dir = crate::modules::auth::account::get_data_dir()?;
     let token_manager = Arc::new(TokenManager::new(app_data_dir));

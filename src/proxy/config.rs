@@ -363,6 +363,8 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub allow_lan_access: bool,
     #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+    #[serde(default)]
     pub cors: CorsConfig,
     #[serde(default)]
     pub auth_mode: ProxyAuthMode,
@@ -414,6 +416,7 @@ impl Default for ProxyConfig {
         Self {
             enabled: false,
             allow_lan_access: false,
+            trusted_proxies: Vec::new(),
             cors: CorsConfig::default(),
             auth_mode: ProxyAuthMode::default(),
             port: 8045,

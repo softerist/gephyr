@@ -12,7 +12,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
-- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain): `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`
+- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s): `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`
 
 ## Public Proxy API Surface
 
@@ -72,6 +72,7 @@ Main admin groups include:
 - Admin strict auth checks admin password first (if configured), then API key fallback: `src/proxy/middleware/auth.rs`
 - API/admin secret comparison uses a constant-time helper in auth middleware: `src/proxy/middleware/auth.rs`
 - IP filter supports whitelist mode, whitelist-priority mode, blacklist exact/CIDR matching, blocked-request JSON responses, and blocked log persistence: `src/proxy/middleware/ip_filter.rs`, `src/modules/persistence/security_db.rs`
+- Client IP resolution trusts forwarded headers only for socket peers in `proxy.trusted_proxies` (IP/CIDR); otherwise it uses socket `ConnectInfo` only: `src/proxy/middleware/client_ip.rs`, `src/proxy/config.rs`
 
 ## Service Status, CORS, Body Limits
 
@@ -224,6 +225,7 @@ Main admin groups include:
 - `ABV_ALLOW_LAN_ACCESS`, `ALLOW_LAN_ACCESS`
 - `ABV_ENCRYPTION_KEY`
 - `ABV_MAX_BODY_SIZE`
+- `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`
 - `ABV_ENABLE_ADMIN_API`
 - `ABV_PUBLIC_URL`
 - `ABV_DATA_DIR`

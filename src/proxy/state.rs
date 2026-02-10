@@ -77,6 +77,7 @@ impl ConfigState {
             let mut security = self.security.write().await;
             *security = crate::proxy::ProxySecurityConfig::from_proxy_config(proxy);
         }
+        crate::proxy::middleware::client_ip::set_trusted_proxies(proxy.trusted_proxies.clone());
         {
             let mut zai = self.zai.write().await;
             *zai = proxy.zai.clone();

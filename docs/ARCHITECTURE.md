@@ -36,6 +36,11 @@ Server-level CORS is applied in `src/proxy/server.rs` via `cors_layer`, sourced 
 - default: `strict` with localhost allowlist
 - opt-in: `permissive` mode for local/dev compatibility
 
+Client IP resolution for middleware (`src/proxy/middleware/client_ip.rs`) is trust-gated:
+
+- default (`proxy.trusted_proxies` empty): use socket `ConnectInfo` only
+- if peer socket IP matches trusted proxy IP/CIDR, forwarded headers may be used (`x-forwarded-for`, then `x-real-ip`)
+
 ## Config Mutation Flow
 
 ### Full config path
@@ -136,7 +141,8 @@ Operational snapshot endpoint:
 - Graceful shutdown path:
   - Ctrl+C signals accept-loop shutdown
   - listener stops accepting new sockets
-  - active connections are drained with bounded timeout, then aborted if needed
+  - active connections are drained with bounded timeout (`ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s, range 1-600), then aborted if needed
+  - long-running streams may be aborted on shutdown once drain timeout is exceeded
 
 ## Test Strategy Map
 

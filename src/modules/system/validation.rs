@@ -102,12 +102,69 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
             config.request_timeout,
         ));
     }
+    validate_trusted_proxies(config, errors);
     validate_upstream_proxy(&config.upstream_proxy, errors);
     validate_zai_config(&config.zai, errors);
     validate_experimental_config(&config.experimental, errors);
     validate_cors_config(&config.cors, errors);
     validate_proxy_pool(&config.proxy_pool, errors);
     validate_compliance_config(&config.compliance, errors);
+}
+
+fn validate_trusted_proxies(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
+    for (index, raw_pattern) in config.trusted_proxies.iter().enumerate() {
+        let pattern = raw_pattern.trim();
+        if pattern.is_empty() {
+            errors.push(ConfigError::new(
+                format!("proxy.trusted_proxies[{}]", index),
+                "must not be empty",
+            ));
+            continue;
+        }
+
+        if let Ok(_ip) = pattern.parse::<std::net::IpAddr>() {
+            continue;
+        }
+
+        let Some((network, prefix_str)) = pattern.split_once('/') else {
+            errors.push(ConfigError::with_value(
+                format!("proxy.trusted_proxies[{}]", index),
+                "must be a valid IP or CIDR (e.g. 127.0.0.1 or 10.0.0.0/8)",
+                pattern,
+            ));
+            continue;
+        };
+
+        let Ok(network_ip) = network.trim().parse::<std::net::IpAddr>() else {
+            errors.push(ConfigError::with_value(
+                format!("proxy.trusted_proxies[{}]", index),
+                "CIDR network must be a valid IP address",
+                pattern,
+            ));
+            continue;
+        };
+
+        let Ok(prefix_len) = prefix_str.trim().parse::<u8>() else {
+            errors.push(ConfigError::with_value(
+                format!("proxy.trusted_proxies[{}]", index),
+                "CIDR prefix must be numeric",
+                pattern,
+            ));
+            continue;
+        };
+
+        let max_prefix = if network_ip.is_ipv4() { 32 } else { 128 };
+        if prefix_len > max_prefix {
+            errors.push(ConfigError::with_value(
+                format!("proxy.trusted_proxies[{}]", index),
+                format!(
+                    "CIDR prefix out of range for address family (max {})",
+                    max_prefix
+                ),
+                pattern,
+            ));
+        }
+    }
 }
 
 fn validate_cors_config(config: &CorsConfig, errors: &mut Vec<ConfigError>) {
@@ -396,6 +453,30 @@ mod tests {
         let mut config = AppConfig::new();
         config.proxy.cors.mode = crate::proxy::config::CorsMode::Permissive;
         config.proxy.cors.allowed_origins = vec!["not-a-url".to_string()];
+
+        let result = validate_app_config(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_invalid_trusted_proxy_entry() {
+        let mut config = AppConfig::new();
+        config.proxy.trusted_proxies = vec!["bad-value".to_string()];
+
+        let result = validate_app_config(&config);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.iter().any(|e| e.field.contains("trusted_proxies")));
+    }
+
+    #[test]
+    fn test_valid_trusted_proxy_entries() {
+        let mut config = AppConfig::new();
+        config.proxy.trusted_proxies = vec![
+            "127.0.0.1".to_string(),
+            "10.0.0.0/8".to_string(),
+            "2001:db8::/32".to_string(),
+        ];
 
         let result = validate_app_config(&config);
         assert!(result.is_ok());

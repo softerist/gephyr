@@ -37,8 +37,9 @@ From `src/proxy/middleware/ip_filter.rs` and `src/modules/persistence/security_d
 
 Client IP extraction precedence:
 
-- v1 safe default: connection `ConnectInfo` only
-- forwarded headers (`x-forwarded-for`, `x-real-ip`) are ignored in middleware IP resolution by default
+- default safe mode: connection `ConnectInfo` only (`proxy.trusted_proxies` empty)
+- forwarded headers are considered only when socket peer IP matches configured `proxy.trusted_proxies` (IP/CIDR)
+- header precedence for trusted peers: `x-forwarded-for` (first valid IP) then `x-real-ip`, then socket IP fallback
 
 ## CORS and Exposure
 
