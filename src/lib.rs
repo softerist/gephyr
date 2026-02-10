@@ -4,6 +4,8 @@ pub mod error;
 mod models;
 mod modules;
 mod proxy;
+#[cfg(test)]
+mod test_utils;
 mod utils;
 
 use modules::system::logger;
@@ -217,38 +219,10 @@ mod tests {
     use super::{apply_headless_env_overrides, apply_security_hardening, parse_auth_mode};
     use crate::models::AppConfig;
     use crate::proxy::ProxyAuthMode;
+    use crate::test_utils::ScopedEnvVar;
     use std::sync::{Mutex, OnceLock};
 
     static LIB_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, original }
-        }
-
-        fn unset(key: &'static str) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::remove_var(key);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            if let Some(value) = self.original.as_deref() {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
 
     #[test]
     fn parse_auth_mode_rejects_auto() {

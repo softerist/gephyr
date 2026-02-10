@@ -185,32 +185,10 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::ScopedEnvVar;
     use std::sync::{Mutex, OnceLock};
 
     static CRYPTO_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            if let Some(value) = self.original.as_deref() {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
 
     #[test]
     fn resolve_key_prefers_env_var_over_machine_uid() {

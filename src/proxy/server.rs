@@ -404,6 +404,7 @@ mod tests {
     };
     use crate::proxy::monitor::ProxyMonitor;
     use crate::proxy::{ProxyAuthMode, ProxySecurityConfig, TokenManager};
+    use crate::test_utils::ScopedEnvVar;
     use futures::StreamExt;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -414,29 +415,6 @@ mod tests {
     use tokio::time::Instant;
 
     static SERVER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            if let Some(value) = self.original.as_deref() {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
 
     fn reserve_local_port() -> u16 {
         let listener =

@@ -27,31 +27,9 @@ mod tests {
     use crate::proxy::routes::build_admin_routes;
     use crate::proxy::state::{AppState, ConfigState, CoreServices, RuntimeState};
     use crate::proxy::{ProxySecurityConfig, TokenManager};
+    use crate::test_utils::ScopedEnvVar;
 
     static ADMIN_ENDPOINT_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-    struct ScopedEnvVar {
-        key: &'static str,
-        original: Option<String>,
-    }
-
-    impl ScopedEnvVar {
-        fn set(key: &'static str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, original }
-        }
-    }
-
-    impl Drop for ScopedEnvVar {
-        fn drop(&mut self) {
-            if let Some(value) = self.original.as_deref() {
-                std::env::set_var(self.key, value);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
-    }
 
     fn seed_runtime_config_api_key(api_key: &str) {
         let mut cfg = system_config::load_app_config().unwrap_or_default();
