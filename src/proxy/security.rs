@@ -23,10 +23,7 @@ impl ProxySecurityConfig {
     }
 
     pub fn effective_auth_mode(&self) -> ProxyAuthMode {
-        match self.auth_mode {
-            ProxyAuthMode::Auto => ProxyAuthMode::Strict,
-            ref other => other.clone(),
-        }
+        self.auth_mode.clone()
     }
 }
 
@@ -35,9 +32,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_mode_resolves_off_for_local_only() {
+    fn strict_mode_is_preserved() {
         let s = ProxySecurityConfig {
-            auth_mode: ProxyAuthMode::Auto,
+            auth_mode: ProxyAuthMode::Strict,
             api_key: "sk-test".to_string(),
             admin_password: None,
             allow_lan_access: false,
@@ -48,15 +45,18 @@ mod tests {
     }
 
     #[test]
-    fn auto_mode_resolves_all_except_health_for_lan() {
+    fn all_except_health_mode_is_preserved() {
         let s = ProxySecurityConfig {
-            auth_mode: ProxyAuthMode::Auto,
+            auth_mode: ProxyAuthMode::AllExceptHealth,
             api_key: "sk-test".to_string(),
             admin_password: None,
             allow_lan_access: true,
             port: 8080,
             security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
         };
-        assert!(matches!(s.effective_auth_mode(), ProxyAuthMode::Strict));
+        assert!(matches!(
+            s.effective_auth_mode(),
+            ProxyAuthMode::AllExceptHealth
+        ));
     }
 }

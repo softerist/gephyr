@@ -7,9 +7,9 @@ Defined in `src/proxy/config.rs` and resolved in `src/proxy/security.rs`:
 - `Off`
 - `Strict`
 - `AllExceptHealth`
-- `Auto` (resolves to `Strict`)
 
-Runtime hardening (`src/lib.rs`) forces `Strict` if configured `Off`/`Auto` in headless startup.
+Runtime hardening (`src/lib.rs`) forces `Strict` if configured `Off` in headless startup.
+Legacy compatibility: `AUTH_MODE=auto` (or persisted `auth_mode: "auto"`) is coerced to `strict` with warning.
 
 ## Auth Middleware Behavior
 

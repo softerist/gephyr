@@ -66,7 +66,6 @@ pub enum ProxyAuthMode {
     #[default]
     Strict,
     AllExceptHealth,
-    Auto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

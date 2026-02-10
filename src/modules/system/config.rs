@@ -24,6 +24,21 @@ pub fn load_app_config() -> Result<AppConfig, String> {
 
     let mut modified = false;
     if let Some(proxy) = v.get_mut("proxy") {
+        if let Some(auth_mode) = proxy.get("auth_mode").and_then(|m| m.as_str()) {
+            if auth_mode.eq_ignore_ascii_case("auto") {
+                if let Some(proxy_obj) = proxy.as_object_mut() {
+                    proxy_obj.insert(
+                        "auth_mode".to_string(),
+                        serde_json::Value::String("strict".to_string()),
+                    );
+                    modified = true;
+                    tracing::warn!(
+                        "Deprecated proxy.auth_mode='auto' found in config; migrated to 'strict'"
+                    );
+                }
+            }
+        }
+
         let mut custom_mapping = proxy
             .get("custom_mapping")
             .and_then(|m| m.as_object())

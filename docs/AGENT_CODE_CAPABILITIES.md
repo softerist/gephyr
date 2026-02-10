@@ -9,7 +9,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Token stats DB: `src/modules/stats/token_stats.rs`
 - Security DB: `src/modules/persistence/security_db.rs`
 - User token DB: `src/modules/persistence/user_token_db.rs`
-- Security hardening forces proxy auth mode to `Strict` when configured as `Off`/`Auto`: `src/lib.rs`
+- Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
 
@@ -60,7 +60,8 @@ Main admin groups include:
 
 ## Auth and Security Behavior
 
-- Auth modes: `Off`, `Strict`, `AllExceptHealth`, `Auto` (resolves to `Strict`) in `src/proxy/config.rs`, `src/proxy/security.rs`
+- Auth modes: `Off`, `Strict`, `AllExceptHealth` in `src/proxy/config.rs`, `src/proxy/security.rs`
+- Legacy compatibility: `auto` auth mode values are coerced to `strict` during env/config load in headless runtime
 - `OPTIONS` requests bypass auth in middleware: `src/proxy/middleware/auth.rs`
 - `/internal/*` bypass exists in auth/monitor middleware logic (no mounted internal routes were found)
 - API key sources:

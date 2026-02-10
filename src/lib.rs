@@ -47,7 +47,6 @@ fn parse_auth_mode(value: &str) -> Option<crate::proxy::ProxyAuthMode> {
         "off" => Some(crate::proxy::ProxyAuthMode::Off),
         "strict" => Some(crate::proxy::ProxyAuthMode::Strict),
         "all_except_health" => Some(crate::proxy::ProxyAuthMode::AllExceptHealth),
-        "auto" => Some(crate::proxy::ProxyAuthMode::Auto),
         _ => None,
     }
 }
@@ -70,12 +69,17 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
     }
 
     if let Ok(mode) = std::env::var("ABV_AUTH_MODE").or_else(|_| std::env::var("AUTH_MODE")) {
-        match parse_auth_mode(&mode) {
-            Some(parsed) => {
-                info!("Using auth mode from environment: {:?}", parsed);
-                config.proxy.auth_mode = parsed;
+        if mode.trim().eq_ignore_ascii_case("auto") {
+            warn!("Auth mode 'auto' is deprecated; coercing to 'strict' in headless mode");
+            config.proxy.auth_mode = crate::proxy::ProxyAuthMode::Strict;
+        } else {
+            match parse_auth_mode(&mode) {
+                Some(parsed) => {
+                    info!("Using auth mode from environment: {:?}", parsed);
+                    config.proxy.auth_mode = parsed;
+                }
+                None => warn!("Ignoring invalid auth mode value: {}", mode),
             }
-            None => warn!("Ignoring invalid auth mode value: {}", mode),
         }
     }
 
@@ -95,11 +99,8 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
 }
 
 fn apply_security_hardening(config: &mut crate::models::AppConfig) {
-    if matches!(
-        config.proxy.auth_mode,
-        crate::proxy::ProxyAuthMode::Off | crate::proxy::ProxyAuthMode::Auto
-    ) {
-        warn!("Auth mode was Off/Auto, forcing Strict in headless mode");
+    if matches!(config.proxy.auth_mode, crate::proxy::ProxyAuthMode::Off) {
+        warn!("Auth mode was Off, forcing Strict in headless mode");
         config.proxy.auth_mode = crate::proxy::ProxyAuthMode::Strict;
     }
 }
