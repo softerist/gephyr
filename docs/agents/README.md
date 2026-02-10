@@ -8,7 +8,6 @@ These files split the code-derived capability report into focused sections.
 - Runtime and routing: `docs/agents/RUNTIME_ROUTING.md`
 - Security and auth: `docs/agents/SECURITY_AUTH.md`
 - Edge cases and defects: `docs/agents/EDGE_CASES_DEFECTS.md`
-- Defect discovery report: `docs/agents/DEFECT_DISCOVERY_REPORT.md`
 - Architecture overview: `docs/ARCHITECTURE.md`
 - Sticky session persistence quick config: `docs/agents/QUICK_START_WORKFLOW.md` ("Session Persistence Quick Config")
 - Sticky session persistence overview: `README.md` ("Persistent Session Bindings (Sticky Sessions Across Restart)")
