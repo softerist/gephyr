@@ -3,6 +3,7 @@
 mod tests {
     use axum::{
         body::{to_bytes, Body},
+        extract::{Query, State},
         http::{Request, StatusCode},
         Router,
     };
@@ -278,6 +279,94 @@ mod tests {
         assert!(body["updated_at_unix"].is_number());
         assert!(body["detail"].is_null() || body["detail"].is_string());
         assert!(body["account_email"].is_null() || body["account_email"].is_string());
+        assert!(body["recent_events"].is_array());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_oauth_status_recent_events_include_callback_marker() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let marker = format!("test_callback_marker_{}", uuid::Uuid::new_v4());
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::Prepared,
+            Some("test_prepared".to_string()),
+            None,
+        );
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::CallbackReceived,
+            Some(marker.clone()),
+            None,
+        );
+        crate::modules::auth::oauth_server::mark_oauth_flow_status(
+            crate::modules::auth::oauth_server::OAuthFlowPhase::ExchangingToken,
+            Some("test_exchange".to_string()),
+            None,
+        );
+
+        let request = Request::builder()
+            .uri("/auth/status")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+
+        let (status, body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        let recent_events = body["recent_events"]
+            .as_array()
+            .expect("recent_events should be an array");
+
+        let marker_present = recent_events.iter().any(|event| {
+            event["phase"] == Value::from("callback_received")
+                && event["detail"] == Value::from(marker.clone())
+        });
+        assert!(
+            marker_present,
+            "recent_events should retain callback_received marker"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn oauth_callback_access_denied_sets_rejected_phase() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        seed_runtime_config_api_key(api_key);
+        let state = build_test_state(api_key);
+        let admin_router = build_admin_routes(state.clone()).with_state(state.clone());
+        let oauth_state = "test-deny-state".to_string();
+
+        let callback_result = crate::proxy::admin::handle_oauth_callback(
+            Query(crate::proxy::admin::OAuthParams {
+                code: None,
+                _scope: None,
+                state: Some(oauth_state),
+                error: Some("access_denied".to_string()),
+                error_description: Some("user denied".to_string()),
+            }),
+            axum::http::HeaderMap::new(),
+            State(crate::proxy::state::AdminState {
+                core: state.core.clone(),
+                config: state.config.clone(),
+                runtime: state.runtime.clone(),
+            }),
+        )
+        .await;
+        assert!(callback_result.is_ok(), "callback handler should succeed");
+
+        let status_request = Request::builder()
+            .uri("/auth/status")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (status, body) = send(&admin_router, status_request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["phase"], Value::from("rejected"));
+        assert_eq!(body["detail"], Value::from("oauth_access_denied"));
     }
 
     #[tokio::test(flavor = "current_thread")]

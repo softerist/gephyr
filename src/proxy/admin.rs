@@ -11,6 +11,8 @@ mod security;
 mod stats;
 mod system;
 
+#[cfg(test)]
+pub(crate) use accounts::OAuthParams;
 pub(crate) use accounts::{
     admin_add_account, admin_bind_device, admin_bind_device_profile_with_profile,
     admin_cancel_oauth_login, admin_complete_oauth_login, admin_delete_account,

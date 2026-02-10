@@ -105,12 +105,12 @@ pub(crate) async fn admin_submit_oauth_code(
 
 #[derive(Deserialize)]
 pub(crate) struct OAuthParams {
-    code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(rename = "scope")]
-    _scope: Option<String>,
-    state: Option<String>,
-    error: Option<String>,
-    error_description: Option<String>,
+    pub(crate) _scope: Option<String>,
+    pub(crate) state: Option<String>,
+    pub(crate) error: Option<String>,
+    pub(crate) error_description: Option<String>,
 }
 
 pub(crate) async fn handle_oauth_callback(
