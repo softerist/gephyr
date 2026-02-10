@@ -1,4 +1,4 @@
-use super::TokenManager;
+use super::{StickyEventRecord, TokenManager};
 
 impl TokenManager {
     pub fn len(&self) -> usize {
@@ -151,16 +151,16 @@ impl TokenManager {
     }
     pub fn clear_all_sessions(&self) {
         crate::proxy::token::control::clear_all_sessions(self.session_accounts.as_ref());
-        self.record_sticky_event(
-            "cleared_all_bindings",
-            "*",
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("admin_clear_or_runtime_clear"),
-        );
+        self.record_sticky_event(StickyEventRecord {
+            action: "cleared_all_bindings",
+            session_id: "*",
+            bound_account_id: None,
+            selected_account_id: None,
+            model: None,
+            wait_seconds: None,
+            max_wait_seconds: None,
+            reason: Some("admin_clear_or_runtime_clear"),
+        });
         self.persist_session_bindings_internal();
     }
     pub fn get_sticky_debug_snapshot(&self) -> super::StickyDebugSnapshot {

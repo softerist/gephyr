@@ -141,8 +141,9 @@ pub(crate) async fn handle_oauth_callback(
                 <body>
                     <div class="card">
                         <div class="icon">✅</div>
-                        <h1>Authorization Successful</h1>
-                        <p>You can close this window now. The application should refresh automatically.</p>
+                        <h1>Authorization Received</h1>
+                        <p>The authorization code was received. Account linking is now completing in the background.</p>
+                        <p>If your terminal does not continue within a few seconds, check server logs for the exact failure reason.</p>
 
                         <div class="fallback-box">
                             <span class="fallback-title">💡 Did it not refresh?</span>

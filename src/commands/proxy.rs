@@ -231,14 +231,14 @@ pub async fn internal_stop_proxy_service(state: &ProxyServiceState) -> Result<()
 }
 
 #[cfg(test)]
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::{internal_start_proxy_service, internal_stop_proxy_service, ProxyServiceState};
     use crate::modules::persistence::proxy_db;
     use crate::modules::system::integration::SystemManager;
     use crate::proxy::monitor::ProxyRequestLog;
     use crate::proxy::ProxyConfig;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
 
     static PROXY_STARTUP_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -257,7 +257,7 @@ mod tests {
         let _guard = PROXY_STARTUP_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .await;
         proxy_db::init_db().expect("proxy db init");
         let old_log_id = format!("startup-maintenance-{}", uuid::Uuid::new_v4());
         let old_timestamp = chrono::Utc::now().timestamp() - (40 * 24 * 3600);

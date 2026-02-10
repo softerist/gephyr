@@ -181,6 +181,28 @@ function Start-Container {
     if ($env:GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET) {
         $oauthArgs += @("-e", "GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=$($env:GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET)")
     }
+    $runtimeArgs = @()
+    if ($env:ABV_ENCRYPTION_KEY) {
+        $runtimeArgs += @("-e", "ABV_ENCRYPTION_KEY=$($env:ABV_ENCRYPTION_KEY)")
+    }
+    if ($env:ABV_WEB_PASSWORD) {
+        $runtimeArgs += @("-e", "ABV_WEB_PASSWORD=$($env:ABV_WEB_PASSWORD)")
+    }
+    if ($env:WEB_PASSWORD) {
+        $runtimeArgs += @("-e", "WEB_PASSWORD=$($env:WEB_PASSWORD)")
+    }
+    if ($env:ABV_PUBLIC_URL) {
+        $runtimeArgs += @("-e", "ABV_PUBLIC_URL=$($env:ABV_PUBLIC_URL)")
+    }
+    if ($env:ABV_MAX_BODY_SIZE) {
+        $runtimeArgs += @("-e", "ABV_MAX_BODY_SIZE=$($env:ABV_MAX_BODY_SIZE)")
+    }
+    if ($env:ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS) {
+        $runtimeArgs += @("-e", "ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS=$($env:ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS)")
+    }
+    if ($env:ABV_ADMIN_STOP_SHUTDOWN) {
+        $runtimeArgs += @("-e", "ABV_ADMIN_STOP_SHUTDOWN=$($env:ABV_ADMIN_STOP_SHUTDOWN)")
+    }
 
     $containerId = docker run --rm -d --name $ContainerName `
         -p "127.0.0.1:$Port`:8045" `
@@ -189,6 +211,7 @@ function Start-Container {
         -e ABV_ENABLE_ADMIN_API=$adminApi `
         -e ALLOW_LAN_ACCESS=true `
         @oauthArgs `
+        @runtimeArgs `
         -v "${DataDir}:/home/gephyr/.gephyr" `
         $Image
 

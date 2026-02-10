@@ -54,6 +54,17 @@ pub struct ComplianceRequestGuard {
     state: Arc<std::sync::Mutex<ComplianceRuntimeState>>,
 }
 
+pub(super) struct StickyEventRecord<'a> {
+    pub action: &'a str,
+    pub session_id: &'a str,
+    pub bound_account_id: Option<&'a str>,
+    pub selected_account_id: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub wait_seconds: Option<u64>,
+    pub max_wait_seconds: Option<u64>,
+    pub reason: Option<&'a str>,
+}
+
 impl Drop for ComplianceRequestGuard {
     fn drop(&mut self) {
         if let Ok(mut state) = self.state.lock() {
@@ -112,28 +123,17 @@ impl TokenManager {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn record_sticky_event(
-        &self,
-        action: &str,
-        session_id: &str,
-        bound_account_id: Option<&str>,
-        selected_account_id: Option<&str>,
-        model: Option<&str>,
-        wait_seconds: Option<u64>,
-        max_wait_seconds: Option<u64>,
-        reason: Option<&str>,
-    ) {
+    pub(super) fn record_sticky_event(&self, record: StickyEventRecord<'_>) {
         let event = StickyDecisionEvent {
             timestamp_unix: chrono::Utc::now().timestamp(),
-            action: action.to_string(),
-            session_id: session_id.to_string(),
-            bound_account_id: bound_account_id.map(|v| v.to_string()),
-            selected_account_id: selected_account_id.map(|v| v.to_string()),
-            model: model.map(|v| v.to_string()),
-            wait_seconds,
-            max_wait_seconds,
-            reason: reason.map(|v| v.to_string()),
+            action: record.action.to_string(),
+            session_id: record.session_id.to_string(),
+            bound_account_id: record.bound_account_id.map(|v| v.to_string()),
+            selected_account_id: record.selected_account_id.map(|v| v.to_string()),
+            model: record.model.map(|v| v.to_string()),
+            wait_seconds: record.wait_seconds,
+            max_wait_seconds: record.max_wait_seconds,
+            reason: record.reason.map(|v| v.to_string()),
         };
 
         if let Ok(mut queue) = self.sticky_events.lock() {

@@ -143,6 +143,24 @@ function Wait-OAuthAccountLink {
                 return $true
             }
         } catch {
+            $statusCode = $null
+            if ($_.Exception -and $_.Exception.Response -and $_.Exception.Response.StatusCode) {
+                try {
+                    $statusCode = [int]$_.Exception.Response.StatusCode
+                } catch {
+                    $statusCode = $null
+                }
+            }
+
+            if ($statusCode -eq 401) {
+                Write-Warning "OAuth wait aborted: /api/accounts returned 401 Unauthorized. Verify GEPHYR_API_KEY in shell/.env.local and restart container."
+                return $false
+            }
+            if ($statusCode -eq 404) {
+                Write-Warning "OAuth wait aborted: /api/accounts returned 404. Ensure admin API is enabled (ABV_ENABLE_ADMIN_API=true)."
+                return $false
+            }
+
             # Service may still be transitioning; keep polling.
         }
 
@@ -150,6 +168,31 @@ function Wait-OAuthAccountLink {
         if ($now -ge $nextProgressAt) {
             $elapsed = [int]($now - $startAt).TotalSeconds
             Write-Host "Still waiting for OAuth linkage... ${elapsed}s elapsed."
+            try {
+                $recentLogs = docker logs --tail 160 gephyr 2>&1
+                if ($recentLogs -match "encryption_key_unavailable|Failed to save account in background OAuth") {
+                    Write-Warning "OAuth callback succeeded but account persistence failed (missing/invalid ABV_ENCRYPTION_KEY inside container). Set ABV_ENCRYPTION_KEY in .env.local, then rerun login."
+                    return $false
+                }
+                if ($recentLogs -match "OAuth callback state mismatch") {
+                    Write-Warning "OAuth callback state mismatch detected. Restart login flow and complete only the latest opened OAuth URL."
+                    return $false
+                }
+                if ($recentLogs -match "Background OAuth exchange failed:") {
+                    Write-Warning "OAuth wait aborted: token exchange failed. Check network/proxy settings and Google OAuth client credentials."
+                    return $false
+                }
+                if ($recentLogs -match "Background OAuth error: Google did not return a refresh_token") {
+                    Write-Warning "OAuth wait aborted: Google returned no refresh_token. Revoke prior app consent and retry."
+                    return $false
+                }
+                if ($recentLogs -match "Failed to fetch user info in background OAuth:") {
+                    Write-Warning "OAuth wait aborted: token accepted but user-info lookup failed."
+                    return $false
+                }
+            } catch {
+                # If docker logs is unavailable temporarily, continue polling.
+            }
             $nextProgressAt = $nextProgressAt.AddSeconds(10)
         }
 
@@ -183,6 +226,26 @@ Invoke-Step -Name "Health check" -Action {
 }
 
 if (-not $SkipLogin) {
+    if (-not $env:ABV_ENCRYPTION_KEY) {
+        $envPath = Join-Path $scriptDir ".env.local"
+        $hasEncryptionKey = $false
+        if (Test-Path $envPath) {
+            foreach ($raw in Get-Content $envPath) {
+                $line = $raw.Trim()
+                if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("ABV_ENCRYPTION_KEY=")) {
+                    $value = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
+                    if ($value) {
+                        $hasEncryptionKey = $true
+                    }
+                    break
+                }
+            }
+        }
+        if (-not $hasEncryptionKey) {
+            Write-Warning "ABV_ENCRYPTION_KEY is not set. OAuth callback may succeed in browser but account save can fail in container."
+        }
+    }
+
     Invoke-Step -Name "Starting OAuth login flow" -Action {
         & $consoleScript login -NoBrowser:$NoBrowser -Image $Image -Port $Port
     }

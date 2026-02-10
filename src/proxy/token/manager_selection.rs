@@ -1,4 +1,4 @@
-use super::{ProxyToken, TokenManager};
+use super::{ProxyToken, StickyEventRecord, TokenManager};
 use std::collections::HashSet;
 
 pub(super) struct ModeASelection<'a> {
@@ -70,16 +70,16 @@ impl TokenManager {
                         reset_sec,
                         max_wait_seconds
                     );
-                    self.record_sticky_event(
-                        "kept_binding_short_wait",
-                        sid,
-                        Some(&bound_token.account_id),
-                        None,
-                        Some(req.normalized_target),
-                        Some(reset_sec),
-                        Some(max_wait_seconds),
-                        Some("bound_account_rate_limited_short_window"),
-                    );
+                    self.record_sticky_event(StickyEventRecord {
+                        action: "kept_binding_short_wait",
+                        session_id: sid,
+                        bound_account_id: Some(&bound_token.account_id),
+                        selected_account_id: None,
+                        model: Some(req.normalized_target),
+                        wait_seconds: Some(reset_sec),
+                        max_wait_seconds: Some(max_wait_seconds),
+                        reason: Some("bound_account_rate_limited_short_window"),
+                    });
                     return None;
                 }
 
@@ -90,16 +90,16 @@ impl TokenManager {
                     max_wait_seconds
                 );
                 self.session_accounts.remove(sid);
-                self.record_sticky_event(
-                    "unbound_long_wait",
-                    sid,
-                    Some(&bound_token.account_id),
-                    None,
-                    Some(req.normalized_target),
-                    Some(reset_sec),
-                    Some(max_wait_seconds),
-                    Some("bound_account_rate_limited_long_window"),
-                );
+                self.record_sticky_event(StickyEventRecord {
+                    action: "unbound_long_wait",
+                    session_id: sid,
+                    bound_account_id: Some(&bound_token.account_id),
+                    selected_account_id: None,
+                    model: Some(req.normalized_target),
+                    wait_seconds: Some(reset_sec),
+                    max_wait_seconds: Some(max_wait_seconds),
+                    reason: Some("bound_account_rate_limited_long_window"),
+                });
                 self.persist_session_bindings_internal();
                 return None;
             }
@@ -116,16 +116,16 @@ impl TokenManager {
                     bound_token.email,
                     sid
                 );
-                self.record_sticky_event(
-                    "reused_bound_account",
-                    sid,
-                    Some(&bound_token.account_id),
-                    Some(&bound_token.account_id),
-                    Some(req.normalized_target),
-                    None,
-                    None,
-                    Some("bound_account_eligible_and_reused"),
-                );
+                self.record_sticky_event(StickyEventRecord {
+                    action: "reused_bound_account",
+                    session_id: sid,
+                    bound_account_id: Some(&bound_token.account_id),
+                    selected_account_id: Some(&bound_token.account_id),
+                    model: Some(req.normalized_target),
+                    wait_seconds: None,
+                    max_wait_seconds: None,
+                    reason: Some("bound_account_eligible_and_reused"),
+                });
                 return Some(bound_token.clone());
             }
 
@@ -141,16 +141,16 @@ impl TokenManager {
                     req.target_model
                 );
                 self.session_accounts.remove(sid);
-                self.record_sticky_event(
-                    "unbound_quota_protected",
-                    sid,
-                    Some(&bound_token.account_id),
-                    None,
-                    Some(req.normalized_target),
-                    None,
-                    None,
-                    Some("bound_account_quota_protected_for_target_model"),
-                );
+                self.record_sticky_event(StickyEventRecord {
+                    action: "unbound_quota_protected",
+                    session_id: sid,
+                    bound_account_id: Some(&bound_token.account_id),
+                    selected_account_id: None,
+                    model: Some(req.normalized_target),
+                    wait_seconds: None,
+                    max_wait_seconds: None,
+                    reason: Some("bound_account_quota_protected_for_target_model"),
+                });
                 self.persist_session_bindings_internal();
             }
 
@@ -161,16 +161,16 @@ impl TokenManager {
             sid
         );
         self.session_accounts.remove(sid);
-        self.record_sticky_event(
-            "unbound_missing_account",
-            sid,
-            Some(&bound_id),
-            None,
-            Some(req.normalized_target),
-            None,
-            None,
-            Some("bound_account_not_present_in_snapshot"),
-        );
+        self.record_sticky_event(StickyEventRecord {
+            action: "unbound_missing_account",
+            session_id: sid,
+            bound_account_id: Some(&bound_id),
+            selected_account_id: None,
+            model: Some(req.normalized_target),
+            wait_seconds: None,
+            max_wait_seconds: None,
+            reason: Some("bound_account_not_present_in_snapshot"),
+        });
         self.persist_session_bindings_internal();
         None
     }
@@ -243,31 +243,31 @@ impl TokenManager {
                             sid,
                             selected.account_id
                         );
-                        self.record_sticky_event(
-                            "kept_existing_binding_fallback_selected",
-                            sid,
-                            Some(existing),
-                            Some(&selected.account_id),
-                            Some(req.normalized_target),
-                            None,
-                            None,
-                            Some("sticky_binding_retained_while_serving_fallback_request"),
-                        );
+                        self.record_sticky_event(StickyEventRecord {
+                            action: "kept_existing_binding_fallback_selected",
+                            session_id: sid,
+                            bound_account_id: Some(existing),
+                            selected_account_id: Some(&selected.account_id),
+                            model: Some(req.normalized_target),
+                            wait_seconds: None,
+                            max_wait_seconds: None,
+                            reason: Some("sticky_binding_retained_while_serving_fallback_request"),
+                        });
                     }
                     Some(_) => {}
                     None => {
                         self.session_accounts
                             .insert(sid.to_string(), selected.account_id.clone());
-                        self.record_sticky_event(
-                            "bound_new_session",
-                            sid,
-                            None,
-                            Some(&selected.account_id),
-                            Some(req.normalized_target),
-                            None,
-                            None,
-                            Some("new_binding_established"),
-                        );
+                        self.record_sticky_event(StickyEventRecord {
+                            action: "bound_new_session",
+                            session_id: sid,
+                            bound_account_id: None,
+                            selected_account_id: Some(&selected.account_id),
+                            model: Some(req.normalized_target),
+                            wait_seconds: None,
+                            max_wait_seconds: None,
+                            reason: Some("new_binding_established"),
+                        });
                         self.persist_session_bindings_internal();
                         tracing::debug!(
                             "Sticky Session: Bound new account {} to session {}",

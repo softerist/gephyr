@@ -392,7 +392,6 @@ impl AxumServer {
 }
 
 #[cfg(test)]
-#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::{
         normalize_shutdown_drain_timeout_secs, AxumServer, AxumStartConfig,
@@ -408,9 +407,10 @@ mod tests {
     use futures::StreamExt;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
     use std::time::Duration;
     use tokio::io::AsyncWriteExt;
+    use tokio::sync::Mutex;
     use tokio::time::Instant;
 
     static SERVER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -518,10 +518,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn shutdown_completes_with_in_flight_request_after_drain_timeout() {
-        let _guard = SERVER_TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = SERVER_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
         let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "1");
 
         let port = reserve_local_port();
@@ -564,10 +561,7 @@ Content-Length: 4096\r\n\
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn http1_health_concurrency_smoke_benchmark() {
-        let _guard = SERVER_TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = SERVER_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
         let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "2");
 
         let port = reserve_local_port();
