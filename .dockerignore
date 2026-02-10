@@ -3,6 +3,10 @@ src/target/
 node_modules/
 dist/
 .git/
+.github/
+.gitignore
+.env
+.env.*
 *.deb
 *.app
 *.dmg
@@ -10,3 +14,8 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+docs/
+scripts/
+output/
+target-snapshots/
+*.log

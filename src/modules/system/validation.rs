@@ -1,7 +1,7 @@
 use crate::models::AppConfig;
 use crate::proxy::config::{
-    ComplianceConfig, ExperimentalConfig, ProxyConfig, ProxyPoolConfig, UpstreamProxyConfig,
-    ZaiConfig,
+    ComplianceConfig, CorsConfig, CorsMode, ExperimentalConfig, ProxyConfig, ProxyPoolConfig,
+    UpstreamProxyConfig, ZaiConfig,
 };
 use std::fmt;
 #[derive(Debug, Clone)]
@@ -105,8 +105,68 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
     validate_upstream_proxy(&config.upstream_proxy, errors);
     validate_zai_config(&config.zai, errors);
     validate_experimental_config(&config.experimental, errors);
+    validate_cors_config(&config.cors, errors);
     validate_proxy_pool(&config.proxy_pool, errors);
     validate_compliance_config(&config.compliance, errors);
+}
+
+fn validate_cors_config(config: &CorsConfig, errors: &mut Vec<ConfigError>) {
+    if matches!(config.mode, CorsMode::Permissive) {
+        return;
+    }
+
+    for (index, raw_origin) in config.allowed_origins.iter().enumerate() {
+        let origin = raw_origin.trim();
+        if origin.is_empty() {
+            errors.push(ConfigError::new(
+                format!("proxy.cors.allowed_origins[{}]", index),
+                "must not be empty",
+            ));
+            continue;
+        }
+
+        let parsed = match url::Url::parse(origin) {
+            Ok(url) => url,
+            Err(_) => {
+                errors.push(ConfigError::with_value(
+                    format!("proxy.cors.allowed_origins[{}]", index),
+                    "must be a valid absolute HTTP(S) origin",
+                    origin,
+                ));
+                continue;
+            }
+        };
+
+        let scheme = parsed.scheme();
+        if scheme != "http" && scheme != "https" {
+            errors.push(ConfigError::with_value(
+                format!("proxy.cors.allowed_origins[{}]", index),
+                "must use http:// or https://",
+                origin,
+            ));
+        }
+
+        if parsed.host_str().is_none() {
+            errors.push(ConfigError::with_value(
+                format!("proxy.cors.allowed_origins[{}]", index),
+                "must include a host",
+                origin,
+            ));
+        }
+
+        if parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            errors.push(ConfigError::with_value(
+                format!("proxy.cors.allowed_origins[{}]", index),
+                "must be origin-only (no path/query/fragment/userinfo)",
+                origin,
+            ));
+        }
+    }
 }
 fn validate_upstream_proxy(config: &UpstreamProxyConfig, errors: &mut Vec<ConfigError>) {
     if config.enabled && !config.url.is_empty() && !is_valid_proxy_url(&config.url) {
@@ -315,6 +375,30 @@ mod tests {
         assert!(errors
             .iter()
             .any(|e| e.field.contains("upstream_proxy.url")));
+    }
+
+    #[test]
+    fn test_invalid_cors_origin_with_path() {
+        let mut config = AppConfig::new();
+        config.proxy.cors.mode = crate::proxy::config::CorsMode::Strict;
+        config.proxy.cors.allowed_origins = vec!["http://localhost:3000/path".to_string()];
+
+        let result = validate_app_config(&config);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("cors.allowed_origins")));
+    }
+
+    #[test]
+    fn test_permissive_cors_skips_origin_validation() {
+        let mut config = AppConfig::new();
+        config.proxy.cors.mode = crate::proxy::config::CorsMode::Permissive;
+        config.proxy.cors.allowed_origins = vec!["not-a-url".to_string()];
+
+        let result = validate_app_config(&config);
+        assert!(result.is_ok());
     }
 
     #[test]

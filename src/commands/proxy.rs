@@ -21,6 +21,7 @@ pub struct ProxyServiceState {
 
 pub struct AdminServerInstance {
     pub axum_server: crate::proxy::AxumServer,
+    pub server_handle: tokio::task::JoinHandle<()>,
 }
 pub struct ProxyServiceInstance {
     pub token_manager: Arc<TokenManager>,
@@ -169,6 +170,7 @@ pub async fn ensure_admin_server(
         request_timeout: config.request_timeout,
         upstream_proxy: config.upstream_proxy.clone(),
         user_agent_override: config.user_agent_override.clone(),
+        cors_config: config.cors.clone(),
         security_config: crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
         zai_config: config.zai.clone(),
         monitor,
@@ -178,13 +180,50 @@ pub async fn ensure_admin_server(
         proxy_pool_config: config.proxy_pool.clone(),
     };
 
-    let (axum_server, _server_handle) = match crate::proxy::AxumServer::start(start_config).await {
+    let (axum_server, server_handle) = match crate::proxy::AxumServer::start(start_config).await {
         Ok((server, handle)) => (server, handle),
         Err(e) => return Err(format!("Failed to start management server: {}", e)),
     };
 
-    *admin_lock = Some(AdminServerInstance { axum_server });
+    *admin_lock = Some(AdminServerInstance {
+        axum_server,
+        server_handle,
+    });
     crate::proxy::update_thinking_budget_config(config.thinking_budget.clone());
+
+    Ok(())
+}
+
+pub async fn internal_stop_proxy_service(state: &ProxyServiceState) -> Result<(), String> {
+    {
+        let mut instance_lock = state.instance.write().await;
+        *instance_lock = None;
+    }
+
+    let admin_instance = {
+        let mut admin_lock = state.admin_server.write().await;
+        admin_lock.take()
+    };
+
+    if let Some(admin_instance) = admin_instance {
+        admin_instance.axum_server.set_running(false).await;
+        admin_instance.axum_server.request_shutdown();
+
+        let mut server_handle = admin_instance.server_handle;
+        match tokio::time::timeout(std::time::Duration::from_secs(15), &mut server_handle).await {
+            Ok(Ok(())) => {
+                tracing::info!("Proxy server task exited cleanly");
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("Proxy server task join error during shutdown: {}", e);
+            }
+            Err(_) => {
+                tracing::warn!("Proxy server shutdown timed out; aborting server task");
+                server_handle.abort();
+                let _ = server_handle.await;
+            }
+        }
+    }
 
     Ok(())
 }

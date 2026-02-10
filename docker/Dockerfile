@@ -25,7 +25,8 @@ RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3
     fi
 
 WORKDIR /app
-COPY . .
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \

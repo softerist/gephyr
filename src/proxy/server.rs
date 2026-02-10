@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::sync::RwLock;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
 static PENDING_DELETE_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
 
@@ -69,6 +69,7 @@ pub struct AxumStartConfig {
     pub request_timeout: u64,
     pub upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
     pub user_agent_override: Option<String>,
+    pub cors_config: crate::proxy::config::CorsConfig,
     pub security_config: crate::proxy::ProxySecurityConfig,
     pub zai_config: crate::proxy::ZaiConfig,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
@@ -82,6 +83,7 @@ pub struct AxumStartConfig {
 pub struct AxumServer {
     pub is_running: Arc<RwLock<bool>>,
     pub token_manager: Arc<TokenManager>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl AxumServer {
@@ -89,6 +91,12 @@ impl AxumServer {
         let mut r = self.is_running.write().await;
         *r = running;
         tracing::info!("Proxy service running status updated to: {}", running);
+    }
+
+    pub fn request_shutdown(&self) {
+        if self.shutdown_tx.send(true).is_err() {
+            tracing::debug!("Shutdown signal receiver is not active");
+        }
     }
     pub async fn start(
         config: AxumStartConfig,
@@ -101,6 +109,7 @@ impl AxumServer {
             request_timeout,
             upstream_proxy,
             user_agent_override,
+            cors_config,
             security_config,
             zai_config,
             monitor,
@@ -123,8 +132,6 @@ impl AxumServer {
         let debug_logging_state = Arc::new(RwLock::new(debug_logging));
         let is_running_state = Arc::new(RwLock::new(true));
         let switching_state = Arc::new(RwLock::new(false));
-        let thought_signature_map =
-            Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
         let account_service = Arc::new(crate::modules::auth::account_service::AccountService::new(
             integration.clone(),
         ));
@@ -158,7 +165,6 @@ impl AxumServer {
             update_lock: Arc::new(tokio::sync::Mutex::new(())),
         });
         let runtime_state = Arc::new(RuntimeState {
-            thought_signature_map: thought_signature_map.clone(),
             provider_rr: provider_rr.clone(),
             switching: switching_state.clone(),
             is_running: is_running_state.clone(),
@@ -213,7 +219,7 @@ impl AxumServer {
                 state.clone(),
                 service_status_middleware,
             ))
-            .layer(cors_layer())
+            .layer(cors_layer(&cors_config))
             .layer(DefaultBodyLimit::max(max_body_size))
             .with_state(state.clone())
         };
@@ -221,49 +227,76 @@ impl AxumServer {
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| format!("Address {} binding failed: {}", addr, e))?;
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
         tracing::info!("Proxy server started at http://{}", addr);
 
         let server_instance = Self {
             is_running: is_running_state,
             token_manager: token_manager.clone(),
+            shutdown_tx,
         };
         let handle = tokio::spawn(async move {
             use hyper::server::conn::http1;
             use hyper_util::rt::TokioIo;
             use hyper_util::service::TowerToHyperService;
+            let mut connection_tasks = tokio::task::JoinSet::new();
 
             loop {
-                match listener.accept().await {
-                    Ok((stream, remote_addr)) => {
-                        let io = TokioIo::new(stream);
-                        use hyper::body::Incoming;
-                        use tower::ServiceExt;
-                        let app_with_info = app.clone().map_request(
-                            move |mut req: axum::http::Request<Incoming>| {
-                                req.extensions_mut()
-                                    .insert(axum::extract::ConnectInfo(remote_addr));
-                                req
-                            },
-                        );
-
-                        let service = TowerToHyperService::new(app_with_info);
-
-                        tokio::task::spawn(async move {
-                            if let Err(err) = http1::Builder::new()
-                                .serve_connection(io, service)
-                                .with_upgrades()
-                                .await
-                            {
-                                debug!("Connection handling ended or failed: {:?}", err);
-                            }
-                        });
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_ok() && *shutdown_rx.borrow() {
+                            tracing::info!("Shutdown signal received; stopping accept loop");
+                            break;
+                        }
                     }
-                    Err(e) => {
-                        error!("Failed to accept connection: {:?}", e);
+                    accept_result = listener.accept() => {
+                        match accept_result {
+                            Ok((stream, remote_addr)) => {
+                                let io = TokioIo::new(stream);
+                                use hyper::body::Incoming;
+                                use tower::ServiceExt;
+                                let app_with_info = app.clone().map_request(
+                                    move |mut req: axum::http::Request<Incoming>| {
+                                        req.extensions_mut()
+                                            .insert(axum::extract::ConnectInfo(remote_addr));
+                                        req
+                                    },
+                                );
+
+                                let service = TowerToHyperService::new(app_with_info);
+
+                                connection_tasks.spawn(async move {
+                                    if let Err(err) = http1::Builder::new()
+                                        .serve_connection(io, service)
+                                        .with_upgrades()
+                                        .await
+                                    {
+                                        debug!("Connection handling ended or failed: {:?}", err);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("Failed to accept connection: {:?}", e);
+                            }
+                        }
                     }
                 }
             }
+
+            let drain_timeout = std::time::Duration::from_secs(10);
+            let drain_result = tokio::time::timeout(drain_timeout, async {
+                while connection_tasks.join_next().await.is_some() {}
+            })
+            .await;
+
+            if drain_result.is_err() {
+                warn!("Timed out draining active connections; aborting remaining tasks");
+                connection_tasks.abort_all();
+                while connection_tasks.join_next().await.is_some() {}
+            }
+
+            tracing::info!("Proxy server shutdown complete");
         });
 
         Ok((server_instance, handle))

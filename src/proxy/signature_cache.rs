@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 const SIGNATURE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
@@ -29,6 +30,64 @@ impl<T> CacheEntry<T> {
         self.timestamp.elapsed().unwrap_or(Duration::ZERO) > SIGNATURE_TTL
     }
 }
+
+fn enforce_cache_limit<K, T>(
+    cache: &mut HashMap<K, CacheEntry<T>>,
+    limit: usize,
+    cache_name: &str,
+    log_level_info: bool,
+) where
+    K: Eq + Hash + Clone,
+{
+    if cache.len() <= limit {
+        return;
+    }
+
+    let before = cache.len();
+    cache.retain(|_, entry| !entry.is_expired());
+
+    if cache.len() > limit {
+        let now = SystemTime::now();
+        let mut oldest_first: Vec<(K, Duration)> = cache
+            .iter()
+            .map(|(k, entry)| {
+                (
+                    k.clone(),
+                    now.duration_since(entry.timestamp)
+                        .unwrap_or(Duration::ZERO),
+                )
+            })
+            .collect();
+        oldest_first.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let to_remove = cache.len() - limit;
+        for (key, _) in oldest_first.into_iter().take(to_remove) {
+            cache.remove(&key);
+        }
+    }
+
+    let after = cache.len();
+    if before != after {
+        if log_level_info {
+            tracing::info!(
+                "[SignatureCache] {} cleanup: {} -> {} entries (limit: {})",
+                cache_name,
+                before,
+                after,
+                limit
+            );
+        } else {
+            tracing::debug!(
+                "[SignatureCache] {} cleanup: {} -> {} entries (limit: {})",
+                cache_name,
+                before,
+                after,
+                limit
+            );
+        }
+    }
+}
+
 pub struct SignatureCache {
     tool_signatures: Mutex<HashMap<String, CacheEntry<String>>>,
     thinking_families: Mutex<HashMap<String, CacheEntry<String>>>,
@@ -58,18 +117,7 @@ impl SignatureCache {
                 tool_use_id
             );
             cache.insert(tool_use_id.to_string(), CacheEntry::new(signature));
-            if cache.len() > TOOL_CACHE_LIMIT {
-                let before = cache.len();
-                cache.retain(|_, v| !v.is_expired());
-                let after = cache.len();
-                if before != after {
-                    tracing::debug!(
-                        "[SignatureCache] Tool cache cleanup: {} -> {} entries",
-                        before,
-                        after
-                    );
-                }
-            }
+            enforce_cache_limit(&mut cache, TOOL_CACHE_LIMIT, "Tool cache", false);
         }
     }
     pub fn get_tool_signature(&self, tool_use_id: &str) -> Option<String> {
@@ -98,19 +146,7 @@ impl SignatureCache {
                 family
             );
             cache.insert(signature, CacheEntry::new(family));
-
-            if cache.len() > FAMILY_CACHE_LIMIT {
-                let before = cache.len();
-                cache.retain(|_, v| !v.is_expired());
-                let after = cache.len();
-                if before != after {
-                    tracing::debug!(
-                        "[SignatureCache] Family cache cleanup: {} -> {} entries",
-                        before,
-                        after
-                    );
-                }
-            }
+            enforce_cache_limit(&mut cache, FAMILY_CACHE_LIMIT, "Family cache", false);
         }
     }
     pub fn get_signature_family(&self, signature: &str) -> Option<String> {
@@ -172,19 +208,7 @@ impl SignatureCache {
                     }),
                 );
             }
-            if cache.len() > SESSION_CACHE_LIMIT {
-                let before = cache.len();
-                cache.retain(|_, v| !v.is_expired());
-                let after = cache.len();
-                if before != after {
-                    tracing::info!(
-                        "[SignatureCache] Session cache cleanup: {} -> {} entries (limit: {})",
-                        before,
-                        after,
-                        SESSION_CACHE_LIMIT
-                    );
-                }
-            }
+            enforce_cache_limit(&mut cache, SESSION_CACHE_LIMIT, "Session cache", true);
         }
     }
     pub fn get_session_signature(&self, session_id: &str) -> Option<String> {
@@ -298,5 +322,46 @@ mod tests {
         assert!(cache.get_tool_signature("tool_1").is_none());
         assert!(cache.get_signature_family(&sig).is_none());
         assert!(cache.get_session_signature("sid-1").is_none());
+    }
+
+    #[test]
+    fn test_cache_limits_are_enforced_even_without_expiry() {
+        let cache = SignatureCache::new();
+
+        for i in 0..(TOOL_CACHE_LIMIT + 50) {
+            cache.cache_tool_signature(
+                &format!("tool-{}", i),
+                format!("sig-tool-{}-{}", i, "x".repeat(60)),
+            );
+        }
+        let tool_len = cache.tool_signatures.lock().expect("tool cache lock").len();
+        assert!(tool_len <= TOOL_CACHE_LIMIT);
+
+        for i in 0..(FAMILY_CACHE_LIMIT + 50) {
+            cache.cache_thinking_family(
+                format!("sig-family-{}-{}", i, "y".repeat(60)),
+                "claude".to_string(),
+            );
+        }
+        let family_len = cache
+            .thinking_families
+            .lock()
+            .expect("family cache lock")
+            .len();
+        assert!(family_len <= FAMILY_CACHE_LIMIT);
+
+        for i in 0..(SESSION_CACHE_LIMIT + 50) {
+            cache.cache_session_signature(
+                &format!("sid-{}", i),
+                format!("sig-session-{}-{}", i, "z".repeat(60)),
+                i,
+            );
+        }
+        let session_len = cache
+            .session_signatures
+            .lock()
+            .expect("session cache lock")
+            .len();
+        assert!(session_len <= SESSION_CACHE_LIMIT);
     }
 }

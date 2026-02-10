@@ -105,7 +105,7 @@ fn apply_security_hardening(config: &mut crate::models::AppConfig) {
     }
 }
 
-async fn start_headless_runtime() -> Result<(), String> {
+async fn start_headless_runtime() -> Result<commands::proxy::ProxyServiceState, String> {
     let proxy_state = commands::proxy::ProxyServiceState::new();
     let mut config = modules::system::config::load_app_config()
         .map_err(|e| format!("failed_to_load_config_for_headless_mode: {}", e))?;
@@ -143,7 +143,7 @@ async fn start_headless_runtime() -> Result<(), String> {
 
     modules::system::scheduler::start_scheduler(proxy_state.clone());
     info!("Headless scheduler started");
-    Ok(())
+    Ok(proxy_state)
 }
 
 pub fn run() {
@@ -169,13 +169,19 @@ pub fn run() {
 
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
     runtime.block_on(async {
-        if let Err(e) = start_headless_runtime().await {
-            error!("{}", e);
-            std::process::exit(1);
-        }
+        let proxy_state = match start_headless_runtime().await {
+            Ok(state) => state,
+            Err(e) => {
+                error!("{}", e);
+                std::process::exit(1);
+            }
+        };
 
         info!("Headless service is running. Press Ctrl+C to exit.");
         let _ = tokio::signal::ctrl_c().await;
         info!("Shutting down headless service");
+        if let Err(e) = commands::proxy::internal_stop_proxy_service(&proxy_state).await {
+            warn!("Failed to stop proxy service cleanly: {}", e);
+        }
     });
 }

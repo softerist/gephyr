@@ -72,7 +72,6 @@ mod tests {
             update_lock: Arc::new(tokio::sync::Mutex::new(())),
         });
         let runtime = Arc::new(RuntimeState {
-            thought_signature_map: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             provider_rr: Arc::new(AtomicUsize::new(0)),
             switching: Arc::new(RwLock::new(false)),
             is_running: Arc::new(RwLock::new(true)),
@@ -125,7 +124,6 @@ mod tests {
             update_lock: Arc::new(tokio::sync::Mutex::new(())),
         });
         let runtime = Arc::new(RuntimeState {
-            thought_signature_map: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             provider_rr: Arc::new(AtomicUsize::new(0)),
             switching: Arc::new(RwLock::new(false)),
             is_running: Arc::new(RwLock::new(true)),

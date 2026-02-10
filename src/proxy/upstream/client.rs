@@ -268,4 +268,10 @@ mod tests {
             "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
         );
     }
+
+    #[test]
+    fn test_client_creation_initializes_user_agent_path() {
+        let _client = UpstreamClient::new(None, None);
+        assert!(crate::constants::USER_AGENT.starts_with("antigravity/"));
+    }
 }

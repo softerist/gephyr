@@ -12,6 +12,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
+- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain): `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`
 
 ## Public Proxy API Surface
 
@@ -69,13 +70,18 @@ Main admin groups include:
 - `x-api-key`
 - `x-goog-api-key`
 - Admin strict auth checks admin password first (if configured), then API key fallback: `src/proxy/middleware/auth.rs`
+- API/admin secret comparison uses a constant-time helper in auth middleware: `src/proxy/middleware/auth.rs`
 - IP filter supports whitelist mode, whitelist-priority mode, blacklist exact/CIDR matching, blocked-request JSON responses, and blocked log persistence: `src/proxy/middleware/ip_filter.rs`, `src/modules/persistence/security_db.rs`
 
 ## Service Status, CORS, Body Limits
 
 - Service-status middleware can return `503` when service disabled: `src/proxy/middleware/service_status.rs`
-- CORS allows any origin/headers and common methods, with credentials disabled: `src/proxy/middleware/cors.rs`
+- CORS is config-driven via `proxy.cors`:
+- default `strict` mode with localhost allowlist
+- explicit `permissive` mode for any-origin local/dev compatibility
+- credentials remain disabled: `src/proxy/middleware/cors.rs`, `src/proxy/config.rs`
 - Body limit defaults to 100MB via `DefaultBodyLimit::max`, configurable by `ABV_MAX_BODY_SIZE`: `src/proxy/server.rs`
+- `USER_AGENT` initialization is deterministic/local and does not perform blocking remote fetch on first use: `src/constants.rs`
 
 ## Protocol Handling and Transformations
 

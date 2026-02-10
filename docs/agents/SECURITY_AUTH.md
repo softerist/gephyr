@@ -23,6 +23,7 @@ From `src/proxy/middleware/auth.rs`:
 - `x-api-key`
 - `x-goog-api-key`
 - Admin auth (`force_strict`) checks admin password first (if set), else API key.
+- API/admin secret comparison uses a constant-time helper to reduce timing side-channel leakage.
 
 ## IP Filtering
 
@@ -43,8 +44,14 @@ Client IP extraction precedence:
 
 From `src/proxy/middleware/cors.rs`:
 
-- `allow_origin(Any)`
-- `allow_headers(Any)`
+- CORS policy is config-driven via `proxy.cors`
+- Default mode is `strict` with localhost allowlist:
+- `http://localhost:3000`
+- `http://127.0.0.1:3000`
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+- In `strict` mode, empty `allowed_origins` intentionally blocks all cross-origin browser access (no `Access-Control-Allow-Origin` header).
+- `permissive` mode is explicit opt-in and allows any origin/headers
 - `allow_credentials(false)`
 
 From `src/proxy/server.rs`:

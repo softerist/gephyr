@@ -323,11 +323,47 @@ fn default_compliance_retry_cap() -> usize {
     2
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CorsMode {
+    #[default]
+    Strict,
+    Permissive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsConfig {
+    #[serde(default)]
+    pub mode: CorsMode,
+    #[serde(default = "default_cors_allowed_origins")]
+    pub allowed_origins: Vec<String>,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            mode: CorsMode::Strict,
+            allowed_origins: default_cors_allowed_origins(),
+        }
+    }
+}
+
+fn default_cors_allowed_origins() -> Vec<String> {
+    vec![
+        "http://localhost:3000".to_string(),
+        "http://127.0.0.1:3000".to_string(),
+        "http://localhost:5173".to_string(),
+        "http://127.0.0.1:5173".to_string(),
+    ]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
     pub enabled: bool,
     #[serde(default)]
     pub allow_lan_access: bool,
+    #[serde(default)]
+    pub cors: CorsConfig,
     #[serde(default)]
     pub auth_mode: ProxyAuthMode,
     pub port: u16,
@@ -378,6 +414,7 @@ impl Default for ProxyConfig {
         Self {
             enabled: false,
             allow_lan_access: false,
+            cors: CorsConfig::default(),
             auth_mode: ProxyAuthMode::default(),
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),

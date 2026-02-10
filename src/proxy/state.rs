@@ -27,7 +27,6 @@ pub struct ConfigState {
 
 #[derive(Clone)]
 pub struct RuntimeState {
-    pub thought_signature_map: Arc<tokio::sync::Mutex<HashMap<String, String>>>,
     pub provider_rr: Arc<AtomicUsize>,
     pub switching: Arc<RwLock<bool>>,
     pub is_running: Arc<RwLock<bool>>,

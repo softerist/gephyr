@@ -31,6 +31,11 @@ Middleware order for proxy routes (`src/proxy/routes/mod.rs`):
 
 Admin routes are guarded by `admin_auth_middleware` in `build_admin_routes`.
 
+Server-level CORS is applied in `src/proxy/server.rs` via `cors_layer`, sourced from `proxy.cors` config:
+
+- default: `strict` with localhost allowlist
+- opt-in: `permissive` mode for local/dev compatibility
+
 ## Config Mutation Flow
 
 ### Full config path
@@ -128,6 +133,10 @@ Operational snapshot endpoint:
   - validated by restart smoke tests/scripts
 - Admin auth lockout risk:
   - `POST /api/config` preserves existing API key when blank input is submitted
+- Graceful shutdown path:
+  - Ctrl+C signals accept-loop shutdown
+  - listener stops accepting new sockets
+  - active connections are drained with bounded timeout, then aborted if needed
 
 ## Test Strategy Map
 

@@ -9,6 +9,43 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
+
+fn constant_time_str_eq(left: &str, right: &str) -> bool {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let max_len = left_bytes.len().max(right_bytes.len());
+    let mut diff = left_bytes.len() ^ right_bytes.len();
+
+    for i in 0..max_len {
+        let l = left_bytes.get(i).copied().unwrap_or(0);
+        let r = right_bytes.get(i).copied().unwrap_or(0);
+        diff |= (l ^ r) as usize;
+    }
+
+    diff == 0
+}
+
+fn provided_secret_matches(provided: Option<&str>, expected: &str) -> bool {
+    provided
+        .map(|candidate| constant_time_str_eq(candidate, expected))
+        .unwrap_or(false)
+}
+
+fn is_authorized(
+    security: &ProxySecurityConfig,
+    provided_api_key: Option<&str>,
+    force_strict: bool,
+) -> bool {
+    if force_strict {
+        match &security.admin_password {
+            Some(pwd) if !pwd.is_empty() => provided_secret_matches(provided_api_key, pwd),
+            _ => provided_secret_matches(provided_api_key, &security.api_key),
+        }
+    } else {
+        provided_secret_matches(provided_api_key, &security.api_key)
+    }
+}
+
 pub async fn auth_middleware(
     state: State<Arc<RwLock<ProxySecurityConfig>>>,
     request: Request,
@@ -145,14 +182,7 @@ async fn auth_middleware_internal(
         tracing::error!("Proxy auth is enabled but api_key is empty; denying request");
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let authorized = if force_strict {
-        match &security.admin_password {
-            Some(pwd) if !pwd.is_empty() => api_key.map(|k| k == pwd).unwrap_or(false),
-            _ => api_key.map(|k| k == security.api_key).unwrap_or(false),
-        }
-    } else {
-        api_key.map(|k| k == security.api_key).unwrap_or(false)
-    };
+    let authorized = is_authorized(&security, api_key, force_strict);
 
     if authorized {
         Ok(next.run(request).await)
@@ -209,7 +239,19 @@ pub struct UserTokenIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::config::SecurityMonitorConfig;
     use crate::proxy::ProxyAuthMode;
+
+    fn make_security(api_key: &str, admin_password: Option<&str>) -> ProxySecurityConfig {
+        ProxySecurityConfig {
+            auth_mode: ProxyAuthMode::Strict,
+            api_key: api_key.to_string(),
+            admin_password: admin_password.map(ToString::to_string),
+            allow_lan_access: true,
+            port: 8045,
+            security_monitor: SecurityMonitorConfig::default(),
+        }
+    }
 
     #[tokio::test]
     async fn test_admin_auth_with_password() {
@@ -226,5 +268,34 @@ mod tests {
             .uri("/admin/stats")
             .body(axum::body::Body::empty())
             .unwrap();
+    }
+
+    #[test]
+    fn constant_time_compare_matches_and_rejects() {
+        assert!(constant_time_str_eq("abc123", "abc123"));
+        assert!(!constant_time_str_eq("abc123", "abc124"));
+        assert!(!constant_time_str_eq("abc123", "abc1234"));
+    }
+
+    #[test]
+    fn strict_auth_prefers_admin_password_when_present() {
+        let security = make_security("sk-api", Some("admin123"));
+        assert!(is_authorized(&security, Some("admin123"), true));
+        assert!(!is_authorized(&security, Some("sk-api"), true));
+    }
+
+    #[test]
+    fn strict_auth_falls_back_to_api_key_when_admin_password_missing() {
+        let security = make_security("sk-api", None);
+        assert!(is_authorized(&security, Some("sk-api"), true));
+        assert!(!is_authorized(&security, Some("wrong"), true));
+    }
+
+    #[test]
+    fn non_strict_auth_uses_api_key_only() {
+        let security = make_security("sk-api", Some("admin123"));
+        assert!(is_authorized(&security, Some("sk-api"), false));
+        assert!(!is_authorized(&security, Some("admin123"), false));
+        assert!(!is_authorized(&security, None, false));
     }
 }
