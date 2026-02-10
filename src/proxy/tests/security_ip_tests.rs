@@ -570,15 +570,35 @@ mod security_db_tests {
 
 #[cfg(test)]
 mod ip_filter_middleware_tests {
+    use axum::{body::Body, extract::ConnectInfo, http::Request};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
     #[test]
-    fn test_ip_extraction_priority() {
+    fn test_socket_ip_is_used_even_when_forwarded_headers_exist() {
         let _guard = crate::proxy::tests::acquire_security_test_lock();
-        let xff_header = "203.0.113.1, 198.51.100.2, 192.0.2.3";
-        let first_ip = xff_header.split(',').next().unwrap().trim();
-        assert_eq!(first_ip, "203.0.113.1");
-        let single_ip = "10.0.0.1";
-        let parsed = single_ip.split(',').next().unwrap().trim();
-        assert_eq!(parsed, "10.0.0.1");
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 23, 45, 67)), 8045);
+        let mut req = Request::builder()
+            .uri("/v1/models")
+            .header("x-forwarded-for", "203.0.113.1, 198.51.100.2")
+            .header("x-real-ip", "203.0.113.9")
+            .body(Body::empty())
+            .expect("request build");
+        req.extensions_mut().insert(ConnectInfo(socket));
+
+        let ip = crate::proxy::middleware::client_ip::extract_client_ip(&req);
+        assert_eq!(ip.as_deref(), Some("10.23.45.67"));
+    }
+
+    #[test]
+    fn test_missing_connect_info_returns_none() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        let req = Request::builder()
+            .uri("/v1/models")
+            .header("x-forwarded-for", "203.0.113.1")
+            .body(Body::empty())
+            .expect("request build");
+        let ip = crate::proxy::middleware::client_ip::extract_client_ip(&req);
+        assert!(ip.is_none());
     }
 }
 

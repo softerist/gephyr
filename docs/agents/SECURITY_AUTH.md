@@ -36,9 +36,8 @@ From `src/proxy/middleware/ip_filter.rs` and `src/modules/persistence/security_d
 
 Client IP extraction precedence:
 
-- `x-forwarded-for`
-- `x-real-ip`
-- connection `ConnectInfo`
+- v1 safe default: connection `ConnectInfo` only
+- forwarded headers (`x-forwarded-for`, `x-real-ip`) are ignored in middleware IP resolution by default
 
 ## CORS and Exposure
 
@@ -60,3 +59,12 @@ From `src/modules/persistence/user_token_db.rs` and auth middleware:
 - Usage and IP binding logs are persisted.
 - Auth middleware can attach user token identity and allow request via token path.
 - In auth `Off` mode, identity attachment still uses token validation checks before attaching identity.
+
+## Encryption Key Source
+
+From `src/utils/crypto.rs`:
+
+- Primary key source: `ABV_ENCRYPTION_KEY`
+- Fallback source: machine UID (when available)
+- No constant/default shared fallback key
+- Encrypted payloads fail closed when no key source is available (plaintext compatibility remains for non-encrypted values)

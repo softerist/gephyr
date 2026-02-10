@@ -9,22 +9,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
-
-fn extract_client_ip(request: &Request) -> String {
-    request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_else(|| "127.0.0.1".to_string())
-}
 pub async fn auth_middleware(
     state: State<Arc<RwLock<ProxySecurityConfig>>>,
     request: Request,
@@ -75,32 +59,42 @@ async fn auth_middleware_internal(
                 });
 
             if let Some(token) = api_key {
-                let client_ip = extract_client_ip(&request);
-                match crate::modules::persistence::user_token_db::validate_token(token, &client_ip)
+                if let Some(client_ip) =
+                    crate::proxy::middleware::client_ip::extract_client_ip(&request)
                 {
-                    Ok((true, _)) => {
-                        if let Ok(Some(user_token)) =
-                            crate::modules::persistence::user_token_db::get_token_by_value(token)
-                        {
-                            let identity = UserTokenIdentity {
-                                token_id: user_token.id,
-                                username: user_token.username,
-                            };
-                            let (mut parts, body) = request.into_parts();
-                            parts.extensions.insert(identity);
-                            let request = Request::from_parts(parts, body);
-                            return Ok(next.run(request).await);
+                    match crate::modules::persistence::user_token_db::validate_token(
+                        token, &client_ip,
+                    ) {
+                        Ok((true, _)) => {
+                            if let Ok(Some(user_token)) =
+                                crate::modules::persistence::user_token_db::get_token_by_value(
+                                    token,
+                                )
+                            {
+                                let identity = UserTokenIdentity {
+                                    token_id: user_token.id,
+                                    username: user_token.username,
+                                };
+                                let (mut parts, body) = request.into_parts();
+                                parts.extensions.insert(identity);
+                                let request = Request::from_parts(parts, body);
+                                return Ok(next.run(request).await);
+                            }
+                        }
+                        Ok((false, reason)) => {
+                            tracing::debug!(
+                                "Auth off-mode ignored invalid user token for identity attach: {:?}",
+                                reason
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Auth off-mode user token validation error: {}", e);
                         }
                     }
-                    Ok((false, reason)) => {
-                        tracing::debug!(
-                            "Auth off-mode ignored invalid user token for identity attach: {:?}",
-                            reason
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("Auth off-mode user token validation error: {}", e);
-                    }
+                } else {
+                    tracing::warn!(
+                        "Auth off-mode skipped user token identity attach: missing socket client IP"
+                    );
                 }
             }
 
@@ -162,36 +156,45 @@ async fn auth_middleware_internal(
 
     if authorized {
         Ok(next.run(request).await)
-    } else if !force_strict && api_key.is_some() {
-        let token = api_key.unwrap();
-        let client_ip = extract_client_ip(&request);
-        match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
-            Ok((true, _)) => {
-                if let Ok(Some(user_token)) =
-                    crate::modules::persistence::user_token_db::get_token_by_value(token)
-                {
-                    let identity = UserTokenIdentity {
-                        token_id: user_token.id,
-                        username: user_token.username,
-                    };
-                    let (mut parts, body) = request.into_parts();
-                    parts.extensions.insert(identity);
-                    let request = Request::from_parts(parts, body);
-                    let response = next.run(request).await;
+    } else if !force_strict {
+        if let Some(token) = api_key {
+            let Some(client_ip) = crate::proxy::middleware::client_ip::extract_client_ip(&request)
+            else {
+                tracing::warn!(
+                    "Rejecting user token auth: missing socket client IP for token validation"
+                );
+                return Err(StatusCode::UNAUTHORIZED);
+            };
+            match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
+                Ok((true, _)) => {
+                    if let Ok(Some(user_token)) =
+                        crate::modules::persistence::user_token_db::get_token_by_value(token)
+                    {
+                        let identity = UserTokenIdentity {
+                            token_id: user_token.id,
+                            username: user_token.username,
+                        };
+                        let (mut parts, body) = request.into_parts();
+                        parts.extensions.insert(identity);
+                        let request = Request::from_parts(parts, body);
+                        let response = next.run(request).await;
 
-                    Ok(response)
-                } else {
+                        Ok(response)
+                    } else {
+                        Err(StatusCode::UNAUTHORIZED)
+                    }
+                }
+                Ok((false, reason)) => {
+                    tracing::warn!("UserToken rejected: {:?}", reason);
                     Err(StatusCode::UNAUTHORIZED)
                 }
+                Err(e) => {
+                    tracing::error!("UserToken validation error: {}", e);
+                    Err(StatusCode::INTERNAL_SERVER_ERROR)
+                }
             }
-            Ok((false, reason)) => {
-                tracing::warn!("UserToken rejected: {:?}", reason);
-                Err(StatusCode::UNAUTHORIZED)
-            }
-            Err(e) => {
-                tracing::error!("UserToken validation error: {}", e);
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
+        } else {
+            Err(StatusCode::UNAUTHORIZED)
         }
     } else {
         Err(StatusCode::UNAUTHORIZED)

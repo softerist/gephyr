@@ -19,9 +19,16 @@ fn record_user_token_usage(
     user_agent: Option<String>,
 ) {
     if let Some(identity) = user_token_identity {
+        let Some(client_ip) = log.client_ip.as_deref() else {
+            tracing::warn!(
+                "Skipping user token usage record: missing socket client IP for token_id={}",
+                identity.token_id
+            );
+            return;
+        };
         let _ = crate::modules::persistence::user_token_db::record_token_usage_and_ip(
             &identity.token_id,
-            log.client_ip.as_deref().unwrap_or("127.0.0.1"),
+            client_ip,
             log.model.as_deref().unwrap_or("unknown"),
             log.input_tokens.unwrap_or(0) as i32,
             log.output_tokens.unwrap_or(0) as i32,
@@ -46,18 +53,7 @@ pub async fn monitor_middleware(
     }
 
     let start = Instant::now();
-    let client_ip = request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        });
+    let client_ip = crate::proxy::middleware::client_ip::extract_client_ip(&request);
 
     let user_agent = request
         .headers()

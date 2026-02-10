@@ -8,18 +8,56 @@ use sha2::Digest;
 
 const NONCE_LEN: usize = 12;
 const LEGACY_NONCE_SEED: &[u8] = b"antigravity_salt";
+const MIN_ENCRYPTED_BYTES: usize = 16;
 
 fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(&LEGACY_NONCE_SEED[..NONCE_LEN]);
     nonce
 }
-fn get_encryption_key() -> [u8; 32] {
-    let device_id = machine_uid::get().unwrap_or_else(|_| "default".to_string());
+
+fn derive_key_material(source: &str) -> [u8; 32] {
     let mut key = [0u8; 32];
-    let hash = sha2::Sha256::digest(device_id.as_bytes());
+    let hash = sha2::Sha256::digest(source.as_bytes());
     key.copy_from_slice(&hash);
     key
+}
+
+fn resolve_encryption_key_from_sources(
+    env_key: Option<&str>,
+    machine_uid_result: Result<String, String>,
+) -> Result<[u8; 32], String> {
+    if let Some(raw) = env_key {
+        let key = raw.trim();
+        if !key.is_empty() {
+            return Ok(derive_key_material(key));
+        }
+    }
+
+    let machine_uid = machine_uid_result?;
+    let machine_uid = machine_uid.trim();
+    if machine_uid.is_empty() {
+        return Err("machine_uid_empty".to_string());
+    }
+    Ok(derive_key_material(machine_uid))
+}
+
+fn get_encryption_key() -> Result<[u8; 32], String> {
+    let env_key = std::env::var("ABV_ENCRYPTION_KEY").ok();
+    let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
+    resolve_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
+        format!(
+            "encryption_key_unavailable: {}. Set ABV_ENCRYPTION_KEY or ensure machine UID is available.",
+            e
+        )
+    })
+}
+
+fn looks_like_encrypted_payload(raw: &str) -> bool {
+    general_purpose::STANDARD
+        .decode(raw)
+        .map(|decoded| decoded.len() >= MIN_ENCRYPTED_BYTES)
+        .unwrap_or(false)
 }
 
 use serde::{Deserialize, Deserializer, Serializer};
@@ -59,12 +97,18 @@ where
 pub fn decrypt_secret_or_plaintext(raw: &str) -> Result<String, String> {
     match decrypt_string(raw) {
         Ok(v) => Ok(v),
-        Err(_) => Ok(raw.to_string()),
+        Err(e) => {
+            if looks_like_encrypted_payload(raw) {
+                Err(e)
+            } else {
+                Ok(raw.to_string())
+            }
+        }
     }
 }
 
 pub fn encrypt_string(password: &str) -> Result<String, String> {
-    let key = get_encryption_key();
+    let key = get_encryption_key()?;
     let cipher = Aes256Gcm::new(&key.into());
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -82,7 +126,7 @@ pub fn encrypt_string(password: &str) -> Result<String, String> {
 }
 
 pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
-    let key = get_encryption_key();
+    let key = get_encryption_key()?;
     let cipher = Aes256Gcm::new(&key.into());
 
     let decoded = general_purpose::STANDARD
@@ -102,4 +146,46 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
         .decrypt(nonce, decoded.as_ref())
         .map_err(|e| format!("Decryption failed: {}", e))?;
     String::from_utf8(plaintext).map_err(|e| format!("UTF-8 conversion failed: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_key_prefers_env_var_over_machine_uid() {
+        let env = Some("env-secret-key");
+        let machine_uid = Ok("machine-id-123".to_string());
+        let resolved = resolve_encryption_key_from_sources(env, machine_uid).expect("resolve key");
+        assert_eq!(resolved, derive_key_material("env-secret-key"));
+    }
+
+    #[test]
+    fn resolve_key_uses_machine_uid_when_env_missing() {
+        let resolved = resolve_encryption_key_from_sources(None, Ok("machine-id-xyz".to_string()))
+            .expect("resolve key");
+        assert_eq!(resolved, derive_key_material("machine-id-xyz"));
+    }
+
+    #[test]
+    fn resolve_key_errors_when_no_env_and_machine_uid_fails() {
+        let err =
+            resolve_encryption_key_from_sources(Some(""), Err("uid-not-available".to_string()))
+                .expect_err("should fail");
+        assert!(err.contains("uid-not-available"));
+    }
+
+    #[test]
+    fn plaintext_falls_back_when_not_encrypted() {
+        let raw = "plain-text-secret";
+        let decrypted = decrypt_secret_or_plaintext(raw).expect("plaintext fallback");
+        assert_eq!(decrypted, raw);
+    }
+
+    #[test]
+    fn encrypted_like_payload_does_not_fallback_to_plaintext() {
+        let raw = general_purpose::STANDARD.encode(vec![7u8; 24]);
+        let err = decrypt_secret_or_plaintext(&raw).expect_err("should fail closed");
+        assert!(!err.is_empty());
+    }
 }

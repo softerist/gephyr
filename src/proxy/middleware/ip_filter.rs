@@ -13,7 +13,7 @@ pub async fn ip_filter_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    let client_ip = extract_client_ip(&request);
+    let client_ip = crate::proxy::middleware::client_ip::extract_client_ip(&request);
 
     if let Some(ip) = &client_ip {
         let security_config = state.read().await;
@@ -125,26 +125,6 @@ pub async fn ip_filter_middleware(
         tracing::warn!("[IP Filter] Unable to extract client IP from request");
     }
     next.run(request).await
-}
-fn extract_client_ip(request: &Request) -> Option<String> {
-    request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .or_else(|| {
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|info| info.0.ip().to_string())
-        })
 }
 fn create_blocked_response(ip: &str, message: &str) -> Response {
     let body = serde_json::json!({
