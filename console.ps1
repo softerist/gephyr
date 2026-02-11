@@ -15,7 +15,9 @@ param(
     [switch]$Aggressive,
     [switch]$Json,
     [switch]$Quiet,
-    [switch]$NoCache
+    [switch]$NoCache,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$ExtraArgs
 )
 
 $ErrorActionPreference = "Stop"
@@ -1057,7 +1059,7 @@ switch ($Command) {
     "check" { Show-AccountHealthCheck -AsJson:$Json.IsPresent }
     "canary" {
         $Run = $false
-        if ($env:CMD_ARGS -match "--run") { $Run = $true }
+        if ($ExtraArgs -contains "--run" -or $env:CMD_ARGS -match "--run") { $Run = $true }
         Show-TlsCanary -AsJson:$Json.IsPresent -Run:$Run
     }
     "login" { Start-OAuthFlow }
