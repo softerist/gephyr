@@ -928,3 +928,159 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         details,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{list_accounts, load_account};
+    use crate::test_utils::ScopedEnvVar;
+    use serde_json::json;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, OnceLock};
+
+    static ACCOUNT_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn write_account_fixture(
+        root: &Path,
+        account_id: &str,
+        email: &str,
+        access_token: &str,
+        refresh_token: &str,
+    ) {
+        let now = chrono::Utc::now().timestamp();
+        let account = json!({
+            "id": account_id,
+            "email": email,
+            "name": null,
+            "token": {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600,
+                "token_type": "Bearer",
+                "email": email,
+                "project_id": null,
+                "session_id": null
+            },
+            "quota": null,
+            "disabled": false,
+            "proxy_disabled": false,
+            "created_at": now,
+            "last_used": now
+        });
+
+        let accounts_dir = root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).expect("create accounts dir");
+        std::fs::write(
+            accounts_dir.join(format!("{}.json", account_id)),
+            serde_json::to_string_pretty(&account).expect("serialize account fixture"),
+        )
+        .expect("write account fixture");
+    }
+
+    fn write_index_fixture(root: &Path, summaries: &[(&str, &str)]) {
+        let now = chrono::Utc::now().timestamp();
+        let accounts: Vec<serde_json::Value> = summaries
+            .iter()
+            .map(|(id, email)| {
+                json!({
+                    "id": id,
+                    "email": email,
+                    "name": null,
+                    "disabled": false,
+                    "proxy_disabled": false,
+                    "created_at": now,
+                    "last_used": now
+                })
+            })
+            .collect();
+        let index = json!({
+            "version": "2.0",
+            "accounts": accounts,
+            "current_account_id": summaries.first().map(|(id, _)| *id)
+        });
+
+        std::fs::write(
+            root.join("accounts.json"),
+            serde_json::to_string_pretty(&index).expect("serialize index fixture"),
+        )
+        .expect("write index fixture");
+    }
+
+    fn make_temp_data_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            ".gephyr-account-deser-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp data dir");
+        dir
+    }
+
+    #[test]
+    fn load_account_accepts_malformed_v2_tokens_via_deserialize_fallback() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
+
+        write_account_fixture(
+            &data_dir,
+            "acct-malformed",
+            "malformed@example.com",
+            "v2:abc",
+            "v2:abc",
+        );
+
+        let loaded = load_account("acct-malformed").expect("load account should succeed");
+        assert_eq!(loaded.token.access_token, "v2:abc");
+        assert_eq!(loaded.token.refresh_token, "v2:abc");
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn list_accounts_keeps_entries_with_malformed_v2_tokens() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
+
+        write_account_fixture(
+            &data_dir,
+            "acct-plain",
+            "plain@example.com",
+            "plain-access-token",
+            "plain-refresh-token",
+        );
+        write_account_fixture(
+            &data_dir,
+            "acct-malformed",
+            "malformed@example.com",
+            "v2:abc",
+            "v2:abc",
+        );
+        write_index_fixture(
+            &data_dir,
+            &[
+                ("acct-plain", "plain@example.com"),
+                ("acct-malformed", "malformed@example.com"),
+            ],
+        );
+
+        let accounts = list_accounts().expect("list_accounts should succeed");
+        assert_eq!(accounts.len(), 2, "malformed v2 entry should not be dropped");
+        let malformed = accounts
+            .iter()
+            .find(|a| a.id == "acct-malformed")
+            .expect("malformed account should still be present");
+        assert_eq!(malformed.token.access_token, "v2:abc");
+        assert_eq!(malformed.token.refresh_token, "v2:abc");
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+}

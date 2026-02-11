@@ -58,6 +58,7 @@ App-wide layers (`src/proxy/server.rs`) apply:
 Shared behavior:
 
 - Non-stream client requests are often converted to internal stream calls and collected back to JSON.
+- Claude handler now always uses Gemini `streamGenerateContent` upstream and converts back to JSON for non-stream clients via stream collection (unary mapper path removed): `src/proxy/handlers/claude.rs`, `src/proxy/mappers/claude/mod.rs`
 - Model routing uses custom mappings + wildcard rules + defaults: `src/proxy/common/model_mapping.rs`.
 - Session identity precedence for OpenAI/Gemini requests:
 - explicit session headers (`x-session-id`, `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
@@ -104,3 +105,12 @@ Pool strategies:
 
 - `RoundRobin`, `Random`, `Priority`, `LeastConnections`, `WeightedRoundRobin`
 - weighted uses weighted random selection derived from proxy priority.
+- `LeastConnections` currently uses total historical proxy usage (counter is monotonic), not live in-flight connection count: `src/proxy/proxy_pool.rs`
+- if every healthy proxy is already account-bound, unbound traffic can still be routed through a shared healthy proxy instead of returning no proxy: `src/proxy/proxy_pool.rs`
+- `max_accounts` enforcement applies to explicit persistent bindings (`bind_account_to_proxy`), while shared fallback selection is request-scoped routing for unbound accounts: `src/proxy/proxy_pool.rs`
+- default health-check URL (`http://cp.cloudflare.com/generate_204`) now requires `204` specifically; custom health-check URLs accept any `2xx`: `src/proxy/proxy_pool.rs`
+
+Claude-specific runtime notes:
+
+- Layer-3 compression sync call path now uses shared upstream client routing (proxy-pool/app-upstream/direct) instead of constructing a raw `reqwest::Client`: `src/proxy/handlers/claude.rs`
+- signature-recovery retry path now sets `retried_without_thinking=true`, so downstream transform/retry strategy can observe that state correctly: `src/proxy/handlers/claude.rs`

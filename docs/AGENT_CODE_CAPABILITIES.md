@@ -74,6 +74,8 @@ Main admin groups include:
 - Admin strict auth checks admin password first (if configured), then API key fallback: `src/proxy/middleware/auth.rs`
 - API/admin secret comparison uses a constant-time helper in auth middleware: `src/proxy/middleware/auth.rs`
 - Secret encryption writes are versioned (`v2:<base64>`), while decrypt path remains backward-compatible with legacy unversioned payloads: `src/utils/crypto.rs`
+- `decrypt_secret_or_plaintext` fails closed for explicit `v2:` and encrypted-looking payloads; malformed/undecryptable prefixed ciphertext no longer silently falls back to plaintext: `src/utils/crypto.rs`
+- serde secret adapter (`deserialize_secret`) is resilient for account-management deserialization and logs decrypt failures while preserving raw value (prevents account-list/load bricking when on-disk ciphertext is malformed): `src/utils/crypto.rs`, `src/modules/auth/account.rs`
 - IP filter supports whitelist mode, whitelist-priority mode, blacklist exact/CIDR matching, blocked-request JSON responses, and blocked log persistence: `src/proxy/middleware/ip_filter.rs`, `src/modules/persistence/security_db.rs`
 - Client IP resolution trusts forwarded headers only for socket peers in `proxy.trusted_proxies` (IP/CIDR); otherwise it uses socket `ConnectInfo` only: `src/proxy/middleware/client_ip.rs`, `src/proxy/config.rs`
 
@@ -115,6 +117,8 @@ Main admin groups include:
 - Layer 2 thinking compression with signature preservation
 - Layer 3 XML summary fallback flow
 - Signature family checks and tool-loop closure logic
+- Upstream call path is now stream-first for requests (Gemini `streamGenerateContent`), with non-stream client responses built by collecting the stream to JSON
+- Legacy unary response mapper path was removed (`src/proxy/mappers/claude/response.rs`)
 - `count_tokens` is placeholder unless routed through ZAI provider path
 
 ## Model Routing and Mapping
@@ -131,6 +135,7 @@ Main admin groups include:
 - Token manager loads account JSONs from data dir
 - Skips disabled/proxy-disabled/forbidden/validation-blocked accounts
 - Auto-clears expired validation-block flags on disk
+- Proxy token loader now hard-fails invalid encrypted token payloads during runtime account load (malformed `v2:` token fields are rejected in loader path): `src/proxy/token/loader.rs`
 - Token acquisition timeout: 5 seconds (`src/proxy/token/manager_runtime.rs`)
 - Selection strategy combines:
 - preferred-account mode
@@ -161,8 +166,12 @@ Main admin groups include:
 - `LeastConnections`
 - `WeightedRoundRobin` (weighted random selection using priority-derived weights)
 - Supports account-to-proxy bindings with max-accounts enforcement
+- When all healthy proxies are already bound, unbound account routing can fall back to shared healthy proxy selection instead of returning no proxy
+- `max_accounts` semantics apply to persistent bindings; shared fallback is request-scoped routing for unbound accounts and does not create bindings
+- `LeastConnections` strategy currently uses total historical usage counter (monotonic) rather than live active-connection count
 - Persists bindings to app config
 - Health checks run in loop and on-demand
+- Default health-check URL path enforces HTTP `204`; custom configured health-check URLs accept `2xx`
 - Upstream client routing order:
 - account-bound proxy
 - pool-selected proxy
@@ -173,6 +182,7 @@ Main admin groups include:
 ## Monitoring and Persistence
 
 - Monitor middleware captures request/response metadata and bodies
+- Monitor persistence writes are backpressure-limited by bounded semaphore; overflow writes are dropped and counted (`dropped_persist_writes`) instead of unbounded fire-and-forget fanout: `src/proxy/monitor.rs`
 - Stream responses are reconstructed/parsing-attempted for usage and content
 - Excludes `/api/*`, `/internal/*`, and `event_logging` from monitor middleware
 - Persistence stores:
@@ -239,7 +249,8 @@ Main admin groups include:
 
 ## Open Edge Cases / Defects
 
-- None currently open (as of 2026-02-09).
+- None currently open (as of 2026-02-11).
+- Deferred follow-up items are tracked in `docs/agents/FOLLOW_UP_TICKETS.md`.
 
 ## Notable Implementation Limits
 
