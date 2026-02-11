@@ -42,6 +42,7 @@ Commands:
   rotate-key   Generate new API key, save to .env.local, and optionally restart
   docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
   rebuild      Rebuild Docker image from source
+  update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
   logout       Remove linked account(s) via admin API
   logout-and-stop  Logout accounts, then stop container
@@ -85,6 +86,10 @@ OAuth Login:
   The `login` command requires Google OAuth credentials to be provided via env vars passed into the container:
     GEPHYR_GOOGLE_OAUTH_CLIENT_ID
     (optional) GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET
+  Optional identity/scheduler hardening envs are also passed through when set:
+    ABV_ALLOWED_GOOGLE_DOMAINS
+    ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
+    ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
 "@ | Write-Host
 }
 
@@ -203,6 +208,15 @@ function Start-Container {
     if ($env:ABV_ADMIN_STOP_SHUTDOWN) {
         $runtimeArgs += @("-e", "ABV_ADMIN_STOP_SHUTDOWN=$($env:ABV_ADMIN_STOP_SHUTDOWN)")
     }
+    if ($env:ABV_ALLOWED_GOOGLE_DOMAINS) {
+        $runtimeArgs += @("-e", "ABV_ALLOWED_GOOGLE_DOMAINS=$($env:ABV_ALLOWED_GOOGLE_DOMAINS)")
+    }
+    if ($env:ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS) {
+        $runtimeArgs += @("-e", "ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=$($env:ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS)")
+    }
+    if ($env:ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS) {
+        $runtimeArgs += @("-e", "ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=$($env:ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS)")
+    }
 
     $containerId = docker run --rm -d --name $ContainerName `
         -p "127.0.0.1:$Port`:8045" `
@@ -301,24 +315,154 @@ function Show-Status {
     Write-Host ""
 
     # Health Check (if container is running)
+    $healthData = $null
     if ($containerInfo -and ($containerInfo -match "Up")) {
         Write-Host "┌─ Service Health ───────────────────────────────────────────────" -ForegroundColor DarkGray
         try {
             $headers = Get-AuthHeaders
-            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 5
+            $healthData = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 5
             Write-Host "  Health:     " -NoNewline -ForegroundColor Gray
             Write-Host "OK" -ForegroundColor Green
-            if ($health.accounts_loaded) {
-                Write-Host "  Accounts:   " -NoNewline -ForegroundColor Gray
-                Write-Host "$($health.accounts_loaded) loaded" -ForegroundColor White
-            }
-            if ($health.version) {
+            if ($healthData.version) {
                 Write-Host "  Version:    " -NoNewline -ForegroundColor Gray
-                Write-Host $health.version -ForegroundColor White
+                Write-Host $healthData.version -ForegroundColor White
             }
         } catch {
             Write-Host "  Health:     " -NoNewline -ForegroundColor Gray
             Write-Host "FAILED (API key mismatch or service error)" -ForegroundColor Red
+        }
+        Write-Host ""
+
+        # Linked Accounts
+        Write-Host "┌─ Linked Accounts ──────────────────────────────────────────────" -ForegroundColor DarkGray
+        $accountsFetched = $false
+        try {
+            $headers = Get-AuthHeaders
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 10
+            $accounts = @()
+            if ($resp -and $resp.accounts) {
+                $accounts = @($resp.accounts)
+            }
+            if ($accounts.Count -eq 0) {
+                Write-Host "  (none)" -ForegroundColor DarkGray
+            } else {
+                $currentId = $resp.current_account_id
+
+                # First pass: compute column widths
+                $maxEmail = 5
+                $maxName = 1
+                $maxModel = 10
+                foreach ($acc in $accounts) {
+                    if ($acc.email.Length -gt $maxEmail) { $maxEmail = $acc.email.Length }
+                    $dn = if ($acc.name) { $acc.name } else { "-" }
+                    if ($dn.Length -gt $maxName) { $maxName = $dn.Length }
+                    if ($acc.quota -and $acc.quota.models) {
+                        foreach ($m in @($acc.quota.models)) {
+                            $sn = ($m.name -replace '^models/', '').Length
+                            if ($sn -gt $maxModel) { $maxModel = $sn }
+                        }
+                    }
+                }
+                $emailPad = $maxEmail
+                $namePad = $maxName + 2  # +2 for parens
+                $modelPad = $maxModel + 2
+
+                # Second pass: render
+                foreach ($acc in $accounts) {
+                    $marker = if ($acc.id -eq $currentId) { "►" } else { " " }
+                    $status = "active"
+                    $statusColor = "Green"
+                    if ($acc.disabled) {
+                        $status = "disabled"
+                        $statusColor = "Red"
+                    } elseif ($acc.proxy_disabled) {
+                        $status = "proxy-off"
+                        $statusColor = "Yellow"
+                    }
+                    $displayName = if ($acc.name) { $acc.name } else { "-" }
+                    $emailStr = $acc.email.PadRight($emailPad)
+                    $nameStr = "($displayName)".PadRight($namePad)
+
+                    Write-Host "  $marker " -NoNewline -ForegroundColor Cyan
+                    Write-Host "$emailStr" -NoNewline -ForegroundColor White
+                    Write-Host "  $nameStr" -NoNewline -ForegroundColor DarkGray
+                    Write-Host "  [$status]" -ForegroundColor $statusColor
+
+                    # Quota display
+                    if ($acc.quota) {
+                        $q = $acc.quota
+                        $tierStr = if ($q.subscription_tier) { $q.subscription_tier } else { "unknown" }
+                        $agoStr = "(unknown)"
+                        if ($q.last_updated -and $q.last_updated -gt 0) {
+                            $updatedAt = [DateTimeOffset]::FromUnixTimeSeconds($q.last_updated).UtcDateTime
+                            $elapsed = [DateTime]::UtcNow - $updatedAt
+                            if ($elapsed.TotalMinutes -lt 1) { $agoStr = "just now" }
+                            elseif ($elapsed.TotalMinutes -lt 60) { $agoStr = "$([Math]::Floor($elapsed.TotalMinutes))m ago" }
+                            elseif ($elapsed.TotalHours -lt 24) { $agoStr = "$([Math]::Floor($elapsed.TotalHours))h ago" }
+                            else { $agoStr = "$([Math]::Floor($elapsed.TotalDays))d ago" }
+                        }
+                        if ($q.is_forbidden) {
+                            Write-Host "      Tier: " -NoNewline -ForegroundColor DarkGray
+                            Write-Host "$tierStr" -NoNewline -ForegroundColor White
+                            Write-Host "  " -NoNewline
+                            Write-Host "[FORBIDDEN]" -ForegroundColor Red
+                        } else {
+                            Write-Host "      Tier: " -NoNewline -ForegroundColor DarkGray
+                            Write-Host "$tierStr" -NoNewline -ForegroundColor White
+                            Write-Host " | Updated: " -NoNewline -ForegroundColor DarkGray
+                            Write-Host "$agoStr" -ForegroundColor DarkGray
+
+                            $models = @()
+                            if ($q.models) { $models = @($q.models) }
+                            $modelOrder = @('claude-opus', 'claude-sonnet', 'gemini-3-pro-high', 'gemini-3-pro-low', 'gemini-3-flash')
+                            $models = $models | Sort-Object {
+                                $n = $_.name -replace '^models/', ''
+                                for ($i = 0; $i -lt $modelOrder.Count; $i++) {
+                                    if ($n -match [regex]::Escape($modelOrder[$i])) { return $i }
+                                }
+                                return 999
+                            }
+                            foreach ($m in $models) {
+                                $pct = [Math]::Max(0, [Math]::Min(100, $m.percentage))
+                                $barWidth = 20
+                                $filled = [Math]::Floor($pct / 100.0 * $barWidth)
+                                $empty = $barWidth - $filled
+                                $bar = ("█" * $filled) + ("░" * $empty)
+                                $shortName = $m.name -replace '^models/', ''
+                                $padded = $shortName.PadRight($modelPad)
+                                $barColor = if ($pct -ge 70) { "Green" } elseif ($pct -ge 30) { "Yellow" } else { "Red" }
+                                $pctStr = "$pct%".PadLeft(4)
+
+                                Write-Host "      $padded " -NoNewline -ForegroundColor DarkGray
+                                Write-Host "$bar" -NoNewline -ForegroundColor $barColor
+                                Write-Host "  $pctStr" -NoNewline -ForegroundColor White
+
+                                if ($pct -le 50 -and $m.reset_time) {
+                                    try {
+                                        $resetDt = [DateTime]::Parse($m.reset_time).ToLocalTime()
+                                        $resetStr = $resetDt.ToString("HH:mm")
+                                        Write-Host "  ⟳ $resetStr" -NoNewline -ForegroundColor DarkGray
+                                    } catch {}
+                                }
+                                Write-Host ""
+                            }
+                        }
+                    } else {
+                        Write-Host "      (no quota data)" -ForegroundColor DarkGray
+                    }
+                }
+            }
+            $accountsFetched = $true
+        } catch {
+            # Admin API not enabled or auth error — fall back to health count
+        }
+        if (-not $accountsFetched) {
+            if ($healthData -and $healthData.accounts_loaded) {
+                Write-Host "  $($healthData.accounts_loaded) account(s) loaded" -ForegroundColor White
+                Write-Host "  (enable admin API for details)" -ForegroundColor DarkGray
+            } else {
+                Write-Host "  (unknown — admin API not available)" -ForegroundColor DarkGray
+            }
         }
         Write-Host ""
     }
@@ -607,6 +751,81 @@ function Invoke-Rebuild {
     }
 }
 
+function Update-Gephyr {
+    $repoRoot = $PSScriptRoot
+
+    # 1. Pre-flight: warn about uncommitted changes
+    $gitStatus = git -C $repoRoot status --porcelain 2>$null
+    if ($gitStatus) {
+        Write-Host "" 
+        Write-Host "  WARNING: You have uncommitted changes:" -ForegroundColor Yellow
+        $gitStatus | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
+        Write-Host ""
+        $confirm = Read-Host "  Continue with update? (y/N)"
+        if ($confirm -notin @("y", "Y", "yes")) {
+            Write-Host "Update cancelled."
+            return
+        }
+    }
+
+    # 2. Pre-flight: check if container is running and healthy
+    $wasRunning = $false
+    $wasAdminEnabled = $false
+    if (Test-ContainerExists) {
+        $info = docker ps --format "{{.Names}}|{{.Status}}" | Where-Object { $_ -match "^$([regex]::Escape($ContainerName))\|" }
+        if ($info -and ($info -match "Up")) {
+            $wasRunning = $true
+            Write-Host "Container is running. Checking health before update..." -ForegroundColor Cyan
+            try {
+                $headers = Get-AuthHeaders
+                $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 5
+                Write-Host "  Health: OK" -ForegroundColor Green
+            } catch {
+                Write-Host "  Health: FAILED — proceeding anyway" -ForegroundColor Yellow
+            }
+            # Check if admin API is enabled
+            try {
+                $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 5
+                $wasAdminEnabled = $true
+            } catch {}
+        }
+    }
+
+    # 3. Git pull
+    Write-Host ""
+    Write-Host "Pulling latest changes..." -ForegroundColor Cyan
+    $pullOutput = git -C $repoRoot pull 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  git pull failed:" -ForegroundColor Red
+        Write-Host "  $pullOutput" -ForegroundColor Red
+        throw "git pull failed. Resolve conflicts and retry."
+    }
+    Write-Host "  $pullOutput" -ForegroundColor White
+
+    # 4. Rebuild
+    Write-Host ""
+    Write-Host "Rebuilding Docker image..." -ForegroundColor Cyan
+    Invoke-Rebuild -UseNoCache:$false
+
+    # 5. Restart if was running
+    if ($wasRunning) {
+        Write-Host ""
+        Write-Host "Restarting container..." -ForegroundColor Cyan
+        $adminFlag = $EnableAdminApi.IsPresent -or $wasAdminEnabled
+        Stop-Container
+        Start-Container -AdminApiEnabled $adminFlag
+        if (Wait-ServiceReady) {
+            Write-Host "  Service is healthy." -ForegroundColor Green
+            Show-Status
+        } else {
+            throw "Service did not become ready after update."
+        }
+    } else {
+        Write-Host ""
+        Write-Host "Update complete. Container was not running; start it with: .\console.ps1 start" -ForegroundColor Green
+    }
+}
+
 function Show-Version {
     $cargoPath = Join-Path $PSScriptRoot "Cargo.toml"
     if (-not (Test-Path $cargoPath)) {
@@ -660,7 +879,7 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "logout", "logout-and-stop")
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-and-stop")
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -694,6 +913,7 @@ switch ($Command) {
     "rotate-key" { Rotate-ApiKey }
     "docker-repair" { Repair-DockerBuilder -AggressiveMode:$Aggressive.IsPresent }
     "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }
+    "update" { Update-Gephyr }
     "version" { Show-Version }
     "logout" { Logout-Accounts }
     "logout-and-stop" { Logout-AndStop }

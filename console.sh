@@ -40,6 +40,7 @@ Commands:
   rotate-key   Generate new API key, save to .env.local, and optionally restart
   docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
   rebuild      Rebuild Docker image from source
+  update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
   logout       Remove linked account(s) via admin API
   logout-and-stop  Logout accounts, then stop container
@@ -83,6 +84,10 @@ OAuth Login:
   The `login` command requires Google OAuth credentials available inside the container:
     GEPHYR_GOOGLE_OAUTH_CLIENT_ID
     (optional) GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET
+  Optional identity/scheduler hardening envs are also passed through when set:
+    ABV_ALLOWED_GOOGLE_DOMAINS
+    ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
+    ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
 EOF
 }
 
@@ -152,6 +157,26 @@ start_container() {
   if [[ -n "${GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
     extra_env+=(-e "GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=${GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET}")
   fi
+  local runtime_env=()
+  local runtime_env_names=(
+    ABV_ENCRYPTION_KEY
+    ABV_WEB_PASSWORD
+    WEB_PASSWORD
+    ABV_PUBLIC_URL
+    ABV_MAX_BODY_SIZE
+    ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS
+    ABV_ADMIN_STOP_SHUTDOWN
+    ABV_ALLOWED_GOOGLE_DOMAINS
+    ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
+    ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
+  )
+  local var_name var_value
+  for var_name in "${runtime_env_names[@]}"; do
+    var_value="${!var_name:-}"
+    if [[ -n "$var_value" ]]; then
+      runtime_env+=(-e "${var_name}=${var_value}")
+    fi
+  done
 
   docker run --rm -d --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${PORT}:8045" \
@@ -160,6 +185,7 @@ start_container() {
     -e ABV_ENABLE_ADMIN_API="$admin_api" \
     -e ALLOW_LAN_ACCESS=true \
     "${extra_env[@]}" \
+    "${runtime_env[@]}" \
     -v "${DATA_DIR}:/home/gephyr/.gephyr" \
     "$IMAGE" >/dev/null
 
@@ -190,16 +216,214 @@ wait_service_ready() {
 }
 
 show_status() {
-  echo -e "NAMES\tSTATUS\tPORTS\tIMAGE"
+  local C='\033[36m' G='\033[90m' W='\033[0m' GR='\033[32m' R='\033[31m' Y='\033[33m'
+
+  echo ""
+  echo -e "${C}═══════════════════════════════════════════════════════════════${W}"
+  echo -e "${C}                      GEPHYR STATUS                            ${W}"
+  echo -e "${C}═══════════════════════════════════════════════════════════════${W}"
+  echo ""
+
+  # Docker Container Status
+  echo -e "${G}┌─ Docker Container ─────────────────────────────────────────────${W}"
   local row
-  row="$(docker ps -a --format "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}" | awk -F '\t' -v n="$CONTAINER_NAME" '$1 == n { print }')"
+  row="$(docker ps -a --format "{{.Names}}|{{.Status}}|{{.Ports}}|{{.Image}}" | awk -F '|' -v n="$CONTAINER_NAME" '$1 == n { print }')"
+  local is_up="false"
   if [[ -n "$row" ]]; then
-    echo "$row"
+    IFS='|' read -r c_name c_status c_ports c_image <<< "$row"
+    echo -e "  ${G}Container:  ${W}${c_name}"
+    if [[ "$c_status" == Up* ]]; then
+      echo -e "  ${G}Status:     ${GR}${c_status}${W}"
+      is_up="true"
+    else
+      echo -e "  ${G}Status:     ${R}${c_status}${W}"
+    fi
+    echo -e "  ${G}Ports:      ${W}${c_ports}"
+    echo -e "  ${G}Image:      ${W}${c_image}"
   else
-    echo "Container not found: $CONTAINER_NAME"
+    echo -e "  ${R}Container not found: ${CONTAINER_NAME}${W}"
     print_container_not_found_help
   fi
+  echo ""
+
+  # API Configuration
+  echo -e "${G}┌─ API Configuration ────────────────────────────────────────────${W}"
+  echo -e "  ${G}Base URL:   ${Y}http://127.0.0.1:${PORT}${W}"
+  if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
+    local klen=${#GEPHYR_API_KEY}
+    local head=${GEPHYR_API_KEY:0:8}
+    local tail=${GEPHYR_API_KEY:$((klen > 4 ? klen - 4 : 0))}
+    echo -e "  ${G}API Key:    ${Y}${head}...${tail}${W}"
+  else
+    echo -e "  ${G}API Key:    ${R}(not set)${W}"
+  fi
+  echo ""
+
+  # Health Check + Linked Accounts (if container is running)
+  if [[ "$is_up" == "true" ]]; then
+    echo -e "${G}┌─ Service Health ───────────────────────────────────────────────${W}"
+    local health_json="" health_ok="false"
+    if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
+      health_json="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+        "http://127.0.0.1:${PORT}/healthz" 2>/dev/null || true)"
+      if [[ -n "$health_json" ]] && echo "$health_json" | grep -q '"status"'; then
+        health_ok="true"
+        echo -e "  ${G}Health:     ${GR}OK${W}"
+        local version
+        version="$(printf '%s' "$health_json" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
+        if [[ -n "$version" ]]; then
+          echo -e "  ${G}Version:    ${W}${version}"
+        fi
+      else
+        echo -e "  ${G}Health:     ${R}FAILED (API key mismatch or service error)${W}"
+      fi
+    else
+      echo -e "  ${G}Health:     ${R}(API key not set)${W}"
+    fi
+    echo ""
+
+    # Linked Accounts
+    echo -e "${G}┌─ Linked Accounts ──────────────────────────────────────────────${W}"
+    local accounts_fetched="false"
+    if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
+      local acct_json
+      acct_json="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+        "http://127.0.0.1:${PORT}/api/accounts" 2>/dev/null || true)"
+      if [[ -n "$acct_json" ]] && echo "$acct_json" | grep -q '"accounts"'; then
+        accounts_fetched="true"
+        if command -v python3 >/dev/null 2>&1; then
+          python3 - <<'PY' "$acct_json"
+import json, sys, time, re
+from datetime import datetime, timezone
+
+raw = sys.argv[1] if len(sys.argv) > 1 else "{}"
+try:
+    data = json.loads(raw or "{}")
+except Exception:
+    print("  \033[90m(parse error)\033[0m")
+    raise SystemExit(0)
+
+accounts = data.get("accounts", [])
+current = data.get("current_account_id", "")
+if not isinstance(accounts, list) or len(accounts) == 0:
+    print("  \033[90m(none)\033[0m")
+    raise SystemExit(0)
+
+def time_ago(ts):
+    if not ts or ts <= 0:
+        return "(unknown)"
+    elapsed = time.time() - ts
+    if elapsed < 60:
+        return "just now"
+    elif elapsed < 3600:
+        return f"{int(elapsed // 60)}m ago"
+    elif elapsed < 86400:
+        return f"{int(elapsed // 3600)}h ago"
+    else:
+        return f"{int(elapsed // 86400)}d ago"
+
+def bar(pct, width=20):
+    pct = max(0, min(100, pct))
+    filled = int(pct / 100.0 * width)
+    empty = width - filled
+    if pct >= 70:
+        color = "\033[32m"
+    elif pct >= 30:
+        color = "\033[33m"
+    else:
+        color = "\033[31m"
+    return f"{color}{'█' * filled}{'░' * empty}\033[0m"
+
+# First pass: compute column widths
+max_email = max((len(a.get("email", "")) for a in accounts), default=5)
+max_name = max((len(a.get("name") or "-") for a in accounts), default=1)
+max_model = 10
+for a in accounts:
+    q = a.get("quota")
+    if q:
+        for m in q.get("models", []):
+            sn = len(re.sub(r'^models/', '', m.get("name", "")))
+            if sn > max_model:
+                max_model = sn
+name_pad = max_name + 2  # +2 for parens
+model_pad = max_model + 2
+
+model_order = ['claude-opus', 'claude-sonnet', 'gemini-3-pro-high', 'gemini-3-pro-low', 'gemini-3-flash']
+def model_sort_key(m):
+    n = re.sub(r'^models/', '', m.get("name", ""))
+    for i, prefix in enumerate(model_order):
+        if prefix in n:
+            return (i, n)
+    return (999, n)
+
+# Second pass: render
+for a in accounts:
+    marker = "►" if a.get("id") == current else " "
+    email = a.get("email", "?").ljust(max_email)
+    name = a.get("name") or "-"
+    name_str = f"({name})".ljust(name_pad)
+    if a.get("disabled"):
+        status, color = "disabled", "\033[31m"
+    elif a.get("proxy_disabled"):
+        status, color = "proxy-off", "\033[33m"
+    else:
+        status, color = "active", "\033[32m"
+    print(f"  \033[36m{marker} \033[0m{email}  \033[90m{name_str}\033[0m  {color}[{status}]\033[0m")
+
+    q = a.get("quota")
+    if q:
+        tier = q.get("subscription_tier") or "unknown"
+        ago = time_ago(q.get("last_updated", 0))
+        if q.get("is_forbidden"):
+            print(f"      \033[90mTier: \033[0m{tier}  \033[31m[FORBIDDEN]\033[0m")
+        else:
+            print(f"      \033[90mTier: \033[0m{tier}\033[90m | Updated: {ago}\033[0m")
+            sorted_models = sorted(q.get("models", []), key=model_sort_key)
+            for m in sorted_models:
+                pct = m.get("percentage", 0)
+                short = re.sub(r'^models/', '', m.get("name", "?"))
+                padded = short.ljust(model_pad)
+                pct_str = f"{pct}%".rjust(4)
+                reset_hint = ""
+                if pct <= 50 and m.get("reset_time"):
+                    try:
+                        rt = datetime.fromisoformat(m["reset_time"].replace("Z", "+00:00"))
+                        reset_hint = f"  \033[90m⟳ {rt.astimezone().strftime('%H:%M')}\033[0m"
+                    except Exception:
+                        pass
+                print(f"      \033[90m{padded} \033[0m{bar(pct)}  \033[0m{pct_str}{reset_hint}")
+    else:
+        print(f"      \033[90m(no quota data)\033[0m")
+PY
+        else
+          # Fallback: no python3, just show raw count
+          local count
+          count="$(printf '%s' "$acct_json" | grep -o '"email"' | wc -l | tr -d ' ')"
+          echo -e "  ${W}${count} account(s) linked${W}"
+        fi
+      fi
+    fi
+    if [[ "$accounts_fetched" == "false" ]]; then
+      if [[ "$health_ok" == "true" ]]; then
+        local loaded
+        loaded="$(printf '%s' "$health_json" | sed -nE 's/.*"accounts_loaded"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')"
+        if [[ -n "$loaded" ]]; then
+          echo -e "  ${W}${loaded} account(s) loaded${W}"
+          echo -e "  ${G}(enable admin API for details)${W}"
+        else
+          echo -e "  ${G}(unknown — admin API not available)${W}"
+        fi
+      else
+        echo -e "  ${G}(unknown — admin API not available)${W}"
+      fi
+    fi
+    echo ""
+  fi
+
+  echo -e "${C}═══════════════════════════════════════════════════════════════${W}"
+  echo ""
 }
+
 
 show_logs() {
   if ! container_exists; then
@@ -516,6 +740,97 @@ rebuild() {
   fi
 }
 
+update_gephyr() {
+  local repo_root="$SCRIPT_DIR"
+
+  # 1. Pre-flight: warn about uncommitted changes
+  local git_status
+  git_status="$(git -C "$repo_root" status --porcelain 2>/dev/null || true)"
+  if [[ -n "$git_status" ]]; then
+    echo ""
+    echo -e "\033[33m  WARNING: You have uncommitted changes:\033[0m"
+    while IFS= read -r line; do
+      echo -e "\033[33m    $line\033[0m"
+    done <<< "$git_status"
+    echo ""
+    read -rp "  Continue with update? (y/N) " confirm
+    if [[ "$confirm" != "y" && "$confirm" != "Y" && "$confirm" != "yes" ]]; then
+      echo "Update cancelled."
+      return 0
+    fi
+  fi
+
+  # 2. Pre-flight: check if container is running and healthy
+  local was_running="false"
+  local was_admin_enabled="false"
+  if container_exists; then
+    local row
+    row="$(docker ps --format '{{.Names}}|{{.Status}}' | awk -F '|' -v n="$CONTAINER_NAME" '$1 == n { print }')"
+    if [[ -n "$row" && "$row" == *"Up"* ]]; then
+      was_running="true"
+      echo -e "\033[36mContainer is running. Checking health before update...\033[0m"
+      if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
+        local hcode
+        hcode="$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+          "http://127.0.0.1:${PORT}/healthz" || true)"
+        if [[ "$hcode" == "200" ]]; then
+          echo -e "  Health: \033[32mOK\033[0m"
+        else
+          echo -e "  Health: \033[33mFAILED — proceeding anyway\033[0m"
+        fi
+        # Check if admin API is enabled
+        local acode
+        acode="$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+          "http://127.0.0.1:${PORT}/api/accounts" || true)"
+        if [[ "$acode" == "200" ]]; then
+          was_admin_enabled="true"
+        fi
+      fi
+    fi
+  fi
+
+  # 3. Git pull
+  echo ""
+  echo -e "\033[36mPulling latest changes...\033[0m"
+  local pull_output
+  pull_output="$(git -C "$repo_root" pull 2>&1)" || {
+    echo -e "\033[31m  git pull failed:\033[0m"
+    echo -e "\033[31m  $pull_output\033[0m"
+    echo "Resolve conflicts and retry." >&2
+    exit 1
+  }
+  echo "  $pull_output"
+
+  # 4. Rebuild
+  echo ""
+  echo -e "\033[36mRebuilding Docker image...\033[0m"
+  rebuild
+
+  # 5. Restart if was running
+  if [[ "$was_running" == "true" ]]; then
+    echo ""
+    echo -e "\033[36mRestarting container...\033[0m"
+    local admin_flag="$ENABLE_ADMIN_API"
+    if [[ "$was_admin_enabled" == "true" ]]; then
+      admin_flag="true"
+    fi
+    stop_container
+    start_container "$admin_flag"
+    if wait_service_ready; then
+      echo -e "  \033[32mService is healthy.\033[0m"
+      show_status
+    else
+      echo "Service did not become ready after update." >&2
+      exit 1
+    fi
+  else
+    echo ""
+    echo -e "\033[32mUpdate complete. Container was not running; start it with: ./console.sh start\033[0m"
+  fi
+}
+
 show_version() {
   local cargo_toml="$SCRIPT_DIR/Cargo.toml"
   if [[ ! -f "$cargo_toml" ]]; then
@@ -600,7 +915,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild logout logout-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update logout logout-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -628,6 +943,7 @@ case "$COMMAND" in
   rotate-key) rotate_key ;;
   docker-repair) docker_repair ;;
   rebuild) rebuild ;;
+  update) update_gephyr ;;
   version) show_version ;;
   logout) logout_accounts ;;
   logout-and-stop) logout_and_stop ;;
