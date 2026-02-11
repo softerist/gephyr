@@ -867,6 +867,40 @@ pub struct RefreshStats {
     pub failed: usize,
     pub details: Vec<String>,
 }
+
+fn refresh_task_stagger_bounds_ms() -> (u64, u64) {
+    let min = std::env::var("ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(250);
+    let max = std::env::var("ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1500);
+    if min <= max {
+        (min, max)
+    } else {
+        (max, min)
+    }
+}
+
+fn per_account_refresh_stagger_ms(account_id: &str, min_ms: u64, max_ms: u64) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    if max_ms == 0 {
+        return 0;
+    }
+    let mut hasher = DefaultHasher::new();
+    account_id.hash(&mut hasher);
+    let span = max_ms.saturating_sub(min_ms);
+    if span == 0 {
+        min_ms
+    } else {
+        min_ms + (hasher.finish() % (span + 1))
+    }
+}
+
 pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use futures::future::join_all;
     use std::sync::Arc;
@@ -878,6 +912,11 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     crate::modules::system::logger::log_info(&format!(
         "Starting batch refresh of all account quotas (Concurrent mode, max: {})",
         MAX_CONCURRENT
+    ));
+    let (stagger_min_ms, stagger_max_ms) = refresh_task_stagger_bounds_ms();
+    crate::modules::system::logger::log_info(&format!(
+        "Per-account refresh staggering active: {}-{}ms",
+        stagger_min_ms, stagger_max_ms
     ));
     let accounts = list_accounts()?;
 
@@ -919,8 +958,13 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         .map(|mut account| {
             let email = account.email.clone();
             let account_id = account.id.clone();
+            let stagger_ms =
+                per_account_refresh_stagger_ms(&account_id, stagger_min_ms, stagger_max_ms);
             let permit = semaphore.clone();
             async move {
+                if stagger_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(stagger_ms)).await;
+                }
                 let _guard = permit.acquire().await.unwrap();
                 crate::modules::system::logger::log_info(&format!("  - Processing {}", email));
                 match fetch_quota_with_retry(&mut account).await {
@@ -982,7 +1026,10 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_accounts, load_account, load_account_index, upsert_account};
+    use super::{
+        list_accounts, load_account, load_account_index, per_account_refresh_stagger_ms,
+        refresh_task_stagger_bounds_ms, upsert_account,
+    };
     use crate::models::TokenData;
     use crate::test_utils::ScopedEnvVar;
     use serde_json::json;
@@ -1242,5 +1289,37 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn refresh_stagger_is_deterministic_and_in_range() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+        let a = per_account_refresh_stagger_ms("acct-1", 250, 1500);
+        let b = per_account_refresh_stagger_ms("acct-1", 250, 1500);
+        let c = per_account_refresh_stagger_ms("acct-2", 250, 1500);
+
+        assert_eq!(a, b);
+        assert!((250..=1500).contains(&a));
+        assert!((250..=1500).contains(&c));
+    }
+
+    #[test]
+    fn refresh_stagger_bounds_swap_when_reversed() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+        std::env::set_var("ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS", "1900");
+        std::env::set_var("ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS", "300");
+
+        let (min_ms, max_ms) = refresh_task_stagger_bounds_ms();
+        assert_eq!(min_ms, 300);
+        assert_eq!(max_ms, 1900);
+
+        std::env::remove_var("ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS");
+        std::env::remove_var("ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS");
     }
 }

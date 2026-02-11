@@ -1,4 +1,5 @@
 use dashmap::DashMap;
+use rand::Rng;
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
@@ -7,6 +8,11 @@ use super::types::ProxyToken;
 
 /// Maximum number of concurrent token refresh attempts during startup health check.
 const MAX_CONCURRENT_REFRESHES: usize = 5;
+const MAX_CONCURRENT_REFRESHES_LIMIT: usize = 32;
+
+/// Random jitter window before each startup health refresh task (milliseconds).
+const STARTUP_HEALTH_JITTER_MIN_MS_DEFAULT: u64 = 150;
+const STARTUP_HEALTH_JITTER_MAX_MS_DEFAULT: u64 = 1200;
 
 /// Tokens expiring within this window (seconds) are proactively refreshed.
 const REFRESH_WINDOW_SECS: i64 = 300;
@@ -21,6 +27,27 @@ enum HealthCheckOutcome {
     Refreshed,
     Disabled,
     NetworkError,
+}
+
+fn startup_health_max_concurrent_refreshes() -> usize {
+    std::env::var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|v| v.clamp(1, MAX_CONCURRENT_REFRESHES_LIMIT))
+        .unwrap_or(MAX_CONCURRENT_REFRESHES)
+}
+
+fn startup_health_jitter_bounds_ms() -> (u64, u64) {
+    let min = std::env::var("ABV_STARTUP_HEALTH_JITTER_MIN_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(STARTUP_HEALTH_JITTER_MIN_MS_DEFAULT);
+    let max = std::env::var("ABV_STARTUP_HEALTH_JITTER_MAX_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(STARTUP_HEALTH_JITTER_MAX_MS_DEFAULT);
+
+    if min <= max { (min, max) } else { (max, min) }
 }
 
 /// Per-account detail returned in the health check summary.
@@ -111,7 +138,16 @@ pub(crate) async fn run_startup_health_check(
         skipped
     );
 
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REFRESHES));
+    let max_concurrent = startup_health_max_concurrent_refreshes();
+    let (jitter_min_ms, jitter_max_ms) = startup_health_jitter_bounds_ms();
+    tracing::info!(
+        "[Health] Startup refresh controls: concurrency={}, jitter={}..{}ms",
+        max_concurrent,
+        jitter_min_ms,
+        jitter_max_ms
+    );
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
     let tokens_ref = Arc::clone(tokens);
     let data_dir_owned = data_dir.to_path_buf();
 
@@ -123,8 +159,16 @@ pub(crate) async fn run_startup_health_check(
         let data_dir_path = data_dir_owned.clone();
         let email_clone = email.clone();
         let id_clone = account_id.clone();
+        let jitter_ms = if jitter_max_ms == 0 {
+            0
+        } else {
+            rand::thread_rng().gen_range(jitter_min_ms..=jitter_max_ms)
+        };
 
         let handle = tokio::spawn(async move {
+            if jitter_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(jitter_ms)).await;
+            }
             let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
             let outcome = check_single_account(
                 &id_clone,
@@ -318,5 +362,43 @@ async fn check_single_account(
                 Some(format!("timeout ({}s)", REFRESH_TIMEOUT_SECS)),
             )
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{startup_health_jitter_bounds_ms, startup_health_max_concurrent_refreshes};
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn startup_health_jitter_bounds_swap_when_reversed() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::set_var("ABV_STARTUP_HEALTH_JITTER_MIN_MS", "1600");
+        std::env::set_var("ABV_STARTUP_HEALTH_JITTER_MAX_MS", "200");
+
+        let (min_ms, max_ms) = startup_health_jitter_bounds_ms();
+        assert_eq!(min_ms, 200);
+        assert_eq!(max_ms, 1600);
+
+        std::env::remove_var("ABV_STARTUP_HEALTH_JITTER_MIN_MS");
+        std::env::remove_var("ABV_STARTUP_HEALTH_JITTER_MAX_MS");
+    }
+
+    #[test]
+    fn startup_health_concurrency_is_clamped() {
+        let _guard = env_lock().lock().expect("env lock");
+
+        std::env::set_var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES", "0");
+        assert_eq!(startup_health_max_concurrent_refreshes(), 1);
+
+        std::env::set_var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES", "999");
+        assert_eq!(startup_health_max_concurrent_refreshes(), 32);
+
+        std::env::remove_var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES");
     }
 }

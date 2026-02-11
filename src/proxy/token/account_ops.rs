@@ -1,11 +1,16 @@
-pub(crate) async fn get_user_info(
+pub(crate) async fn get_verified_identity(
     refresh_token: &str,
-) -> Result<crate::modules::auth::oauth::UserInfo, String> {
+) -> Result<crate::modules::auth::oauth::VerifiedIdentity, String> {
     let token = crate::modules::auth::oauth::refresh_access_token(refresh_token, None)
         .await
         .map_err(|e| format!("Failed to refresh Access Token: {}", e))?;
 
-    crate::modules::auth::oauth::get_user_info(&token.access_token, None).await
+    crate::modules::auth::oauth::verify_identity(
+        &token.access_token,
+        token.id_token.as_deref(),
+        None,
+    )
+    .await
 }
 
 pub(crate) async fn add_account(refresh_token: &str) -> Result<(), String> {
@@ -13,21 +18,14 @@ pub(crate) async fn add_account(refresh_token: &str) -> Result<(), String> {
         .await
         .map_err(|e| format!("Invalid refresh token: {}", e))?;
 
-    let (email, google_sub) = if let Some(raw_id_token) = token_info.id_token.as_deref() {
-        let claims = crate::modules::auth::id_token::validate_id_token(raw_id_token)
-            .await
-            .map_err(|e| format!("Invalid id_token: {}", e))?;
-        (claims.email, Some(claims.sub))
-    } else {
-        let user_info = crate::modules::auth::oauth::get_user_info(&token_info.access_token, None)
-            .await
-            .map_err(|e| format!("Failed to fetch user info: {}", e))?;
-        if !user_info.is_email_verified() {
-            return Err("Google userinfo rejected: email is not verified".to_string());
-        }
-        let google_sub = user_info.google_sub();
-        (user_info.email, google_sub)
-    };
+    let identity = crate::modules::auth::oauth::verify_identity(
+        &token_info.access_token,
+        token_info.id_token.as_deref(),
+        None,
+    )
+    .await?;
+    let email = identity.email;
+    let google_sub = identity.google_sub;
 
     let project_id =
         crate::proxy::project_resolver::fetch_project_id(&token_info.access_token, None)

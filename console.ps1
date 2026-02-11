@@ -35,6 +35,7 @@ Commands:
   status       Show container status
   logs         Show container logs
   health       Call /healthz with API key
+  check        Run account token health check (refresh expiring tokens)
   login        Start container with admin API, fetch /api/auth/url, open browser
   oauth/auth   Alias for login
   accounts     Call /api/accounts

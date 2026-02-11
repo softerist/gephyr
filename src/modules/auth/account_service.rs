@@ -1,5 +1,5 @@
 use crate::models::{Account, TokenData};
-use crate::modules::auth::{account, id_token, oauth, oauth_server};
+use crate::modules::auth::{account, oauth, oauth_server};
 use crate::modules::system::{logger, quota};
 
 pub struct AccountService {
@@ -149,18 +149,7 @@ impl AccountService {
         raw_id_token: Option<&str>,
         account_id: Option<&str>,
     ) -> Result<(String, Option<String>, Option<String>), String> {
-        if let Some(raw) = raw_id_token {
-            let claims = id_token::validate_id_token(raw)
-                .await
-                .map_err(|e| format!("Invalid id_token: {}", e))?;
-            Ok((claims.email, claims.name, Some(claims.sub)))
-        } else {
-            let user_info = oauth::get_user_info(access_token, account_id).await?;
-            if !user_info.is_email_verified() {
-                return Err("Google userinfo rejected: email is not verified".to_string());
-            }
-            let email = user_info.email.clone();
-            Ok((email, user_info.get_display_name(), user_info.google_sub()))
-        }
+        let identity = oauth::verify_identity(access_token, raw_id_token, account_id).await?;
+        Ok((identity.email, identity.name, identity.google_sub))
     }
 }

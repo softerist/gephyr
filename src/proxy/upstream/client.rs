@@ -74,7 +74,7 @@ impl UpstreamClient {
     fn build_client_internal(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
     ) -> Result<Client, reqwest::Error> {
-        let mut builder = Client::builder()
+        let mut builder = crate::utils::http::apply_tls_backend(Client::builder())
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(16)
             .pool_idle_timeout(Duration::from_secs(90))
@@ -97,7 +97,7 @@ impl UpstreamClient {
         &self,
         proxy_config: crate::proxy::proxy_pool::PoolProxyConfig,
     ) -> Result<Client, reqwest::Error> {
-        Client::builder()
+        crate::utils::http::apply_tls_backend(Client::builder())
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(16)
             .pool_idle_timeout(Duration::from_secs(90))

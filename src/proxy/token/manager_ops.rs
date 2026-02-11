@@ -197,11 +197,11 @@ impl TokenManager {
     pub async fn get_preferred_account(&self) -> Option<String> {
         crate::proxy::token::control::get_preferred_account(&self.preferred_account_id).await
     }
-    pub async fn get_user_info(
+    pub async fn get_verified_identity(
         &self,
         refresh_token: &str,
-    ) -> Result<crate::modules::auth::oauth::UserInfo, String> {
-        crate::proxy::token::account_ops::get_user_info(refresh_token).await
+    ) -> Result<crate::modules::auth::oauth::VerifiedIdentity, String> {
+        crate::proxy::token::account_ops::get_verified_identity(refresh_token).await
     }
     pub async fn add_account(&self, refresh_token: &str) -> Result<(), String> {
         crate::proxy::token::account_ops::add_account(refresh_token).await?;

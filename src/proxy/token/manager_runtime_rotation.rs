@@ -314,7 +314,11 @@ impl TokenManager {
 
     async fn refresh_rotating_token_if_needed(&self, token: &mut ProxyToken) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp();
-        if now < token.timestamp - 300 {
+        if !crate::modules::auth::oauth::should_refresh_token(
+            token.timestamp,
+            now,
+            Some(&token.account_id),
+        ) {
             return Ok(());
         }
 

@@ -69,7 +69,7 @@ impl ProxyPoolManager {
         account_id: Option<&str>,
         timeout_secs: u64,
     ) -> Result<Client, String> {
-        let mut builder = Client::builder()
+        let mut builder = crate::utils::http::apply_tls_backend(Client::builder())
             .timeout(Duration::from_secs(timeout_secs))
             .user_agent(crate::constants::USER_AGENT.as_str());
         let proxy_opt = if let Some(acc_id) = account_id {
@@ -488,7 +488,7 @@ impl ProxyPoolManager {
         }
         let proxy_cfg = proxy_res.unwrap();
 
-        let client_result = Client::builder()
+        let client_result = crate::utils::http::apply_tls_backend(Client::builder())
             .proxy(proxy_cfg.proxy)
             .timeout(Duration::from_secs(10))
             .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")

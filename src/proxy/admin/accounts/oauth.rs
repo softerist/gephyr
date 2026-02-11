@@ -281,18 +281,18 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                 Some("oauth_fetch_user_info".to_string()),
                                 None,
                             );
-                            match token_manager.get_user_info(refresh_token).await {
-                                Ok(user_info) => {
+                            match token_manager.get_verified_identity(refresh_token).await {
+                                Ok(identity) => {
                                     crate::modules::auth::oauth_server::mark_oauth_flow_status(
                                         crate::modules::auth::oauth_server::OAuthFlowPhase::SavingAccount,
                                         Some("oauth_save_account".to_string()),
-                                        Some(user_info.email.clone()),
+                                        Some(identity.email.clone()),
                                     );
                                     if let Err(e) = token_manager.add_account(refresh_token).await {
                                         crate::modules::auth::oauth_server::mark_oauth_flow_status(
                                             crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
                                             Some(format!("oauth_save_account_failed: {}", e)),
-                                            Some(user_info.email.clone()),
+                                            Some(identity.email.clone()),
                                         );
                                         crate::modules::system::logger::log_error(&format!(
                                             "[E-OAUTH-ACCOUNT-SAVE] oauth_background_save_account_failed: {}",
@@ -302,11 +302,11 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                         crate::modules::auth::oauth_server::mark_oauth_flow_status(
                                             crate::modules::auth::oauth_server::OAuthFlowPhase::Linked,
                                             Some("oauth_account_linked".to_string()),
-                                            Some(user_info.email.clone()),
+                                            Some(identity.email.clone()),
                                         );
                                         crate::modules::system::logger::log_info(&format!(
                                             "Successfully added account {} via background OAuth",
-                                            user_info.email
+                                            identity.email
                                         ));
                                     }
                                 }

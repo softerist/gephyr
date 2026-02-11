@@ -148,7 +148,11 @@ impl TokenManager {
         let mut token = preferred_token;
 
         let now = chrono::Utc::now().timestamp();
-        if now >= token.timestamp - 300 {
+        if crate::modules::auth::oauth::should_refresh_token(
+            token.timestamp,
+            now,
+            Some(&token.account_id),
+        ) {
             tracing::debug!(
                 "Token for account {} is about to expire, refreshing...",
                 token.email

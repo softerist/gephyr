@@ -81,7 +81,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
 }
 
 async fn create_client() -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
+    let mut builder = crate::utils::http::apply_tls_backend(reqwest::Client::builder())
         .user_agent("gephyr")
         .timeout(std::time::Duration::from_secs(10));
     if let Ok(config) = crate::modules::system::config::load_app_config() {

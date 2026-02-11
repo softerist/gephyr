@@ -50,7 +50,8 @@ fn build_client(
     upstream_proxy: Option<crate::proxy::config::UpstreamProxyConfig>,
     timeout_secs: u64,
 ) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs.max(5)));
+    let mut builder = crate::utils::http::apply_tls_backend(reqwest::Client::builder())
+        .timeout(Duration::from_secs(timeout_secs.max(5)));
 
     if let Some(config) = upstream_proxy {
         if config.enabled && !config.url.is_empty() {

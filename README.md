@@ -49,6 +49,18 @@ ABV_OAUTH_USER_AGENT=vscode/1.95.0 gephyr
 # Optional: scheduler jitter window in seconds (defaults shown)
 ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
 ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
+
+# Optional: deterministic per-account stagger before each batch refresh task
+ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS=250
+ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
+
+# Optional: startup health-check smoothing (boot-time token refresh)
+ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
+ABV_STARTUP_HEALTH_JITTER_MIN_MS=150
+ABV_STARTUP_HEALTH_JITTER_MAX_MS=1200
+
+# Optional runtime TLS backend override when binary includes both stacks
+ABV_TLS_BACKEND=rustls
 ```
 
 ### 2. Build & Run
@@ -133,12 +145,18 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_ID` / `ABV_GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` / `ABV_GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
 | `ABV_OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
+| `ABV_TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
 | `ABV_ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
 | `ABV_DATA_DIR` | — | `~/.gephyr` | Data directory path |
 | `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
 | `ABV_MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
 | `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` | — | `30` | Min random delay before each scheduled quota-refresh batch |
 | `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` | — | `120` | Max random delay before each scheduled quota-refresh batch |
+| `ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS` | — | `250` | Min deterministic per-account delay before each batch refresh task |
+| `ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS` | — | `1500` | Max deterministic per-account delay before each batch refresh task |
+| `ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES` | — | `5` | Max concurrent token refreshes during startup health-check (clamped 1..32) |
+| `ABV_STARTUP_HEALTH_JITTER_MIN_MS` | — | `150` | Min random per-account delay before startup health refresh |
+| `ABV_STARTUP_HEALTH_JITTER_MAX_MS` | — | `1200` | Max random per-account delay before startup health refresh |
 
 Proxy-pool isolation knobs are config/API settings (not env vars):
 - `proxy.proxy_pool.allow_shared_proxy_fallback`

@@ -1,88 +1,125 @@
 # Identity Hardening Backlog (PR-Sized)
 
-This backlog focuses on Google identity hardening and one-IP risk controls.
+This backlog tracks Google identity hardening and one-IP risk controls.
 
-## Current Baseline (Already Implemented)
+## Completed In Current Wave
 
-- Identity keying/upsert supports immutable Google subject (`google_sub`) with email fallback/backfill.
-- `id_token` JWT validation exists (JWKS, issuer/audience/exp/email_verified checks, optional `ABV_ALLOWED_GOOGLE_DOMAINS` enforcement).
-- OAuth/account paths derive identity from Google claims instead of trusting caller-provided email.
-- OAuth calls apply explicit UA + bound device profile headers when available.
-- Refresh timing hardening is in place (`ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` + per-account deterministic jitter in refresh window checks).
-- One-IP strict mode is available with:
-  - `proxy.proxy_pool.allow_shared_proxy_fallback`
-  - `proxy.proxy_pool.require_proxy_for_account_requests`
-- Compliance defaults are hardened for one-IP operation:
-  - `max_account_requests_per_minute = 10`
-  - `max_account_concurrency = 1`
+### PR-02: `google_sub` Model Migration + Coverage
+- Status: Implemented
+- Delivered:
+  - `google_sub: Option<String>` in account model + summary with backward-compatible serde defaults.
+  - Added model serde coverage tests:
+    - `account_deserialize_without_google_sub_is_ok`
+    - `account_serialize_with_google_sub`
+- Files:
+  - `src/models/account.rs`
 
-## Backlog
+### PR-04: Remove Caller-Provided Email Trust (Legacy Import Hardening)
+- Status: Implemented
+- Delivered:
+  - Legacy migration/import paths now fail closed if Google token refresh or identity verification fails.
+  - No fallback persistence from placeholder/external email when identity cannot be verified.
+- Files:
+  - `src/modules/system/migration.rs`
 
-## PR-1: OAuth/User-Agent Profile Override
+### PR-05: OAuth Verification Wiring Completion
+- Status: Implemented
+- Delivered:
+  - Centralized identity verification via `oauth::verify_identity(...)`.
+  - `id_token` remains preferred; strict userinfo fallback requires `email_verified=true`.
+  - Admin OAuth background flow now uses verified identity path for progress/account status.
+  - OIDC-compatible userinfo endpoint used for fallback (`openidconnect.googleapis.com/v1/userinfo`).
+- Files:
+  - `src/modules/auth/oauth.rs`
+  - `src/modules/auth/account_service.rs`
+  - `src/proxy/token/account_ops.rs`
+  - `src/proxy/token/manager_ops.rs`
+  - `src/proxy/admin/accounts/oauth.rs`
 
-- Status: Implemented (2026-02-11)
-- Goal: Allow optional UA pinning for OAuth calls without changing global relay UA behavior.
+### PR-06: OAuth UA Consistency Test Gap
+- Status: Implemented
+- Delivered:
+  - Added integration-style tests proving OAuth refresh + userinfo requests send configured UA.
+  - Added shared HTTP client UA propagation test.
+- Files:
+  - `src/modules/auth/oauth.rs`
+  - `src/utils/http.rs`
+
+### PR-07: Refresh Jitter + Staggering Completion
+- Status: Implemented
+- Delivered:
+  - Unified refresh decision helper (`should_refresh_token`) with per-account window jitter reused by runtime managers.
+  - Added deterministic per-account stagger for batch refresh tasks:
+    - `ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS`
+    - `ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS`
+  - Added tests for stagger determinism and bounds handling.
+- Files:
+  - `src/modules/auth/oauth.rs`
+  - `src/modules/auth/account.rs`
+  - `src/proxy/token/manager_runtime_preferred.rs`
+  - `src/proxy/token/manager_runtime_rotation.rs`
+
+### PR-10: TLS Strategy Toggle Completion
+- Status: Implemented
+- Delivered:
+  - Runtime TLS backend override: `ABV_TLS_BACKEND` (`native-tls` or `rustls`) when compiled support exists.
+  - TLS backend selection applied consistently across shared/proxy/upstream/zai/update-checker clients.
+  - Runtime metric now reports effective backend through existing metrics path.
+- Files:
+  - `src/utils/http.rs`
+  - `src/proxy/proxy_pool.rs`
+  - `src/proxy/upstream/client.rs`
+  - `src/proxy/providers/zai_anthropic.rs`
+  - `src/modules/system/update_checker.rs`
+
+## Documentation Updated
+
+- `.env` templates:
+  - `.env.example`
+  - `.env.local`
+- Operator docs:
+  - `README.md`
+  - `OAUTH_SETUP.md`
+
+## Remaining Backlog (Next PR-Sized Tasks)
+
+### PR-11: Correlation-Risk Metrics Expansion
+- Goal: expose explicit one-IP risk signals in `/api/proxy/metrics`.
 - Scope:
-  - Add env var `ABV_OAUTH_USER_AGENT` (optional).
-  - Use override in `src/modules/auth/oauth.rs` for token exchange/refresh/userinfo requests.
-  - Keep current default (`crate::constants::USER_AGENT`) when unset.
+  - Add counters for per-account 403/429 bursts.
+  - Add refresh-burst counters per scheduler run.
+  - Add account-switch frequency/velocity counters.
+- Files:
+  - `src/proxy/token/*`
+  - `src/proxy/admin/runtime/service_control.rs`
+  - `src/proxy/monitor.rs`
 - Tests:
-  - Unit test: empty override -> default UA used.
-  - Unit test: override set -> override UA used.
-- Risk:
-  - Low. Header-only behavior; fallback remains unchanged.
+  - Metric increment unit tests for 403/429 paths.
+  - Admin metrics shape test for new fields.
 
-## PR-2: Proxy-Pool Strict Mode Observability
-
-- Status: Implemented (2026-02-11)
-- Goal: Make one-IP strict mode diagnosable in production.
+### PR-12: OAuth Fallback Strictness for Optional Legacy Flows
+- Goal: guarantee all remaining account-link/import paths use centralized `verify_identity` only.
 - Scope:
-  - Add counters/log fields for:
-    - shared fallback used
-    - strict fail-closed rejection (`require_proxy_for_account_requests=true`)
-  - Expose counters via `GET /api/proxy/metrics`.
+  - Audit and remove any residual direct `get_user_info` identity derivation in non-display-only paths.
+- Files:
+  - `src/modules/system/migration.rs`
+  - `src/proxy/token/*`
+  - `src/modules/auth/*`
 - Tests:
-  - Unit tests for counter increments in selection/fail paths.
-  - Admin metrics endpoint test includes new fields.
-- Risk:
-  - Low. Observability-only.
+  - Regression tests asserting unverified/unknown identity is never persisted.
 
-## PR-3: TLS Fingerprint Strategy Toggle (Point 4)
-
-- Status: Implemented (2026-02-11)
-- Goal: Provide an explicit choice between current default-tls/native-tls path and an alternate TLS stack when needed.
+### PR-13: TLS Canary + Startup Diagnostics
+- Goal: make TLS mode changes safer in production.
 - Scope:
-  - Add optional runtime toggle for OAuth HTTP client TLS backend (or document build/profile split if runtime toggle is not feasible).
-  - Keep existing default behavior unchanged.
-  - Add operator docs that this is best-effort and can change by OS/runtime.
+  - Add startup diagnostics log: requested backend, compiled support, effective backend.
+  - Add optional canary probe endpoint check on boot with explicit error surfaces.
+- Files:
+  - `src/utils/http.rs`
+  - `src/proxy/admin/runtime/service_control.rs`
 - Tests:
-  - Build/test matrix proving both modes compile and requests succeed in integration smoke tests.
-- Risk:
-  - Medium. TLS backend differences can affect cert/proxy behavior.
+  - Startup selection tests under different env values.
 
-## PR-4: Device Profile Coverage Audit (Point 5)
+## Verification
 
-- Status: Implemented (2026-02-11)
-- Goal: Ensure device profile consistency on all Google identity-sensitive calls.
-- Scope:
-  - Audit all outbound Google endpoints (`oauth2.googleapis.com`, `www.googleapis.com`, `content-autofill.googleapis.com`, v1internal paths).
-  - Apply a shared helper where appropriate so account-bound calls consistently send bound device headers.
-  - Document endpoints intentionally excluded (if any).
-- Tests:
-  - Unit/integration tests for header propagation on each covered call path.
-- Risk:
-  - Medium. Header changes can alter upstream behavior.
-
-## PR-5: One-IP Operations Runbook
-
-- Status: Implemented (2026-02-11)
-- Goal: Make one-IP deployment choices explicit and safe by default.
-- Scope:
-  - Add runbook section with two presets:
-    - Availability-first: shared fallback on, strict fail-closed off.
-    - Isolation-first: shared fallback off, strict fail-closed on.
-  - Include recommended compliance and jitter settings, and expected failure modes.
-- Tests:
-  - Docs/config examples validated against current config schema.
-- Risk:
-  - Low. Documentation-only.
+- Core validation command:
+  - `cargo test --workspace`

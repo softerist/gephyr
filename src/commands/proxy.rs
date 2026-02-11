@@ -117,7 +117,7 @@ pub async fn internal_start_proxy_service(
         tracing::info!("🔒 Fixed account mode restored: {}", account_id);
     }
     let active_accounts = token_manager.load_accounts().await.unwrap_or(0);
-    token_manager.run_startup_health_check().await;
+    let _ = token_manager.run_startup_health_check().await;
     token_manager.restore_persisted_session_bindings();
 
     if active_accounts == 0 {

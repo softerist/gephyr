@@ -4,7 +4,7 @@ use sha2::Digest;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const OAUTH_SCOPES: &str = concat!(
@@ -91,6 +91,15 @@ pub struct UserInfo {
     pub hd: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifiedIdentity {
+    pub email: String,
+    pub name: Option<String>,
+    pub google_sub: Option<String>,
+    pub email_verified: bool,
+    pub hd: Option<String>,
+}
+
 impl UserInfo {
     pub fn get_display_name(&self) -> Option<String> {
         if let Some(name) = &self.name {
@@ -145,6 +154,18 @@ fn refresh_jitter_seconds(account_id: Option<&str>) -> i64 {
     30 + (hasher.finish() % 91) as i64
 }
 
+pub fn refresh_window_seconds(account_id: Option<&str>) -> i64 {
+    300 + refresh_jitter_seconds(account_id)
+}
+
+pub fn should_refresh_token(
+    expiry_timestamp: i64,
+    now_timestamp: i64,
+    account_id: Option<&str>,
+) -> bool {
+    expiry_timestamp <= now_timestamp + refresh_window_seconds(account_id)
+}
+
 pub fn get_auth_url(
     redirect_uri: &str,
     state: &str,
@@ -174,6 +195,15 @@ pub async fn exchange_code(
     redirect_uri: &str,
     code_verifier: &str,
 ) -> Result<TokenResponse, String> {
+    exchange_code_at(code, redirect_uri, code_verifier, TOKEN_URL).await
+}
+
+async fn exchange_code_at(
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    token_url: &str,
+) -> Result<TokenResponse, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(None, 60)
             .await
@@ -195,7 +225,7 @@ pub async fn exchange_code(
         params.push(("client_secret", s));
     }
 
-    let response = apply_google_identity_headers(client.post(TOKEN_URL), None)
+    let response = apply_google_identity_headers(client.post(token_url), None)
         .form(&params)
         .send()
         .await
@@ -240,6 +270,14 @@ pub async fn refresh_access_token(
     refresh_token: &str,
     account_id: Option<&str>,
 ) -> Result<TokenResponse, String> {
+    refresh_access_token_at(refresh_token, account_id, TOKEN_URL).await
+}
+
+async fn refresh_access_token_at(
+    refresh_token: &str,
+    account_id: Option<&str>,
+    token_url: &str,
+) -> Result<TokenResponse, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 60)
             .await
@@ -269,7 +307,7 @@ pub async fn refresh_access_token(
         );
     }
 
-    let response = apply_google_identity_headers(client.post(TOKEN_URL), account_id)
+    let response = apply_google_identity_headers(client.post(token_url), account_id)
         .form(&params)
         .send()
         .await
@@ -301,6 +339,14 @@ pub async fn get_user_info(
     access_token: &str,
     account_id: Option<&str>,
 ) -> Result<UserInfo, String> {
+    get_user_info_at(access_token, account_id, USERINFO_URL).await
+}
+
+async fn get_user_info_at(
+    access_token: &str,
+    account_id: Option<&str>,
+    userinfo_url: &str,
+) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 15)
             .await
@@ -309,7 +355,7 @@ pub async fn get_user_info(
         crate::utils::http::get_client()
     };
 
-    let response = apply_google_identity_headers(client.get(USERINFO_URL), account_id)
+    let response = apply_google_identity_headers(client.get(userinfo_url), account_id)
         .bearer_auth(access_token)
         .send()
         .await
@@ -325,13 +371,46 @@ pub async fn get_user_info(
         Err(format!("Failed to get user info: {}", error_text))
     }
 }
+
+pub async fn verify_identity(
+    access_token: &str,
+    raw_id_token: Option<&str>,
+    account_id: Option<&str>,
+) -> Result<VerifiedIdentity, String> {
+    if let Some(raw) = raw_id_token {
+        let claims = crate::modules::auth::id_token::validate_id_token(raw)
+            .await
+            .map_err(|e| format!("Invalid id_token: {}", e))?;
+        return Ok(VerifiedIdentity {
+            email: claims.email,
+            name: claims.name,
+            google_sub: Some(claims.sub),
+            email_verified: claims.email_verified,
+            hd: claims.hd,
+        });
+    }
+
+    let user_info = get_user_info(access_token, account_id).await?;
+    if !user_info.is_email_verified() {
+        return Err("Google userinfo rejected: email is not verified".to_string());
+    }
+
+    Ok(VerifiedIdentity {
+        email: user_info.email.clone(),
+        name: user_info.get_display_name(),
+        google_sub: user_info.google_sub(),
+        email_verified: true,
+        hd: user_info.hd.clone(),
+    })
+}
+
 pub async fn ensure_fresh_token(
     current_token: &crate::models::TokenData,
     account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
     let now = chrono::Local::now().timestamp();
-    let refresh_window = 300 + refresh_jitter_seconds(account_id);
-    if current_token.expiry_timestamp > now + refresh_window {
+    let refresh_window = refresh_window_seconds(account_id);
+    if !should_refresh_token(current_token.expiry_timestamp, now, account_id) {
         return Ok(current_token.clone());
     }
     crate::modules::system::logger::log_info(&format!(
@@ -352,11 +431,76 @@ pub async fn ensure_fresh_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{extract::State, http::HeaderMap, routing::{get, post}, Json, Router};
+    use serde_json::json;
+    use std::sync::Arc;
     use std::sync::{Mutex, OnceLock};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex as AsyncMutex;
 
     fn oauth_ua_test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[derive(Clone, Default)]
+    struct UaCaptureState {
+        user_agents: Arc<AsyncMutex<Vec<String>>>,
+    }
+
+    async fn token_capture_handler(
+        State(state): State<UaCaptureState>,
+        headers: HeaderMap,
+    ) -> Json<serde_json::Value> {
+        if let Some(ua) = headers.get(reqwest::header::USER_AGENT) {
+            if let Ok(ua_str) = ua.to_str() {
+                state.user_agents.lock().await.push(ua_str.to_string());
+            }
+        }
+        Json(json!({
+            "access_token": "access-test-token",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+            "refresh_token": "refresh-test-token",
+            "id_token": null
+        }))
+    }
+
+    async fn userinfo_capture_handler(
+        State(state): State<UaCaptureState>,
+        headers: HeaderMap,
+    ) -> Json<serde_json::Value> {
+        if let Some(ua) = headers.get(reqwest::header::USER_AGENT) {
+            if let Ok(ua_str) = ua.to_str() {
+                state.user_agents.lock().await.push(ua_str.to_string());
+            }
+        }
+        Json(json!({
+            "email": "ua-test@example.com",
+            "email_verified": true,
+            "sub": "sub-ua-test",
+            "name": "UA Test"
+        }))
+    }
+
+    async fn start_mock_oauth_server() -> (String, UaCaptureState, tokio::task::JoinHandle<()>) {
+        let state = UaCaptureState::default();
+        let app = Router::new()
+            .route("/token", post(token_capture_handler))
+            .route("/userinfo", get(userinfo_capture_handler))
+            .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test oauth listener");
+        let addr = listener.local_addr().expect("test oauth local addr");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock oauth server should run");
+        });
+
+        (format!("http://{}", addr), state, handle)
     }
 
     #[test]
@@ -388,6 +532,23 @@ mod tests {
     }
 
     #[test]
+    fn should_refresh_token_respects_account_window() {
+        let now = 1_700_000_000_i64;
+        let window = refresh_window_seconds(Some("acct-1"));
+
+        assert!(should_refresh_token(
+            now + window - 1,
+            now,
+            Some("acct-1")
+        ));
+        assert!(!should_refresh_token(
+            now + window + 1,
+            now,
+            Some("acct-1")
+        ));
+    }
+
+    #[test]
     fn oauth_user_agent_uses_default_when_override_missing() {
         let _guard = oauth_ua_test_lock()
             .lock()
@@ -416,6 +577,73 @@ mod tests {
         assert_eq!(ua, "vscode/1.95.0 gephyr-test");
 
         match previous {
+            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_access_token_sends_user_agent_header() {
+        let _guard = oauth_ua_test_lock()
+            .lock()
+            .expect("oauth user-agent test lock poisoned");
+        let previous_ua = std::env::var("ABV_OAUTH_USER_AGENT").ok();
+        let previous_client_id = std::env::var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID").ok();
+        std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-integration-test");
+        std::env::set_var(
+            "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "test-client.apps.googleusercontent.com",
+        );
+
+        let (base_url, state, server) = start_mock_oauth_server().await;
+        let token_url = format!("{}/token", base_url);
+
+        let _ = refresh_access_token_at("refresh-token", None, &token_url)
+            .await
+            .expect("refresh should succeed against mock server");
+        let captured = state.user_agents.lock().await.clone();
+
+        server.abort();
+
+        assert!(
+            captured.iter().any(|ua| ua == "ua-integration-test"),
+            "expected OAuth refresh call to carry configured User-Agent"
+        );
+
+        match previous_ua {
+            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+        }
+        match previous_client_id {
+            Some(value) => std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", value),
+            None => std::env::remove_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID"),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_user_info_sends_user_agent_header() {
+        let _guard = oauth_ua_test_lock()
+            .lock()
+            .expect("oauth user-agent test lock poisoned");
+        let previous_ua = std::env::var("ABV_OAUTH_USER_AGENT").ok();
+        std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-userinfo-test");
+
+        let (base_url, state, server) = start_mock_oauth_server().await;
+        let userinfo_url = format!("{}/userinfo", base_url);
+
+        let _ = get_user_info_at("access-token", None, &userinfo_url)
+            .await
+            .expect("userinfo should succeed against mock server");
+        let captured = state.user_agents.lock().await.clone();
+
+        server.abort();
+
+        assert!(
+            captured.iter().any(|ua| ua == "ua-userinfo-test"),
+            "expected OAuth userinfo call to carry configured User-Agent"
+        );
+
+        match previous_ua {
             Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
             None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
         }

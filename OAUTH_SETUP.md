@@ -103,16 +103,28 @@ Behavior:
 - Empty/unset: Gephyr default UA is used.
 - Set: applied to OAuth exchange, refresh, and userinfo calls.
 
-### TLS backend profile (build-time)
+### TLS backend profile (build-time + optional runtime override)
 
-Gephyr TLS backend selection is a build profile (not a runtime env toggle):
-- Default build: `native-tls`
-- Alternate build: `rustls`
+Gephyr supports:
+- Build-time profile selection:
+  - Default build: `native-tls`
+  - Alternate build: `rustls` (`--no-default-features --features tls-rustls`)
+- Optional runtime override via `ABV_TLS_BACKEND` when both TLS features are compiled into the binary.
 
-Build rustls profile:
+Examples:
 
 ```bash
+# rustls-only binary
 cargo build --release --no-default-features --features tls-rustls
+
+# binary with both stacks compiled (runtime-selectable)
+cargo build --release --features tls-native,tls-rustls
+```
+
+Runtime override:
+
+```env
+ABV_TLS_BACKEND=rustls
 ```
 
 ### Device profile header consistency
@@ -130,10 +142,17 @@ Coverage includes OAuth calls, quota/loadCodeAssist calls, and account-bound `v1
 ```env
 ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
 ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
+ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS=250
+ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
+ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
+ABV_STARTUP_HEALTH_JITTER_MIN_MS=150
+ABV_STARTUP_HEALTH_JITTER_MAX_MS=1200
 ```
 
 Behavior:
 - Scheduler still runs every 10 minutes, but each run waits a random delay in this range before starting refresh.
+- Each account refresh task also gets a deterministic per-account stagger delay (ms range above) to reduce burst correlation.
+- Startup health-check token refresh also applies random per-account jitter and configurable concurrency limits.
 - Keep `MIN <= MAX`.
 
 ### 3) One-IP hardening: disable shared proxy fallback (optional)
