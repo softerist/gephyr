@@ -407,6 +407,9 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
     let active_accounts = state.core.token_manager.len();
     let request_timeout = state.config.request_timeout_secs();
     let running = *state.runtime.is_running.read().await;
+    let refresh_observability = crate::modules::auth::oauth::refresh_observability_snapshot();
+    let scheduler_observability =
+        crate::modules::system::scheduler::scheduler_refresh_observability_snapshot();
 
     let total_account_requests_in_last_minute: usize = compliance
         .account_requests_in_last_minute
@@ -462,6 +465,17 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
             "tracked_accounts_in_flight": compliance.account_in_flight.len(),
             "total_account_in_flight": total_account_in_flight,
             "accounts_in_cooldown": compliance.account_cooldown_seconds_remaining.len(),
+            "risk_signals_last_minute": compliance.risk_signals_last_minute,
+            "account_switches_last_minute": compliance.account_switches_last_minute,
+            "accounts_with_403_in_last_minute": compliance.account_403_in_last_minute.len(),
+            "accounts_with_429_in_last_minute": compliance.account_429_in_last_minute.len(),
+            "account_403_in_last_minute": compliance.account_403_in_last_minute,
+            "account_429_in_last_minute": compliance.account_429_in_last_minute,
+            "refresh_attempts_last_minute": refresh_observability.refresh_attempts_last_minute,
+            "refresh_attempts_by_account_last_minute": refresh_observability.refresh_attempts_by_account_last_minute,
+            "scheduler_refresh_runs_last_minute": scheduler_observability.scheduler_refresh_runs_last_minute,
+            "scheduler_refresh_failures_last_minute": scheduler_observability.scheduler_refresh_failures_last_minute,
+            "scheduler_refresh_accounts_attempted_last_minute": scheduler_observability.scheduler_refresh_accounts_attempted_last_minute,
         },
         "runtime_apply_policies_supported": config_patch::supported_runtime_apply_policies()
     }))

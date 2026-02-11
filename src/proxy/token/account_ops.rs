@@ -1,29 +1,17 @@
 pub(crate) async fn get_verified_identity(
     refresh_token: &str,
 ) -> Result<crate::modules::auth::oauth::VerifiedIdentity, String> {
-    let token = crate::modules::auth::oauth::refresh_access_token(refresh_token, None)
+    let (_, identity) = crate::modules::auth::oauth::refresh_and_verify_identity(refresh_token, None)
         .await
-        .map_err(|e| format!("Failed to refresh Access Token: {}", e))?;
-
-    crate::modules::auth::oauth::verify_identity(
-        &token.access_token,
-        token.id_token.as_deref(),
-        None,
-    )
-    .await
+        .map_err(|e| format!("Failed to verify identity from refresh token: {}", e))?;
+    Ok(identity)
 }
 
 pub(crate) async fn add_account(refresh_token: &str) -> Result<(), String> {
-    let token_info = crate::modules::auth::oauth::refresh_access_token(refresh_token, None)
-        .await
-        .map_err(|e| format!("Invalid refresh token: {}", e))?;
-
-    let identity = crate::modules::auth::oauth::verify_identity(
-        &token_info.access_token,
-        token_info.id_token.as_deref(),
-        None,
-    )
-    .await?;
+    let (token_info, identity) =
+        crate::modules::auth::oauth::refresh_and_verify_identity(refresh_token, None)
+            .await
+            .map_err(|e| format!("Invalid refresh token or identity: {}", e))?;
     let email = identity.email;
     let google_sub = identity.google_sub;
 

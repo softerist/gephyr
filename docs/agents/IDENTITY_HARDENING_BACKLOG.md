@@ -72,6 +72,48 @@ This backlog tracks Google identity hardening and one-IP risk controls.
   - `src/proxy/providers/zai_anthropic.rs`
   - `src/modules/system/update_checker.rs`
 
+### PR-11: Correlation-Risk Metrics Expansion
+- Status: Implemented
+- Delivered:
+  - Added rolling one-minute counters for compliance risk signals and account-switch velocity.
+  - Added per-account 403/429 rolling maps in compliance snapshot and `/api/proxy/metrics`.
+  - Added refresh-attempt observability (global + per-account) for OAuth refresh paths.
+  - Added scheduler refresh-burst observability:
+    - runs/minute
+    - failures/minute
+    - accounts attempted/minute
+- Files:
+  - `src/proxy/token/manager.rs`
+  - `src/proxy/token/manager_compliance.rs`
+  - `src/proxy/token/manager_runtime_rotation.rs`
+  - `src/modules/auth/oauth.rs`
+  - `src/modules/system/scheduler.rs`
+  - `src/proxy/admin/runtime/service_control.rs`
+  - `src/proxy/tests/admin_runtime_endpoints.rs`
+  - `src/proxy/token/manager_tests.rs`
+
+### PR-12: OAuth Fallback Strictness for Optional Legacy Flows
+- Status: Implemented
+- Delivered:
+  - Centralized refresh+identity verification helper:
+    - `oauth::refresh_and_verify_identity(...)`
+  - Import/add flows now consistently call centralized refresh+verify path:
+    - migration imports (`import_from_v1`, `import_from_custom_db_path`)
+    - token account add/verify helpers
+    - account service refresh-token add flow
+  - Tightened fallback identity acceptance:
+    - userinfo fallback now requires `email_verified=true`
+    - userinfo fallback now requires non-empty Google subject identifier (`sub`)
+  - Added regression tests for fail-closed behavior:
+    - unverified email rejected in fallback
+    - missing `sub` rejected in fallback
+    - refresh+verify helper enforces missing-`sub` rejection
+- Files:
+  - `src/modules/auth/oauth.rs`
+  - `src/modules/system/migration.rs`
+  - `src/proxy/token/account_ops.rs`
+  - `src/modules/auth/account_service.rs`
+
 ## Documentation Updated
 
 - `.env` templates:
@@ -82,31 +124,6 @@ This backlog tracks Google identity hardening and one-IP risk controls.
   - `OAUTH_SETUP.md`
 
 ## Remaining Backlog (Next PR-Sized Tasks)
-
-### PR-11: Correlation-Risk Metrics Expansion
-- Goal: expose explicit one-IP risk signals in `/api/proxy/metrics`.
-- Scope:
-  - Add counters for per-account 403/429 bursts.
-  - Add refresh-burst counters per scheduler run.
-  - Add account-switch frequency/velocity counters.
-- Files:
-  - `src/proxy/token/*`
-  - `src/proxy/admin/runtime/service_control.rs`
-  - `src/proxy/monitor.rs`
-- Tests:
-  - Metric increment unit tests for 403/429 paths.
-  - Admin metrics shape test for new fields.
-
-### PR-12: OAuth Fallback Strictness for Optional Legacy Flows
-- Goal: guarantee all remaining account-link/import paths use centralized `verify_identity` only.
-- Scope:
-  - Audit and remove any residual direct `get_user_info` identity derivation in non-display-only paths.
-- Files:
-  - `src/modules/system/migration.rs`
-  - `src/proxy/token/*`
-  - `src/modules/auth/*`
-- Tests:
-  - Regression tests asserting unverified/unknown identity is never persisted.
 
 ### PR-13: TLS Canary + Startup Diagnostics
 - Goal: make TLS mode changes safer in production.

@@ -12,14 +12,11 @@ impl AccountService {
     }
     pub async fn add_account(&self, refresh_token: &str) -> Result<Account, String> {
         let temp_account_id = uuid::Uuid::new_v4().to_string();
-        let token_res = oauth::refresh_access_token(refresh_token, Some(&temp_account_id)).await?;
-        let access_token = token_res.access_token.clone();
-        let (email, display_name, google_sub) = Self::resolve_identity_from_google(
-            &access_token,
-            token_res.id_token.as_deref(),
-            Some(&temp_account_id),
-        )
-        .await?;
+        let (token_res, identity) =
+            oauth::refresh_and_verify_identity(refresh_token, Some(&temp_account_id)).await?;
+        let email = identity.email;
+        let display_name = identity.name;
+        let google_sub = identity.google_sub;
         let project_id =
             crate::proxy::project_resolver::fetch_project_id(&token_res.access_token, None)
                 .await

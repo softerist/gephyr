@@ -590,6 +590,23 @@ async fn test_compliance_debug_snapshot_reports_live_state() {
             .unwrap_or(0)
             > 0
     );
+    assert!(snapshot.risk_signals_last_minute >= 1);
+    assert_eq!(
+        snapshot
+            .account_429_in_last_minute
+            .get("acc-debug")
+            .copied()
+            .unwrap_or(0),
+        1
+    );
+    assert_eq!(
+        snapshot
+            .account_403_in_last_minute
+            .get("acc-debug")
+            .copied()
+            .unwrap_or(0),
+        0
+    );
 }
 
 #[tokio::test]
@@ -655,6 +672,15 @@ async fn test_compliance_in_flight_persists_for_stream_lifetime() {
         .await
         .expect("acquire should succeed after stream drops");
     assert!(allowed_after_drop.is_some());
+}
+
+#[tokio::test]
+async fn test_account_switch_event_is_reported_in_compliance_snapshot() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager.record_account_switch_event(Some("acc-a"), "acc-b");
+
+    let snapshot = manager.get_compliance_debug_snapshot().await;
+    assert_eq!(snapshot.account_switches_last_minute, 1);
 }
 
 fn create_test_token(

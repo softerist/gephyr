@@ -107,6 +107,10 @@ impl TokenManager {
             };
             self.apply_last_used_update(request.quota_group, need_update_last_used)
                 .await;
+            self.record_account_switch_event(
+                last_used_account_id.as_ref().map(|(id, _)| id.as_str()),
+                &token.account_id,
+            );
 
             return Ok((
                 token.access_token,

@@ -25,6 +25,10 @@ impl TokenManager {
         let mut account_requests_in_last_minute = std::collections::HashMap::new();
         let mut account_in_flight = std::collections::HashMap::new();
         let mut account_cooldown_seconds_remaining = std::collections::HashMap::new();
+        let mut risk_signals_last_minute = 0usize;
+        let mut account_403_in_last_minute = std::collections::HashMap::new();
+        let mut account_429_in_last_minute = std::collections::HashMap::new();
+        let mut account_switches_last_minute = 0usize;
 
         if let Ok(mut state) = self.compliance_state.lock() {
             Self::cleanup_compliance_state_locked(&mut state, now);
@@ -47,6 +51,18 @@ impl TokenManager {
                     }
                 })
                 .collect();
+            risk_signals_last_minute = state.risk_signal_timestamps.len();
+            account_403_in_last_minute = state
+                .account_status_403_timestamps
+                .iter()
+                .map(|(k, v)| (k.clone(), v.len()))
+                .collect();
+            account_429_in_last_minute = state
+                .account_status_429_timestamps
+                .iter()
+                .map(|(k, v)| (k.clone(), v.len()))
+                .collect();
+            account_switches_last_minute = state.account_switch_timestamps.len();
         }
 
         super::ComplianceDebugSnapshot {
@@ -55,6 +71,10 @@ impl TokenManager {
             account_requests_in_last_minute,
             account_in_flight,
             account_cooldown_seconds_remaining,
+            risk_signals_last_minute,
+            account_403_in_last_minute,
+            account_429_in_last_minute,
+            account_switches_last_minute,
         }
     }
 
@@ -153,10 +173,38 @@ impl TokenManager {
         }
 
         if let Ok(mut state) = self.compliance_state.lock() {
+            let now = Instant::now();
+            state.risk_signal_timestamps.push_back(now);
+            if status == 403 {
+                state
+                    .account_status_403_timestamps
+                    .entry(account_id.to_string())
+                    .or_default()
+                    .push_back(now);
+            } else if status == 429 {
+                state
+                    .account_status_429_timestamps
+                    .entry(account_id.to_string())
+                    .or_default()
+                    .push_back(now);
+            }
             state.account_cooldown_until.insert(
                 account_id.to_string(),
-                Instant::now() + Duration::from_secs(cfg.risk_cooldown_seconds),
+                now + Duration::from_secs(cfg.risk_cooldown_seconds),
             );
+            Self::cleanup_compliance_state_locked(&mut state, now);
+        }
+    }
+
+    pub(super) fn record_account_switch_event(&self, previous_account: Option<&str>, selected_account: &str) {
+        if previous_account.is_some_and(|prev| prev == selected_account) {
+            return;
+        }
+
+        if let Ok(mut state) = self.compliance_state.lock() {
+            let now = Instant::now();
+            state.account_switch_timestamps.push_back(now);
+            Self::cleanup_compliance_state_locked(&mut state, now);
         }
     }
 
@@ -176,8 +224,42 @@ impl TokenManager {
                 break;
             }
         }
+        while let Some(ts) = state.risk_signal_timestamps.front() {
+            if *ts < window_start {
+                state.risk_signal_timestamps.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(ts) = state.account_switch_timestamps.front() {
+            if *ts < window_start {
+                state.account_switch_timestamps.pop_front();
+            } else {
+                break;
+            }
+        }
 
         state.account_request_timestamps.retain(|_, queue| {
+            while let Some(ts) = queue.front() {
+                if *ts < window_start {
+                    queue.pop_front();
+                } else {
+                    break;
+                }
+            }
+            !queue.is_empty()
+        });
+        state.account_status_403_timestamps.retain(|_, queue| {
+            while let Some(ts) = queue.front() {
+                if *ts < window_start {
+                    queue.pop_front();
+                } else {
+                    break;
+                }
+            }
+            !queue.is_empty()
+        });
+        state.account_status_429_timestamps.retain(|_, queue| {
             while let Some(ts) = queue.front() {
                 if *ts < window_start {
                     queue.pop_front();

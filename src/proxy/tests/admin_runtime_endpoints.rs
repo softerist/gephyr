@@ -467,6 +467,22 @@ mod tests {
         assert_eq!(metrics_body["compliance"]["enabled"], true);
         assert!(metrics_body["compliance"]["global_requests_in_last_minute"].is_number());
         assert!(metrics_body["compliance"]["total_account_in_flight"].is_number());
+        assert!(metrics_body["compliance"]["risk_signals_last_minute"].is_number());
+        assert!(metrics_body["compliance"]["account_switches_last_minute"].is_number());
+        assert!(metrics_body["compliance"]["accounts_with_403_in_last_minute"].is_number());
+        assert!(metrics_body["compliance"]["accounts_with_429_in_last_minute"].is_number());
+        assert!(metrics_body["compliance"]["account_403_in_last_minute"].is_object());
+        assert!(metrics_body["compliance"]["account_429_in_last_minute"].is_object());
+        assert!(metrics_body["compliance"]["refresh_attempts_last_minute"].is_number());
+        assert!(
+            metrics_body["compliance"]["refresh_attempts_by_account_last_minute"].is_object()
+        );
+        assert!(metrics_body["compliance"]["scheduler_refresh_runs_last_minute"].is_number());
+        assert!(metrics_body["compliance"]["scheduler_refresh_failures_last_minute"].is_number());
+        assert!(
+            metrics_body["compliance"]["scheduler_refresh_accounts_attempted_last_minute"]
+                .is_number()
+        );
         let policies = metrics_body["runtime_apply_policies_supported"]
             .as_array()
             .expect("runtime_apply_policies_supported should be an array");

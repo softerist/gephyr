@@ -135,32 +135,17 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             "Importing account: {}",
                             email_placeholder
                         ));
-                        let token_resp = match oauth::refresh_access_token(&refresh_token, None).await {
-                            Ok(token_resp) => token_resp,
-                            Err(e) => {
-                                crate::modules::system::logger::log_warn(&format!(
-                                    "Skipping import for {}: token refresh failed: {}",
-                                    email_placeholder, e
-                                ));
-                                continue;
-                            }
-                        };
-                        let identity = match oauth::verify_identity(
-                            &token_resp.access_token,
-                            token_resp.id_token.as_deref(),
-                            None,
-                        )
-                        .await
-                        {
-                            Ok(identity) => identity,
-                            Err(e) => {
-                                crate::modules::system::logger::log_warn(&format!(
-                                    "Skipping import for {}: Google identity verification failed: {}",
-                                    email_placeholder, e
-                                ));
-                                continue;
-                            }
-                        };
+                        let (token_resp, identity) =
+                            match oauth::refresh_and_verify_identity(&refresh_token, None).await {
+                                Ok(result) => result,
+                                Err(e) => {
+                                    crate::modules::system::logger::log_warn(&format!(
+                                        "Skipping import for {}: refresh/identity verification failed: {}",
+                                        email_placeholder, e
+                                    ));
+                                    continue;
+                                }
+                            };
                         let crate::modules::auth::oauth::VerifiedIdentity {
                             email,
                             name,
@@ -215,14 +200,10 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
     }
 
     let refresh_token = extract_refresh_token_from_file(&path)?;
-    crate::modules::system::logger::log_info("Getting user info using Refresh Token...");
-    let token_resp = oauth::refresh_access_token(&refresh_token, None).await?;
-    let identity = oauth::verify_identity(
-        &token_resp.access_token,
-        token_resp.id_token.as_deref(),
-        None,
-    )
-    .await?;
+    crate::modules::system::logger::log_info(
+        "Refreshing token and verifying Google identity for import...",
+    );
+    let (token_resp, identity) = oauth::refresh_and_verify_identity(&refresh_token, None).await?;
     let crate::modules::auth::oauth::VerifiedIdentity {
         email,
         name,

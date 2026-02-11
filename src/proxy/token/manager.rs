@@ -39,6 +39,10 @@ pub struct ComplianceDebugSnapshot {
     pub account_requests_in_last_minute: HashMap<String, usize>,
     pub account_in_flight: HashMap<String, usize>,
     pub account_cooldown_seconds_remaining: HashMap<String, u64>,
+    pub risk_signals_last_minute: usize,
+    pub account_403_in_last_minute: HashMap<String, usize>,
+    pub account_429_in_last_minute: HashMap<String, usize>,
+    pub account_switches_last_minute: usize,
 }
 
 #[derive(Default)]
@@ -47,6 +51,10 @@ pub(super) struct ComplianceRuntimeState {
     pub account_request_timestamps: HashMap<String, VecDeque<std::time::Instant>>,
     pub account_in_flight: HashMap<String, usize>,
     pub account_cooldown_until: HashMap<String, std::time::Instant>,
+    pub risk_signal_timestamps: VecDeque<std::time::Instant>,
+    pub account_status_403_timestamps: HashMap<String, VecDeque<std::time::Instant>>,
+    pub account_status_429_timestamps: HashMap<String, VecDeque<std::time::Instant>>,
+    pub account_switch_timestamps: VecDeque<std::time::Instant>,
 }
 
 pub struct ComplianceRequestGuard {
