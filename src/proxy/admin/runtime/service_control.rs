@@ -427,6 +427,9 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
             "request_timeout": request_timeout,
             "effective_request_timeout": request_timeout.max(5),
             "tls_backend": crate::utils::http::tls_backend_name(),
+            "tls_requested_backend": crate::utils::http::tls_requested_backend_name(),
+            "tls_compiled_backends": crate::utils::http::tls_compiled_backends(),
+            "tls_canary": crate::utils::http::tls_canary_snapshot(),
         },
         "monitor": {
             "enabled": state.core.monitor.is_enabled(),
@@ -479,6 +482,25 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
         },
         "runtime_apply_policies_supported": config_patch::supported_runtime_apply_policies()
     }))
+}
+
+pub(crate) async fn admin_run_tls_canary_probe() -> impl IntoResponse {
+    match crate::utils::http::run_tls_startup_canary_probe().await {
+        Ok(()) => Json(serde_json::json!({
+            "ok": true,
+            "tls_canary": crate::utils::http::tls_canary_snapshot()
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": error,
+                "tls_canary": crate::utils::http::tls_canary_snapshot()
+            })),
+        )
+            .into_response(),
+    }
 }
 
 pub(crate) async fn admin_update_proxy_compliance(

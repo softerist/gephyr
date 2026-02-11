@@ -127,6 +127,20 @@ Runtime override:
 ABV_TLS_BACKEND=rustls
 ```
 
+Optional startup canary (recommended before/while switching backends):
+
+```env
+ABV_TLS_CANARY_URL=https://oauth2.googleapis.com/token
+ABV_TLS_CANARY_TIMEOUT_SECS=5
+ABV_TLS_CANARY_REQUIRED=false
+```
+
+Behavior:
+- If `ABV_TLS_CANARY_URL` is unset, no startup canary is executed.
+- If set, Gephyr performs one startup probe using the selected TLS backend.
+- If `ABV_TLS_CANARY_REQUIRED=true`, startup fails closed when probe fails.
+- Probe status is visible in `GET /api/proxy/metrics` under `runtime.tls_canary`.
+
 ### Device profile header consistency
 
 When an account has a bound device profile, Gephyr applies these headers consistently on account-bound Google calls:

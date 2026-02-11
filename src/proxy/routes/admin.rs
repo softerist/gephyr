@@ -16,6 +16,7 @@ const ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR: &str = "/proxy/session-bindings/c
 const ADMIN_PATH_PROXY_SESSION_BINDINGS: &str = "/proxy/session-bindings";
 const ADMIN_PATH_PROXY_STICKY: &str = "/proxy/sticky";
 const ADMIN_PATH_PROXY_COMPLIANCE: &str = "/proxy/compliance";
+const ADMIN_PATH_PROXY_TLS_CANARY_RUN: &str = "/proxy/tls-canary/run";
 const ADMIN_PATH_PROXY_METRICS: &str = "/proxy/metrics";
 
 const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
@@ -35,6 +36,7 @@ const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("POST", ADMIN_PATH_PROXY_SESSION_BINDINGS_CLEAR),
     ("GET", ADMIN_PATH_PROXY_COMPLIANCE),
     ("POST", ADMIN_PATH_PROXY_COMPLIANCE),
+    ("POST", ADMIN_PATH_PROXY_TLS_CANARY_RUN),
     ("GET", ADMIN_PATH_PROXY_METRICS),
     ("GET", ADMIN_PATH_PROXY_STATUS),
     ("GET", ADMIN_PATH_VERSION_ROUTES),

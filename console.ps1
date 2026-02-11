@@ -90,6 +90,10 @@ OAuth Login:
   Optional identity/scheduler hardening envs are also passed through when set:
     ABV_OAUTH_USER_AGENT
     ABV_ALLOWED_GOOGLE_DOMAINS
+    ABV_TLS_BACKEND
+    ABV_TLS_CANARY_URL
+    ABV_TLS_CANARY_TIMEOUT_SECS
+    ABV_TLS_CANARY_REQUIRED
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
 "@ | Write-Host
@@ -215,6 +219,18 @@ function Start-Container {
     }
     if ($env:ABV_ALLOWED_GOOGLE_DOMAINS) {
         $runtimeArgs += @("-e", "ABV_ALLOWED_GOOGLE_DOMAINS=$($env:ABV_ALLOWED_GOOGLE_DOMAINS)")
+    }
+    if ($env:ABV_TLS_BACKEND) {
+        $runtimeArgs += @("-e", "ABV_TLS_BACKEND=$($env:ABV_TLS_BACKEND)")
+    }
+    if ($env:ABV_TLS_CANARY_URL) {
+        $runtimeArgs += @("-e", "ABV_TLS_CANARY_URL=$($env:ABV_TLS_CANARY_URL)")
+    }
+    if ($env:ABV_TLS_CANARY_TIMEOUT_SECS) {
+        $runtimeArgs += @("-e", "ABV_TLS_CANARY_TIMEOUT_SECS=$($env:ABV_TLS_CANARY_TIMEOUT_SECS)")
+    }
+    if ($env:ABV_TLS_CANARY_REQUIRED) {
+        $runtimeArgs += @("-e", "ABV_TLS_CANARY_REQUIRED=$($env:ABV_TLS_CANARY_REQUIRED)")
     }
     if ($env:ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS) {
         $runtimeArgs += @("-e", "ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=$($env:ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS)")

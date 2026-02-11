@@ -114,6 +114,36 @@ This backlog tracks Google identity hardening and one-IP risk controls.
   - `src/proxy/token/account_ops.rs`
   - `src/modules/auth/account_service.rs`
 
+### PR-13: TLS Canary + Startup Diagnostics
+- Status: Implemented
+- Delivered:
+  - Added startup TLS diagnostics logging:
+    - requested backend env/raw value
+    - normalized requested backend
+    - compiled backend support list
+    - effective backend in use
+  - Added optional startup TLS canary probe with explicit status/error surfaces:
+    - `ABV_TLS_CANARY_URL`
+    - `ABV_TLS_CANARY_TIMEOUT_SECS` (clamped 1..60)
+    - `ABV_TLS_CANARY_REQUIRED` (fail startup when probe fails)
+  - Added runtime metrics exposure for TLS diagnostics/canary snapshot:
+    - `runtime.tls_requested_backend`
+    - `runtime.tls_compiled_backends`
+    - `runtime.tls_canary`
+  - Added Docker console env pass-through for new TLS envs in both scripts.
+  - Added unit/integration tests for canary success/failure and env parsing.
+- Files:
+  - `src/utils/http.rs`
+  - `src/lib.rs`
+  - `src/proxy/admin/runtime/service_control.rs`
+  - `src/proxy/tests/admin_runtime_endpoints.rs`
+  - `console.ps1`
+  - `console.sh`
+  - `.env.example`
+  - `.env.local`
+  - `README.md`
+  - `OAUTH_SETUP.md`
+
 ## Documentation Updated
 
 - `.env` templates:
@@ -125,16 +155,7 @@ This backlog tracks Google identity hardening and one-IP risk controls.
 
 ## Remaining Backlog (Next PR-Sized Tasks)
 
-### PR-13: TLS Canary + Startup Diagnostics
-- Goal: make TLS mode changes safer in production.
-- Scope:
-  - Add startup diagnostics log: requested backend, compiled support, effective backend.
-  - Add optional canary probe endpoint check on boot with explicit error surfaces.
-- Files:
-  - `src/utils/http.rs`
-  - `src/proxy/admin/runtime/service_control.rs`
-- Tests:
-  - Startup selection tests under different env values.
+- No remaining items in this backlog wave.
 
 ## Verification
 

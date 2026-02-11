@@ -138,6 +138,16 @@ async fn start_headless_runtime() -> Result<commands::proxy::ProxyServiceState, 
                 .join("\n")
         )
     })?;
+    crate::utils::http::log_tls_startup_diagnostics();
+    if let Err(e) = crate::utils::http::run_tls_startup_canary_probe().await {
+        if crate::utils::http::tls_canary_required() {
+            return Err(format!(
+                "ERROR [E-TLS-CANARY-REQUIRED] tls_startup_canary_probe_failed: {}",
+                e
+            ));
+        }
+        warn!("[W-TLS-CANARY-FAILED] {}", e);
+    }
 
     info!(
         "Starting headless proxy service on port {}",

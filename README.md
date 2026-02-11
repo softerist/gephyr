@@ -61,6 +61,11 @@ ABV_STARTUP_HEALTH_JITTER_MAX_MS=1200
 
 # Optional runtime TLS backend override when binary includes both stacks
 ABV_TLS_BACKEND=rustls
+
+# Optional startup TLS canary probe (recommended when changing TLS backend)
+ABV_TLS_CANARY_URL=https://oauth2.googleapis.com/token
+ABV_TLS_CANARY_TIMEOUT_SECS=5
+ABV_TLS_CANARY_REQUIRED=false
 ```
 
 ### 2. Build & Run
@@ -146,6 +151,9 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` / `ABV_GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
 | `ABV_OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
 | `ABV_TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
+| `ABV_TLS_CANARY_URL` | — | — | Optional startup TLS canary probe URL |
+| `ABV_TLS_CANARY_TIMEOUT_SECS` | — | `5` | Startup TLS canary timeout seconds (clamped 1..60) |
+| `ABV_TLS_CANARY_REQUIRED` | — | `false` | If `true`, startup fails when TLS canary probe fails |
 | `ABV_ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
 | `ABV_DATA_DIR` | — | `~/.gephyr` | Data directory path |
 | `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
@@ -194,7 +202,7 @@ Admin visibility:
 - `POST /api/proxy/pool/runtime` updates only proxy-pool runtime knobs (avoids full `/api/config` round-trip).
 - `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
 - `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
-- `GET /api/proxy/metrics` returns runtime/monitor/sticky/proxy-pool/compliance aggregates (including `runtime.tls_backend`) and supported runtime-apply policy values.
+- `GET /api/proxy/metrics` returns runtime/monitor/sticky/proxy-pool/compliance aggregates (including TLS diagnostics: backend/requested/compiled/canary snapshot) and supported runtime-apply policy values.
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
 - scoped `POST /api/proxy/*` update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`).

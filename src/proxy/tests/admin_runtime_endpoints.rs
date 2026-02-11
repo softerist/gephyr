@@ -200,6 +200,7 @@ mod tests {
         assert_eq!(body["routes"]["POST /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["GET /api/proxy/compliance"], true);
         assert_eq!(body["routes"]["POST /api/proxy/compliance"], true);
+        assert_eq!(body["routes"]["POST /api/proxy/tls-canary/run"], true);
         assert_eq!(body["routes"]["GET /api/proxy/metrics"], true);
         assert_eq!(body["routes"]["GET /api/version/routes"], true);
     }
@@ -450,6 +451,12 @@ mod tests {
         assert!(metrics_body["runtime"]["port"].is_number());
         assert!(metrics_body["runtime"]["active_accounts"].is_number());
         assert!(metrics_body["runtime"]["tls_backend"].is_string());
+        assert!(
+            metrics_body["runtime"]["tls_requested_backend"].is_string()
+                || metrics_body["runtime"]["tls_requested_backend"].is_null()
+        );
+        assert!(metrics_body["runtime"]["tls_compiled_backends"].is_array());
+        assert!(metrics_body["runtime"]["tls_canary"].is_object());
         assert!(metrics_body["monitor"]["enabled"].is_boolean());
         assert!(metrics_body["monitor"]["total_requests"].is_number());
         assert!(metrics_body["sticky"]["persist_session_bindings"].is_boolean());
@@ -561,6 +568,50 @@ mod tests {
 
         let (status, _) = send(&router, request).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_tls_canary_run_requires_auth() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let router = build_test_router("admin-test-key");
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/proxy/tls-canary/run")
+            .body(Body::empty())
+            .expect("request");
+
+        let (status, _) = send(&router, request).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_tls_canary_run_returns_stable_shape() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let _canary_url = ScopedEnvVar::unset("ABV_TLS_CANARY_URL");
+        let _canary_timeout = ScopedEnvVar::unset("ABV_TLS_CANARY_TIMEOUT_SECS");
+        let _canary_required = ScopedEnvVar::unset("ABV_TLS_CANARY_REQUIRED");
+
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/proxy/tls-canary/run")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+
+        let (status, body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], Value::from(true));
+        assert!(body["tls_canary"].is_object());
+        assert!(body["tls_canary"]["configured"].is_boolean());
+        assert!(body["tls_canary"]["required"].is_boolean());
     }
 
     #[tokio::test(flavor = "current_thread")]
