@@ -36,6 +36,7 @@ Commands:
   logs         Show container logs
   health       Call /healthz with API key
   check        Run account token health check (refresh expiring tokens)
+  canary       Show/Run TLS stealth canary probe (use --run to trigger)
   login        Start container with admin API, fetch /api/auth/url, open browser
   oauth/auth   Alias for login
   accounts     Call /api/accounts
@@ -589,6 +590,62 @@ function Show-AccountHealthCheck {
     Write-Host ""
 }
 
+function Show-TlsCanary {
+    param([switch]$Run, [switch]$AsJson)
+    $headers = Get-AuthHeaders
+    $method = if ($Run) { "Post" } else { "Get" }
+    $uri = if ($Run) { "http://127.0.0.1:$Port/api/proxy/tls-canary/run" } else { "http://127.0.0.1:$Port/api/proxy/tls-canary" }
+
+    if ($Run) {
+        Write-Host ""
+        Write-Host "  Running TLS startup canary probe..." -ForegroundColor Cyan
+        Write-Host ""
+    }
+
+    try {
+        $resp = Invoke-RestMethod -Uri $uri -Headers $headers -Method $method -TimeoutSec 15
+        if ($AsJson) {
+            $resp | ConvertTo-Json -Depth 5
+            return
+        }
+
+        $snapshot = if ($Run) { $resp.tls_canary } else { $resp }
+
+        Write-Host ""
+        Write-Host "  TLS Canary Snapshot:" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "    Configured: " -NoNewline; Write-Host "$($snapshot.configured)" -ForegroundColor (if ($snapshot.configured) { "Green" } else { "Gray" })
+        Write-Host "    Required:   " -NoNewline; Write-Host "$($snapshot.required)" -ForegroundColor (if ($snapshot.required) { "Yellow" } else { "Gray" })
+        Write-Host "    URL:        $($snapshot.url)"
+        Write-Host "    Timeout:    $($snapshot.timeout_seconds)s"
+
+        if ($snapshot.last_checked_unix) {
+            $lastChecked = [DateTimeOffset]::FromUnixTimeSeconds($snapshot.last_checked_unix).LocalDateTime
+            Write-Host "    Last Check: $($lastChecked.ToString("yyyy-MM-dd HH:mm:ss"))"
+        }
+
+        if ($snapshot.last_http_status) {
+            $color = if ($snapshot.last_http_status -lt 400) { "Green" } else { "Red" }
+            Write-Host "    HTTP Status:" -NoNewline; Write-Host " $($snapshot.last_http_status)" -ForegroundColor $color
+        }
+
+        if ($snapshot.last_error) {
+            Write-Host "    Last Error: $($snapshot.last_error)" -ForegroundColor Red
+        } else {
+            if ($snapshot.configured) {
+                Write-Host "    Status:     OK" -ForegroundColor Green
+            }
+        }
+        Write-Host ""
+    } catch {
+        if ($AsJson) {
+            @{ error = "Canary check failed"; message = $_.Exception.Message } | ConvertTo-Json
+        } else {
+            Write-Host "  Canary check failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+}
+
 function Show-Accounts {
     param([switch]$AsJson)
     $headers = Get-AuthHeaders
@@ -969,7 +1026,7 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-and-stop")
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "canary", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-and-stop")
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -996,6 +1053,11 @@ switch ($Command) {
     "logs" { Show-Logs }
     "health" { Show-Health -AsJson:$Json.IsPresent }
     "check" { Show-AccountHealthCheck -AsJson:$Json.IsPresent }
+    "canary" {
+        $Run = $false
+        if ($env:CMD_ARGS -match "--run") { $Run = $true }
+        Show-TlsCanary -AsJson:$Json.IsPresent -Run:$Run
+    }
     "login" { Start-OAuthFlow }
     "oauth" { Start-OAuthFlow }
     "auth" { Start-OAuthFlow }

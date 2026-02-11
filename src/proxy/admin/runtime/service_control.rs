@@ -503,6 +503,10 @@ pub(crate) async fn admin_run_tls_canary_probe() -> impl IntoResponse {
     }
 }
 
+pub(crate) async fn admin_get_tls_canary_status() -> impl IntoResponse {
+    Json(crate::utils::http::tls_canary_snapshot())
+}
+
 pub(crate) async fn admin_update_proxy_compliance(
     State(state): State<AdminState>,
     headers: HeaderMap,

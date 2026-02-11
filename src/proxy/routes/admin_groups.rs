@@ -181,6 +181,7 @@ pub(super) fn add_proxy_routes(router: Router<AppState>) -> Router<AppState> {
             "/proxy/compliance",
             get(admin::admin_get_proxy_compliance_debug).post(admin::admin_update_proxy_compliance),
         )
+        .route("/proxy/tls-canary", get(admin::admin_get_tls_canary_status))
         .route(
             "/proxy/tls-canary/run",
             post(admin::admin_run_tls_canary_probe),

@@ -203,6 +203,7 @@ Admin visibility:
 - `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
 - `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
 - `GET /api/proxy/metrics` returns runtime/monitor/sticky/proxy-pool/compliance aggregates (including TLS diagnostics: backend/requested/compiled/canary snapshot) and supported runtime-apply policy values.
+- `POST /api/proxy/tls-canary/run` runs TLS canary probe on demand and returns the latest canary snapshot.
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
 - scoped `POST /api/proxy/*` update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`).
@@ -273,6 +274,14 @@ curl -X POST http://127.0.0.1:8045/api/proxy/pool/runtime \
     "require_proxy_for_account_requests": true,
     "health_check_interval": 120
   }'
+```
+
+Manual TLS canary run:
+
+```bash
+curl -X POST http://127.0.0.1:8045/api/proxy/tls-canary/run \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json"
 ```
 
 Practical notes:

@@ -34,6 +34,7 @@ Commands:
   logs         Show container logs
   health       Call /healthz with API key
   check        Run account token health check (refresh expiring tokens)
+  canary       Show/Run TLS stealth canary probe (use --run to trigger)
   login        Start with admin API, fetch /api/auth/url, open browser
   oauth/auth   Alias for login
   accounts     Call /api/accounts
@@ -544,6 +545,89 @@ HEALTHEOF
   fi
 }
 
+show_tls_canary() {
+  ensure_api_key
+  local run="false"
+  for arg in "$@"; do
+    if [[ "$arg" == "--run" ]]; then run="true"; fi
+  done
+
+  local method="GET"
+  local endpoint="/api/proxy/tls-canary"
+  if [[ "$run" == "true" ]]; then
+    method="POST"
+    endpoint="/api/proxy/tls-canary/run"
+    echo ""
+    echo -e "  \033[36mRunning TLS startup canary probe...\033[0m"
+    echo ""
+  fi
+
+  local payload
+  payload="$(curl -sS -X "$method" -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    "http://127.0.0.1:${PORT}${endpoint}" 2>/dev/null || true)"
+
+  if [[ -z "$payload" ]]; then
+    echo -e "  \033[31mCanary check failed: no response\033[0m"
+    return 1
+  fi
+
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "$payload"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'CANARYEOF' "$payload" "$run"
+import sys, json, datetime
+
+try:
+    data = json.loads(sys.argv[1])
+    is_run = sys.argv[2] == "true"
+except Exception:
+    print("  \033[31mFailed to parse response\033[0m")
+    sys.exit(1)
+
+snapshot = data.get("tls_canary") if is_run else data
+
+GREEN  = "\033[32m"
+CYAN   = "\033[36m"
+YELLOW = "\033[33m"
+RED    = "\033[31m"
+GRAY   = "\033[90m"
+RESET  = "\033[0m"
+
+print(f"\n  {CYAN}TLS Canary Snapshot:{RESET}\n")
+
+conf = snapshot.get("configured", False)
+req  = snapshot.get("required", False)
+
+print(f"    Configured: {GREEN if conf else GRAY}{conf}{RESET}")
+print(f"    Required:   {YELLOW if req else GRAY}{req}{RESET}")
+print(f"    URL:        {snapshot.get('url', 'None')}")
+print(f"    Timeout:    {snapshot.get('timeout_seconds', 0)}s")
+
+ts = snapshot.get("last_checked_unix")
+if ts:
+    dt = datetime.datetime.fromtimestamp(ts)
+    print(f"    Last Check: {dt.strftime('%Y-%m-%d %H:%M:%S')}")
+
+status = snapshot.get("last_http_status")
+if status:
+    color = GREEN if status < 400 else RED
+    print(f"    HTTP Status: {color}{status}{RESET}")
+
+err = snapshot.get("last_error")
+if err:
+    print(f"    Last Error: {RED}{err}{RESET}")
+elif conf:
+    print(f"    Status:     {GREEN}OK{RESET}")
+print()
+CANARYEOF
+  else
+    echo "$payload" | python3 -m json.tool 2>/dev/null || echo "$payload"
+  fi
+}
+
 show_accounts() {
   ensure_api_key
   local payload
@@ -1037,6 +1121,7 @@ case "$COMMAND" in
   logs) show_logs ;;
   health) show_health ;;
   check) show_account_health_check ;;
+  canary) show_tls_canary "$@" ;;
   login|oauth|auth) oauth_flow ;;
   accounts) show_accounts ;;
   api-test) api_test ;;

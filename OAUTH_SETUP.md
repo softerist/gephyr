@@ -140,6 +140,7 @@ Behavior:
 - If set, Gephyr performs one startup probe using the selected TLS backend.
 - If `ABV_TLS_CANARY_REQUIRED=true`, startup fails closed when probe fails.
 - Probe status is visible in `GET /api/proxy/metrics` under `runtime.tls_canary`.
+- You can trigger a manual probe any time with `POST /api/proxy/tls-canary/run`.
 
 ### Device profile header consistency
 
