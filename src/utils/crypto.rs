@@ -8,14 +8,14 @@ use sha2::Digest;
 
 const NONCE_LEN: usize = 12;
 const GCM_TAG_LEN: usize = 16;
-const LEGACY_NONCE_SEED: &[u8] = b"antigravity_salt";
+const LEGACY_NONCE_BYTES: &[u8] = b"antigravity_salt";
 const CIPHERTEXT_V2_PREFIX: &str = "v2:";
 // Packed payload is nonce + ciphertext+tag; ciphertext can be empty.
 const MIN_ENCRYPTED_BYTES: usize = NONCE_LEN + GCM_TAG_LEN;
 
 fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&LEGACY_NONCE_SEED[..NONCE_LEN]);
+    nonce.copy_from_slice(&LEGACY_NONCE_BYTES[..NONCE_LEN]);
     nonce
 }
 
@@ -113,14 +113,24 @@ where
     D: Deserializer<'de>,
 {
     let raw = String::deserialize(deserializer)?;
-    Ok(decrypt_secret_or_plaintext(&raw).unwrap_or(raw))
+    match decrypt_secret_or_plaintext(&raw) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            tracing::warn!(
+                "deserialize_secret: decryption failed, using raw value: {}",
+                e
+            );
+            Ok(raw)
+        }
+    }
 }
 
 pub fn decrypt_secret_or_plaintext(raw: &str) -> Result<String, String> {
+    let has_v2_prefix = raw.starts_with(CIPHERTEXT_V2_PREFIX);
     match decrypt_string(raw) {
         Ok(v) => Ok(v),
         Err(e) => {
-            if looks_like_encrypted_payload(raw) {
+            if has_v2_prefix || looks_like_encrypted_payload(raw) {
                 Err(e)
             } else {
                 Ok(raw.to_string())
@@ -186,6 +196,7 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::test_utils::ScopedEnvVar;
+    use serde::Deserialize;
     use std::sync::{Mutex, OnceLock};
 
     static CRYPTO_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -244,6 +255,19 @@ mod tests {
     }
 
     #[test]
+    fn v2_prefixed_invalid_base64_does_not_fallback_to_plaintext() {
+        let err = decrypt_secret_or_plaintext("v2:abc").expect_err("should fail closed");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn v2_prefixed_short_payload_does_not_fallback_to_plaintext() {
+        let raw = format!("v2:{}", general_purpose::STANDARD.encode(vec![7u8; 4]));
+        let err = decrypt_secret_or_plaintext(&raw).expect_err("should fail closed");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
     fn base64_payload_below_encrypted_threshold_falls_back_to_plaintext() {
         let raw = general_purpose::STANDARD.encode(vec![7u8; MIN_ENCRYPTED_BYTES - 1]);
         let decrypted = decrypt_secret_or_plaintext(&raw).expect("fallback plaintext");
@@ -295,5 +319,18 @@ mod tests {
 
         let decrypted = decrypt_string(&legacy_unversioned).expect("decrypt legacy");
         assert_eq!(decrypted, "legacy-plaintext");
+    }
+
+    #[test]
+    fn deserialize_secret_falls_back_to_raw_when_decryption_fails() {
+        #[derive(Deserialize)]
+        struct SecretHolder {
+            #[serde(deserialize_with = "crate::utils::crypto::deserialize_secret")]
+            secret: String,
+        }
+
+        let parsed: SecretHolder =
+            serde_json::from_str(r#"{"secret":"v2:abc"}"#).expect("deserialization should not fail");
+        assert_eq!(parsed.secret, "v2:abc");
     }
 }

@@ -253,14 +253,33 @@ pub(crate) async fn load_single_account(
     let access_token_raw = token_obj["access_token"]
         .as_str()
         .ok_or("Missing access_token")?;
-    let access_token = crate::utils::crypto::decrypt_secret_or_plaintext(access_token_raw)
-        .unwrap_or_else(|_| access_token_raw.to_string());
+    let access_token = match crate::utils::crypto::decrypt_secret_or_plaintext(access_token_raw) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to decrypt access_token for account file {:?}: {}",
+                path,
+                e
+            );
+            return Err(format!("Failed to decrypt access_token: {}", e));
+        }
+    };
 
     let refresh_token_raw = token_obj["refresh_token"]
         .as_str()
         .ok_or("Missing refresh_token")?;
-    let refresh_token = crate::utils::crypto::decrypt_secret_or_plaintext(refresh_token_raw)
-        .unwrap_or_else(|_| refresh_token_raw.to_string());
+    let refresh_token = match crate::utils::crypto::decrypt_secret_or_plaintext(refresh_token_raw)
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to decrypt refresh_token for account file {:?}: {}",
+                path,
+                e
+            );
+            return Err(format!("Failed to decrypt refresh_token: {}", e));
+        }
+    };
 
     let expires_in = token_obj["expires_in"]
         .as_i64()
@@ -341,4 +360,67 @@ pub(crate) async fn load_single_account(
             .unwrap_or(0),
         model_quotas,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashmap::DashMap;
+
+    fn write_account_fixture(access_token: &str, refresh_token: &str) -> std::path::PathBuf {
+        let temp_dir = std::env::temp_dir().join(format!(
+            ".gephyr-loader-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let account_path = temp_dir.join("acct-1.json");
+
+        let account = serde_json::json!({
+            "id": "acct-1",
+            "email": "acct@example.com",
+            "token": {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expires_in": 3600,
+                "expiry_timestamp": chrono::Utc::now().timestamp() + 3600
+            }
+        });
+        std::fs::write(
+            &account_path,
+            serde_json::to_string_pretty(&account).expect("serialize fixture account"),
+        )
+        .expect("write fixture account");
+
+        account_path
+    }
+
+    #[tokio::test]
+    async fn load_single_account_accepts_plaintext_tokens() {
+        let account_path = write_account_fixture("plain-access-token", "plain-refresh-token");
+        let health_scores: DashMap<String, f32> = DashMap::new();
+
+        let loaded = load_single_account(&account_path, &health_scores)
+            .await
+            .expect("load account")
+            .expect("account should be enabled");
+        assert_eq!(loaded.access_token, "plain-access-token");
+        assert_eq!(loaded.refresh_token, "plain-refresh-token");
+
+        let parent = account_path.parent().expect("parent dir").to_path_buf();
+        let _ = std::fs::remove_dir_all(parent);
+    }
+
+    #[tokio::test]
+    async fn load_single_account_rejects_invalid_v2_prefixed_token() {
+        let account_path = write_account_fixture("v2:abc", "plain-refresh-token");
+        let health_scores: DashMap<String, f32> = DashMap::new();
+
+        let err = load_single_account(&account_path, &health_scores)
+            .await
+            .expect_err("invalid v2 token should fail");
+        assert!(err.contains("Failed to decrypt access_token"));
+
+        let parent = account_path.parent().expect("parent dir").to_path_buf();
+        let _ = std::fs::remove_dir_all(parent);
+    }
 }

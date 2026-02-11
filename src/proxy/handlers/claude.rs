@@ -16,7 +16,7 @@ use crate::proxy::mappers::claude::{
     clean_cache_control_from_messages, close_tool_loop_for_thinking, create_claude_sse_stream,
     filter_invalid_thinking_blocks_with_family, merge_consecutive_messages,
     models::{Message, MessageContent},
-    transform_claude_request_in, transform_response, ClaudeRequest,
+    transform_claude_request_in, ClaudeRequest,
 };
 use crate::proxy::mappers::context_manager::ContextManager;
 use crate::proxy::mappers::estimation_calibrator::get_calibrator;
@@ -347,7 +347,7 @@ pub async fn handle_messages(
         .await;
 
     let mut last_error = String::new();
-    let retried_without_thinking = false;
+    let mut retried_without_thinking = false;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
     let mut last_status = StatusCode::SERVICE_UNAVAILABLE;
@@ -529,11 +529,13 @@ pub async fn handle_messages(
                     trace_id, usage_ratio * 100.0, threshold_l3 * 100.0
                 );
                 let token_manager_clone = token_manager.clone();
+                let upstream_clone = upstream.clone();
 
                 match try_compress_with_summary(
                     &request_with_mapped,
                     &trace_id,
                     &token_manager_clone,
+                    &upstream_clone,
                 )
                 .await
                 {
@@ -634,7 +636,6 @@ pub async fn handle_messages(
         }
         let client_wants_stream = request.stream;
         let force_stream_internally = !client_wants_stream;
-        let actual_stream = client_wants_stream || force_stream_internally;
 
         if force_stream_internally {
             info!(
@@ -643,12 +644,8 @@ pub async fn handle_messages(
             );
         }
 
-        let method = if actual_stream {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
-        let query = if actual_stream { Some("alt=sse") } else { None };
+        let method = "streamGenerateContent";
+        let query = Some("alt=sse");
         let mut extra_headers = std::collections::HashMap::new();
         if crate::proxy::common::model_mapping::is_claude_model(&mapped_model) {
             extra_headers.insert(
@@ -704,198 +701,110 @@ pub async fn handle_messages(
             let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(
                 &request_with_mapped.model,
             );
-            if actual_stream {
-                let meta = json!({
-                    "protocol": "anthropic",
-                    "trace_id": trace_id,
-                    "original_model": request.model,
-                    "mapped_model": request_with_mapped.model,
-                    "request_type": config.request_type,
-                    "attempt": attempt,
-                    "status": status.as_u16(),
-                });
-                let gemini_stream = debug_logger::wrap_reqwest_stream_with_debug(
-                    Box::pin(response.bytes_stream()),
-                    debug_cfg.clone(),
-                    trace_id.clone(),
-                    "upstream_response",
-                    meta,
-                );
+            let meta = json!({
+                "protocol": "anthropic",
+                "trace_id": trace_id,
+                "original_model": request.model,
+                "mapped_model": request_with_mapped.model,
+                "request_type": config.request_type,
+                "attempt": attempt,
+                "status": status.as_u16(),
+            });
+            let gemini_stream = debug_logger::wrap_reqwest_stream_with_debug(
+                Box::pin(response.bytes_stream()),
+                debug_cfg.clone(),
+                trace_id.clone(),
+                "upstream_response",
+                meta,
+            );
 
-                let current_message_count = request_with_mapped.messages.len();
-                let mut claude_stream =
-                    create_claude_sse_stream(crate::proxy::mappers::claude::ClaudeSseStreamInput {
-                        gemini_stream,
-                        trace_id: trace_id.clone(),
-                        email: email.clone(),
-                        session_id: Some(session_id_str.clone()),
-                        scaling_enabled,
-                        context_limit,
-                        estimated_prompt_tokens: Some(raw_estimated),
-                        message_count: current_message_count,
-                        client_adapter: client_adapter.clone(),
-                    });
-
-                let first_data_chunk =
-                    match crate::proxy::handlers::streaming::peek_first_data_chunk(
-                        &mut claude_stream,
-                        &crate::proxy::handlers::streaming::StreamPeekOptions {
-                            timeout: Duration::from_secs(60),
-                            context: "Claude:stream",
-                            fail_on_empty_chunk: false,
-                            empty_chunk_message: "Empty response stream during peek",
-                            skip_data_colon_heartbeat: false,
-                            detect_error_events: false,
-                            error_event_message: "Error event during peek",
-                            stream_error_prefix: "Stream error during peek",
-                            empty_stream_message: "Empty response stream during peek",
-                            timeout_message: "Timeout waiting for first data",
-                        },
-                    )
-                    .await
-                    {
-                        Ok(chunk) => chunk,
-                        Err(err) => {
-                            last_error = err;
-                            continue;
-                        }
-                    };
-
-                let stream_rest = claude_stream;
-                let combined_stream = Box::pin(
-                    futures::stream::once(async move { Ok(first_data_chunk) }).chain(
-                        stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
-                            match result {
-                                Ok(b) => Ok(b),
-                                Err(e) => {
-                                    Ok(Bytes::from(format!("data: {{\"error\":\"{}\"}}\n\n", e)))
-                                }
-                            }
-                        }),
-                    ),
-                );
-                if client_wants_stream {
-                    let guarded_stream = crate::proxy::handlers::streaming::attach_guard_to_stream(
-                        combined_stream,
-                        compliance_guard,
-                    );
-                    return crate::proxy::handlers::streaming::build_sse_response_with_headers(
-                        Body::from_stream(guarded_stream),
-                        Some(&email),
-                        Some(&request_with_mapped.model),
-                        true,
-                        &[(
-                            "X-Context-Purified",
-                            if is_purified { "true" } else { "false" },
-                        )],
-                    );
-                } else {
-                    use crate::proxy::mappers::claude::collect_stream_to_json;
-
-                    match collect_stream_to_json(combined_stream).await {
-                        Ok(full_response) => {
-                            info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
-                            return crate::proxy::handlers::streaming::build_json_response_with_headers(
-                                StatusCode::OK,
-                                &full_response,
-                                Some(&email),
-                                Some(&request_with_mapped.model),
-                                &[(
-                                    "X-Context-Purified",
-                                    if is_purified { "true" } else { "false" },
-                                )],
-                            );
-                        }
-                        Err(e) => {
-                            return crate::proxy::handlers::errors::stream_collection_error_response(
-                                &e.to_string(),
-                            );
-                        }
-                    }
-                }
-            } else {
-                let bytes = match response.bytes().await {
-                    Ok(b) => b,
-                    Err(e) => {
-                        return (
-                            StatusCode::BAD_GATEWAY,
-                            format!("Failed to read body: {}", e),
-                        )
-                            .into_response()
-                    }
-                };
-                if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-                    debug!("Upstream Response for Claude request: {}", text);
-                }
-
-                let gemini_resp: Value = match serde_json::from_slice(&bytes) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return crate::proxy::handlers::errors::parse_error_response(
-                            &e.to_string(),
-                            None,
-                        )
-                    }
-                };
-                let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
-                let gemini_response: crate::proxy::mappers::claude::models::GeminiResponse =
-                    match serde_json::from_value(raw.clone()) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("Convert error: {}", e),
-                            )
-                                .into_response()
-                        }
-                    };
-                let context_limit =
-                    crate::proxy::mappers::claude::utils::get_context_limit_for_model(
-                        &request_with_mapped.model,
-                    );
-                let s_id_owned = session_id.map(|s| s.to_string());
-                let claude_response = match transform_response(
-                    &gemini_response,
+            let current_message_count = request_with_mapped.messages.len();
+            let mut claude_stream =
+                create_claude_sse_stream(crate::proxy::mappers::claude::ClaudeSseStreamInput {
+                    gemini_stream,
+                    trace_id: trace_id.clone(),
+                    email: email.clone(),
+                    session_id: Some(session_id_str.clone()),
                     scaling_enabled,
                     context_limit,
-                    s_id_owned,
-                    request_with_mapped.model.clone(),
-                    request_with_mapped.messages.len(),
-                ) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            format!("Transform error: {}", e),
-                        )
-                            .into_response()
-                    }
-                };
-                let cache_info = if let Some(cached) = claude_response.usage.cache_read_input_tokens
-                {
-                    format!(", Cached: {}", cached)
-                } else {
-                    String::new()
-                };
+                    estimated_prompt_tokens: Some(raw_estimated),
+                    message_count: current_message_count,
+                    client_adapter: client_adapter.clone(),
+                });
 
-                tracing::info!(
-                    "[{}] Request finished. Model: {}, Tokens: In {}, Out {}{}",
-                    trace_id,
-                    request_with_mapped.model,
-                    claude_response.usage.input_tokens,
-                    claude_response.usage.output_tokens,
-                    cache_info
+            let first_data_chunk = match crate::proxy::handlers::streaming::peek_first_data_chunk(
+                &mut claude_stream,
+                &crate::proxy::handlers::streaming::StreamPeekOptions {
+                    timeout: Duration::from_secs(60),
+                    context: "Claude:stream",
+                    fail_on_empty_chunk: false,
+                    empty_chunk_message: "Empty response stream during peek",
+                    skip_data_colon_heartbeat: false,
+                    detect_error_events: false,
+                    error_event_message: "Error event during peek",
+                    stream_error_prefix: "Stream error during peek",
+                    empty_stream_message: "Empty response stream during peek",
+                    timeout_message: "Timeout waiting for first data",
+                },
+            )
+            .await
+            {
+                Ok(chunk) => chunk,
+                Err(err) => {
+                    last_error = err;
+                    continue;
+                }
+            };
+
+            let stream_rest = claude_stream;
+            let combined_stream = Box::pin(
+                futures::stream::once(async move { Ok(first_data_chunk) }).chain(stream_rest.map(
+                    |result| -> Result<Bytes, std::io::Error> {
+                        match result {
+                            Ok(b) => Ok(b),
+                            Err(e) => Ok(Bytes::from(format!("data: {{\"error\":\"{}\"}}\n\n", e))),
+                        }
+                    },
+                )),
+            );
+            if client_wants_stream {
+                let guarded_stream = crate::proxy::handlers::streaming::attach_guard_to_stream(
+                    combined_stream,
+                    compliance_guard,
                 );
+                return crate::proxy::handlers::streaming::build_sse_response_with_headers(
+                    Body::from_stream(guarded_stream),
+                    Some(&email),
+                    Some(&request_with_mapped.model),
+                    true,
+                    &[(
+                        "X-Context-Purified",
+                        if is_purified { "true" } else { "false" },
+                    )],
+                );
+            } else {
+                use crate::proxy::mappers::claude::collect_stream_to_json;
 
-                return (
-                    StatusCode::OK,
-                    [
-                        ("X-Account-Email", email.as_str()),
-                        ("X-Mapped-Model", request_with_mapped.model.as_str()),
-                    ],
-                    Json(claude_response),
-                )
-                    .into_response();
+                match collect_stream_to_json(combined_stream).await {
+                    Ok(full_response) => {
+                        info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
+                        return crate::proxy::handlers::streaming::build_json_response_with_headers(
+                            StatusCode::OK,
+                            &full_response,
+                            Some(&email),
+                            Some(&request_with_mapped.model),
+                            &[(
+                                "X-Context-Purified",
+                                if is_purified { "true" } else { "false" },
+                            )],
+                        );
+                    }
+                    Err(e) => {
+                        return crate::proxy::handlers::errors::stream_collection_error_response(
+                            &e.to_string(),
+                        );
+                    }
+                }
             }
         }
         let status_code = status.as_u16();
@@ -1011,6 +920,7 @@ pub async fn handle_messages(
             crate::proxy::mappers::claude::thinking_utils::close_tool_loop_for_thinking(
                 &mut request_for_body.messages,
             );
+            retried_without_thinking = true;
             request_for_body.model =
                 crate::proxy::common::model_mapping::normalize_claude_retry_model(
                     &request_for_body.model,
@@ -1341,6 +1251,7 @@ async fn call_gemini_sync(
     model: &str,
     request: &ClaudeRequest,
     token_manager: &Arc<crate::proxy::TokenManager>,
+    upstream: &Arc<crate::proxy::upstream::client::UpstreamClient>,
     trace_id: &str,
 ) -> Result<String, String> {
     let (access_token, project_id, _, account_id, _wait_ms) = token_manager
@@ -1362,7 +1273,8 @@ async fn call_gemini_sync(
 
     debug!("[{}] Calling Gemini API: {}", trace_id, model);
 
-    let response = reqwest::Client::new()
+    let client = upstream.get_client(Some(account_id.as_str())).await;
+    let response = client
         .post(&upstream_url)
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json")
@@ -1401,6 +1313,7 @@ async fn try_compress_with_summary(
     original_request: &ClaudeRequest,
     trace_id: &str,
     token_manager: &Arc<crate::proxy::TokenManager>,
+    upstream: &Arc<crate::proxy::upstream::client::UpstreamClient>,
 ) -> Result<ClaudeRequest, String> {
     info!(
         "[{}] [Layer-3] Starting context compression with XML summary",
@@ -1454,6 +1367,7 @@ async fn try_compress_with_summary(
         INTERNAL_BACKGROUND_TASK,
         &summary_request,
         token_manager,
+        upstream,
         trace_id,
     )
     .await?;

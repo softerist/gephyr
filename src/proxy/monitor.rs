@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::RwLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use tokio::sync::{RwLock, Semaphore};
+
+const MAX_PERSIST_WRITE_CONCURRENCY: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequestLog {
@@ -36,6 +39,8 @@ pub struct ProxyMonitor {
     pub stats: RwLock<ProxyStats>,
     pub max_logs: usize,
     pub enabled: AtomicBool,
+    persist_write_semaphore: Arc<Semaphore>,
+    dropped_persist_writes: Arc<AtomicU64>,
 }
 
 impl ProxyMonitor {
@@ -45,6 +50,8 @@ impl ProxyMonitor {
             stats: RwLock::new(ProxyStats::default()),
             max_logs,
             enabled: AtomicBool::new(false),
+            persist_write_semaphore: Arc::new(Semaphore::new(MAX_PERSIST_WRITE_CONCURRENCY)),
+            dropped_persist_writes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -78,6 +85,10 @@ impl ProxyMonitor {
         self.enabled.load(Ordering::Relaxed)
     }
 
+    pub fn dropped_persist_writes(&self) -> u64 {
+        self.dropped_persist_writes.load(Ordering::Relaxed)
+    }
+
     pub async fn log_request(&self, log: ProxyRequestLog) {
         if !self.is_enabled() {
             return;
@@ -99,8 +110,24 @@ impl ProxyMonitor {
             }
             logs.push_front(log.clone());
         }
+        let persist_write_semaphore = self.persist_write_semaphore.clone();
+        let dropped_persist_writes = self.dropped_persist_writes.clone();
+        let permit = match persist_write_semaphore.try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                let dropped = dropped_persist_writes.fetch_add(1, Ordering::Relaxed) + 1;
+                if dropped == 1 || dropped % 100 == 0 {
+                    tracing::warn!(
+                        "Dropping monitor DB persistence write due to backpressure (dropped={})",
+                        dropped
+                    );
+                }
+                return;
+            }
+        };
         let log_to_save = log.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = crate::modules::persistence::proxy_db::save_log(&log_to_save) {
                 tracing::error!("Failed to save proxy log to DB: {}", e);
             }
@@ -226,7 +253,7 @@ impl ProxyMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::ProxyMonitor;
+    use super::{ProxyMonitor, ProxyRequestLog, MAX_PERSIST_WRITE_CONCURRENCY};
 
     #[test]
     fn constructor_is_runtime_safe() {
@@ -235,5 +262,41 @@ mod tests {
             result.is_ok(),
             "constructor should not require Tokio runtime"
         );
+    }
+
+    #[tokio::test]
+    async fn log_request_drops_persistence_when_write_concurrency_is_saturated() {
+        let monitor = ProxyMonitor::new(16);
+        monitor.set_enabled(true);
+
+        let _all_permits = monitor
+            .persist_write_semaphore
+            .clone()
+            .acquire_many_owned(MAX_PERSIST_WRITE_CONCURRENCY as u32)
+            .await
+            .expect("acquire all permits");
+
+        let log = ProxyRequestLog {
+            id: "log-1".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            method: "POST".to_string(),
+            url: "/v1/messages".to_string(),
+            status: 200,
+            duration: 10,
+            model: Some("claude-sonnet-4-5".to_string()),
+            mapped_model: Some("gemini-2.5-pro".to_string()),
+            account_email: Some("acct@example.com".to_string()),
+            client_ip: Some("127.0.0.1".to_string()),
+            error: None,
+            request_body: None,
+            response_body: None,
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+            protocol: Some("anthropic".to_string()),
+            username: Some("tester".to_string()),
+        };
+
+        monitor.log_request(log).await;
+        assert_eq!(monitor.dropped_persist_writes(), 1);
     }
 }

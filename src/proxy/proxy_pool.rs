@@ -5,7 +5,7 @@ use reqwest::Client;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use std::sync::OnceLock;
 pub static GLOBAL_PROXY_POOL: OnceLock<Arc<ProxyPoolManager>> = OnceLock::new();
@@ -24,9 +24,10 @@ pub struct PoolProxyConfig {
 }
 pub struct ProxyPoolManager {
     config: Arc<RwLock<ProxyPoolConfig>>,
-    usage_counter: Arc<DashMap<String, usize>>,
+    total_usage_counter: Arc<DashMap<String, usize>>,
     account_bindings: Arc<DashMap<String, String>>,
     round_robin_index: Arc<AtomicUsize>,
+    bind_lock: Mutex<()>,
 }
 
 impl ProxyPoolManager {
@@ -46,9 +47,10 @@ impl ProxyPoolManager {
 
         Self {
             config,
-            usage_counter: Arc::new(DashMap::new()),
+            total_usage_counter: Arc::new(DashMap::new()),
             account_bindings,
             round_robin_index: Arc::new(AtomicUsize::new(0)),
+            bind_lock: Mutex::new(()),
         }
     }
     pub async fn get_effective_client(
@@ -173,21 +175,49 @@ impl ProxyPoolManager {
             .collect();
 
         if healthy_proxies.is_empty() {
-            return Ok(None);
+            let shared_healthy: Vec<_> = config
+                .proxies
+                .iter()
+                .filter(|p| {
+                    if !p.enabled {
+                        return false;
+                    }
+                    if config.auto_failover && !p.is_healthy {
+                        return false;
+                    }
+                    true
+                })
+                .collect();
+            if shared_healthy.is_empty() {
+                return Ok(None);
+            }
+            tracing::warn!(
+                "[ProxyPool] All healthy proxies are currently bound; allowing shared proxy selection for unbound account."
+            );
+            return self.select_and_build_proxy(config, &shared_healthy);
         }
 
+        self.select_and_build_proxy(config, &healthy_proxies)
+    }
+
+    fn select_and_build_proxy(
+        &self,
+        config: &ProxyPoolConfig,
+        candidates: &[&ProxyEntry],
+    ) -> Result<Option<PoolProxyConfig>, String> {
         let selected = match config.strategy {
-            ProxySelectionStrategy::RoundRobin => self.select_round_robin(&healthy_proxies),
-            ProxySelectionStrategy::Random => self.select_random(&healthy_proxies),
-            ProxySelectionStrategy::Priority => self.select_by_priority(&healthy_proxies),
-            ProxySelectionStrategy::LeastConnections => {
-                self.select_least_connections(&healthy_proxies)
-            }
-            ProxySelectionStrategy::WeightedRoundRobin => self.select_weighted(&healthy_proxies),
+            ProxySelectionStrategy::RoundRobin => self.select_round_robin(candidates),
+            ProxySelectionStrategy::Random => self.select_random(candidates),
+            ProxySelectionStrategy::Priority => self.select_by_priority(candidates),
+            ProxySelectionStrategy::LeastConnections => self.select_least_connections(candidates),
+            ProxySelectionStrategy::WeightedRoundRobin => self.select_weighted(candidates),
         };
 
         if let Some(entry) = selected {
-            *self.usage_counter.entry(entry.id.clone()).or_insert(0) += 1;
+            *self
+                .total_usage_counter
+                .entry(entry.id.clone())
+                .or_insert(0) += 1;
             Ok(Some(self.build_proxy_config(entry)?))
         } else {
             Ok(None)
@@ -218,7 +248,7 @@ impl ProxyPoolManager {
     fn select_least_connections<'a>(&self, proxies: &[&'a ProxyEntry]) -> Option<&'a ProxyEntry> {
         proxies
             .iter()
-            .min_by_key(|p| self.usage_counter.get(&p.id).map(|v| *v).unwrap_or(0))
+            .min_by_key(|p| self.total_usage_counter.get(&p.id).map(|v| *v).unwrap_or(0))
             .copied()
     }
 
@@ -263,6 +293,7 @@ impl ProxyPoolManager {
         account_id: String,
         proxy_id: String,
     ) -> Result<(), String> {
+        let _guard = self.bind_lock.lock().await;
         {
             let config = self.config.read().await;
             if !config.proxies.iter().any(|p| p.id == proxy_id) {
@@ -374,15 +405,24 @@ impl ProxyPoolManager {
 
         Ok(())
     }
+
+    fn health_check_status_is_healthy(status: reqwest::StatusCode, expects_204: bool) -> bool {
+        if expects_204 {
+            status == reqwest::StatusCode::NO_CONTENT
+        } else {
+            status.is_success()
+        }
+    }
+
     async fn check_proxy_health(&self, entry: &ProxyEntry) -> (bool, Option<u64>) {
-        let check_url = if let Some(url) = &entry.health_check_url {
+        let (check_url, expects_204) = if let Some(url) = &entry.health_check_url {
             if url.trim().is_empty() {
-                "http://cp.cloudflare.com/generate_204"
+                ("http://cp.cloudflare.com/generate_204", true)
             } else {
-                url.as_str()
+                (url.as_str(), false)
             }
         } else {
-            "http://cp.cloudflare.com/generate_204"
+            ("http://cp.cloudflare.com/generate_204", true)
         };
         let proxy_res = self.build_proxy_config(entry);
         if let Err(e) = proxy_res {
@@ -409,13 +449,14 @@ impl ProxyPoolManager {
         match client.get(check_url).send().await {
             Ok(resp) => {
                 let latency = start.elapsed().as_millis() as u64;
-                if resp.status().is_success() {
+                if Self::health_check_status_is_healthy(resp.status(), expects_204) {
                     (true, Some(latency))
                 } else {
                     tracing::warn!(
-                        "Proxy {} health check status error: {}",
+                        "Proxy {} health check status error: {} (expects_204={})",
                         entry.url,
-                        resp.status()
+                        resp.status(),
+                        expects_204
                     );
                     (false, None)
                 }
@@ -448,5 +489,110 @@ impl ProxyPoolManager {
                 tokio::time::sleep(Duration::from_secs(interval_secs)).await;
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn build_proxy_entry(id: &str, priority: i32) -> ProxyEntry {
+        ProxyEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            url: "http://127.0.0.1:8080".to_string(),
+            auth: None,
+            enabled: true,
+            priority,
+            tags: vec![],
+            max_accounts: None,
+            health_check_url: None,
+            last_check_time: None,
+            is_healthy: true,
+            latency: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn select_proxy_from_pool_allows_shared_selection_when_all_proxies_are_bound() {
+        let mut bindings = HashMap::new();
+        bindings.insert("acct-1".to_string(), "proxy-a".to_string());
+        bindings.insert("acct-2".to_string(), "proxy-b".to_string());
+        let cfg = ProxyPoolConfig {
+            enabled: true,
+            proxies: vec![build_proxy_entry("proxy-a", 1), build_proxy_entry("proxy-b", 2)],
+            health_check_interval: 300,
+            auto_failover: true,
+            strategy: ProxySelectionStrategy::Priority,
+            account_bindings: bindings,
+        };
+        let manager = ProxyPoolManager::new(Arc::new(RwLock::new(cfg.clone())));
+
+        let selected = manager
+            .select_proxy_from_pool(&cfg)
+            .await
+            .expect("selection should succeed");
+
+        assert!(
+            selected.is_some(),
+            "unbound account selection should not fail when all healthy proxies are bound"
+        );
+        assert_eq!(
+            selected.expect("selected proxy").entry_id,
+            "proxy-a",
+            "priority strategy should still be applied in shared-selection mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn least_connections_uses_total_historical_usage_counter() {
+        let cfg = ProxyPoolConfig {
+            enabled: true,
+            proxies: vec![build_proxy_entry("proxy-a", 1), build_proxy_entry("proxy-b", 2)],
+            health_check_interval: 300,
+            auto_failover: true,
+            strategy: ProxySelectionStrategy::LeastConnections,
+            account_bindings: HashMap::new(),
+        };
+        let manager = ProxyPoolManager::new(Arc::new(RwLock::new(cfg.clone())));
+        manager.total_usage_counter.insert("proxy-a".to_string(), 8);
+        manager.total_usage_counter.insert("proxy-b".to_string(), 1);
+
+        let selected = manager
+            .select_proxy_from_pool(&cfg)
+            .await
+            .expect("selection should succeed")
+            .expect("proxy should be selected");
+
+        assert_eq!(selected.entry_id, "proxy-b");
+    }
+
+    #[test]
+    fn default_health_check_requires_204() {
+        assert!(ProxyPoolManager::health_check_status_is_healthy(
+            reqwest::StatusCode::NO_CONTENT,
+            true
+        ));
+        assert!(!ProxyPoolManager::health_check_status_is_healthy(
+            reqwest::StatusCode::OK,
+            true
+        ));
+    }
+
+    #[test]
+    fn custom_health_check_accepts_any_2xx() {
+        assert!(ProxyPoolManager::health_check_status_is_healthy(
+            reqwest::StatusCode::OK,
+            false
+        ));
+        assert!(ProxyPoolManager::health_check_status_is_healthy(
+            reqwest::StatusCode::NO_CONTENT,
+            false
+        ));
+        assert!(!ProxyPoolManager::health_check_status_is_healthy(
+            reqwest::StatusCode::BAD_GATEWAY,
+            false
+        ));
     }
 }

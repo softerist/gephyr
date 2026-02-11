@@ -1,7 +1,6 @@
 pub mod collector;
 pub mod models;
 pub mod request;
-pub mod response;
 pub mod streaming;
 pub mod thinking_utils;
 pub mod utils;
@@ -12,7 +11,6 @@ pub use models::*;
 pub use request::{
     clean_cache_control_from_messages, merge_consecutive_messages, transform_claude_request_in,
 };
-pub use response::transform_response;
 pub use streaming::{PartProcessor, StreamingState};
 pub use thinking_utils::{
     close_tool_loop_for_thinking, filter_invalid_thinking_blocks_with_family,

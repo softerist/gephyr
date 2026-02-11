@@ -45,7 +45,7 @@ pub(crate) fn save_refreshed_token(
 
     let now = chrono::Utc::now().timestamp();
     let encrypted_access = crate::utils::crypto::encrypt_string(&token_response.access_token)
-        .unwrap_or_else(|_| token_response.access_token.clone());
+        .map_err(|e| format!("Failed to encrypt refreshed access token: {}", e))?;
 
     content["token"]["access_token"] = serde_json::Value::String(encrypted_access);
     content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
@@ -119,4 +119,72 @@ pub(crate) fn get_quota_reset_time(data_dir: &Path, account_id: &str) -> Option<
                 .min()
                 .map(|s| s.to_string())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::ScopedEnvVar;
+    use std::sync::{Mutex, OnceLock};
+
+    static TOKEN_PERSIST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn save_refreshed_token_persists_encrypted_access_token() {
+        let _guard = TOKEN_PERSIST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("token persist env lock");
+        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "token-persistence-test-key");
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            ".gephyr-save-refreshed-token-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let account_path = temp_dir.join("account.json");
+
+        let account = serde_json::json!({
+            "id": "acct-1",
+            "email": "acct@example.com",
+            "token": {
+                "access_token": "old-access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 3600,
+                "expiry_timestamp": chrono::Utc::now().timestamp() + 3600
+            }
+        });
+        std::fs::write(
+            &account_path,
+            serde_json::to_string_pretty(&account).expect("serialize account"),
+        )
+        .expect("write account");
+
+        let token_response = crate::modules::auth::oauth::TokenResponse {
+            access_token: "new-access-token".to_string(),
+            expires_in: 3600,
+            token_type: "Bearer".to_string(),
+            refresh_token: None,
+        };
+
+        save_refreshed_token(&account_path, &token_response).expect("save refreshed token");
+
+        let saved: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&account_path).expect("read saved account"),
+        )
+        .expect("parse saved account");
+        let saved_access = saved["token"]["access_token"]
+            .as_str()
+            .expect("saved access token string");
+        assert_ne!(
+            saved_access, "new-access-token",
+            "access token should not be stored in plaintext"
+        );
+        assert!(
+            saved_access.starts_with("v2:"),
+            "access token should be saved in v2 ciphertext format"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
