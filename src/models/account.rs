@@ -5,6 +5,8 @@ use std::collections::HashSet;
 pub struct Account {
     pub id: String,
     pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_sub: Option<String>,
     pub name: Option<String>,
     pub token: TokenData,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,6 +50,7 @@ impl Account {
         Self {
             id,
             email,
+            google_sub: None,
             name: None,
             token,
             device_profile: None,
@@ -89,6 +92,8 @@ pub struct AccountIndex {
 pub struct AccountSummary {
     pub id: String,
     pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_sub: Option<String>,
     pub name: Option<String>,
     #[serde(default)]
     pub disabled: bool,

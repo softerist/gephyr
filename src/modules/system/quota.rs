@@ -8,6 +8,27 @@ const QUOTA_API_URL: &str =
 
 const MAX_RETRIES: u32 = 3;
 
+fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
+    let id = account_id?;
+    crate::modules::auth::account::load_account(id)
+        .ok()
+        .and_then(|account| account.device_profile)
+}
+
+fn apply_account_device_headers(
+    mut request: reqwest::RequestBuilder,
+    account_id: Option<&str>,
+) -> reqwest::RequestBuilder {
+    if let Some(profile) = load_account_device_profile(account_id) {
+        request = request
+            .header("x-machine-id", profile.machine_id)
+            .header("x-mac-machine-id", profile.mac_machine_id)
+            .header("x-dev-device-id", profile.dev_device_id)
+            .header("x-sqm-id", profile.sqm_id);
+    }
+    request
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct QuotaResponse {
     models: std::collections::HashMap<String, ModelInfo>,
@@ -62,20 +83,23 @@ async fn fetch_project_id(
     let client = create_client(account_id).await;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
 
-    let res = client
-        .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
-        .header(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {}", access_token),
-        )
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header(
-            reqwest::header::USER_AGENT,
-            crate::constants::USER_AGENT.as_str(),
-        )
-        .json(&meta)
-        .send()
-        .await;
+    let res = apply_account_device_headers(
+        client
+            .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", access_token),
+            )
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(
+                reqwest::header::USER_AGENT,
+                crate::constants::USER_AGENT.as_str(),
+            ),
+        account_id,
+    )
+    .json(&meta)
+    .send()
+    .await;
 
     match res {
         Ok(res) => {
@@ -145,16 +169,19 @@ pub async fn fetch_quota_with_cache(
     let mut last_error: Option<AppError> = None;
 
     for attempt in 1..=MAX_RETRIES {
-        match client
-            .post(url)
-            .bearer_auth(access_token)
-            .header(
-                reqwest::header::USER_AGENT,
-                crate::constants::USER_AGENT.as_str(),
-            )
-            .json(&json!(payload))
-            .send()
-            .await
+        match apply_account_device_headers(
+            client
+                .post(url)
+                .bearer_auth(access_token)
+                .header(
+                    reqwest::header::USER_AGENT,
+                    crate::constants::USER_AGENT.as_str(),
+                )
+                .json(&json!(payload)),
+            account_id,
+        )
+        .send()
+        .await
         {
             Ok(response) => {
                 if response.error_for_status_ref().is_err() {

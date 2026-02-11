@@ -58,7 +58,9 @@ impl ProxyPoolManager {
         account_id: Option<&str>,
         timeout_secs: u64,
     ) -> Client {
-        let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
+        let mut builder = Client::builder()
+            .timeout(Duration::from_secs(timeout_secs))
+            .user_agent(crate::constants::USER_AGENT.as_str());
         let proxy_opt = if let Some(acc_id) = account_id {
             self.get_proxy_for_account(acc_id).await.ok().flatten()
         } else {
@@ -521,7 +523,10 @@ mod tests {
         bindings.insert("acct-2".to_string(), "proxy-b".to_string());
         let cfg = ProxyPoolConfig {
             enabled: true,
-            proxies: vec![build_proxy_entry("proxy-a", 1), build_proxy_entry("proxy-b", 2)],
+            proxies: vec![
+                build_proxy_entry("proxy-a", 1),
+                build_proxy_entry("proxy-b", 2),
+            ],
             health_check_interval: 300,
             auto_failover: true,
             strategy: ProxySelectionStrategy::Priority,
@@ -549,7 +554,10 @@ mod tests {
     async fn least_connections_uses_total_historical_usage_counter() {
         let cfg = ProxyPoolConfig {
             enabled: true,
-            proxies: vec![build_proxy_entry("proxy-a", 1), build_proxy_entry("proxy-b", 2)],
+            proxies: vec![
+                build_proxy_entry("proxy-a", 1),
+                build_proxy_entry("proxy-b", 2),
+            ],
             health_check_interval: 300,
             auto_failover: true,
             strategy: ProxySelectionStrategy::LeastConnections,

@@ -4,7 +4,9 @@ use reqwest::{Client, Proxy};
 pub static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| create_base_client(15));
 pub static SHARED_CLIENT_LONG: Lazy<Client> = Lazy::new(|| create_base_client(60));
 fn create_base_client(timeout_secs: u64) -> Client {
-    let mut builder = Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
+    let mut builder = Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .user_agent(crate::constants::USER_AGENT.as_str());
 
     if let Ok(config) = load_app_config() {
         let proxy_config = config.proxy.upstream_proxy;

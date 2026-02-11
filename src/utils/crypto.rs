@@ -329,8 +329,8 @@ mod tests {
             secret: String,
         }
 
-        let parsed: SecretHolder =
-            serde_json::from_str(r#"{"secret":"v2:abc"}"#).expect("deserialization should not fail");
+        let parsed: SecretHolder = serde_json::from_str(r#"{"secret":"v2:abc"}"#)
+            .expect("deserialization should not fail");
         assert_eq!(parsed.secret, "v2:abc");
     }
 }

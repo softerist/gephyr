@@ -135,20 +135,25 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             "Importing account: {}",
                             email_placeholder
                         ));
-                        let (email, access_token, expires_in) =
+                        let (email, access_token, expires_in, google_sub) =
                             match oauth::refresh_access_token(&refresh_token, None).await {
                                 Ok(token_resp) => {
                                     match oauth::get_user_info(&token_resp.access_token, None).await
                                     {
-                                        Ok(user_info) => (
-                                            user_info.email,
-                                            token_resp.access_token,
-                                            token_resp.expires_in,
-                                        ),
+                                        Ok(user_info) => {
+                                            let google_sub = user_info.google_sub();
+                                            (
+                                                user_info.email,
+                                                token_resp.access_token,
+                                                token_resp.expires_in,
+                                                google_sub,
+                                            )
+                                        }
                                         Err(_) => (
                                             email_placeholder.clone(),
                                             token_resp.access_token,
                                             token_resp.expires_in,
+                                            None,
                                         ),
                                     }
                                 }
@@ -161,6 +166,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                                         email_placeholder.clone(),
                                         "imported_access_token".to_string(),
                                         0,
+                                        None,
                                     )
                                 }
                             };
@@ -173,7 +179,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             None,
                             None,
                         );
-                        match account::upsert_account(email.clone(), None, token_data) {
+                        match account::upsert_account(email.clone(), None, token_data, google_sub) {
                             Ok(acc) => {
                                 crate::modules::system::logger::log_info(&format!(
                                     "Import successful: {}",
@@ -215,7 +221,11 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
     crate::modules::system::logger::log_info("Getting user info using Refresh Token...");
     let token_resp = oauth::refresh_access_token(&refresh_token, None).await?;
     let user_info = oauth::get_user_info(&token_resp.access_token, None).await?;
+    if !user_info.is_email_verified() {
+        return Err("Google userinfo rejected: email is not verified".to_string());
+    }
 
+    let google_sub = user_info.google_sub();
     let email = user_info.email;
 
     crate::modules::system::logger::log_info(&format!(
@@ -231,7 +241,7 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
         None,
         None,
     );
-    account::upsert_account(email.clone(), user_info.name, token_data)
+    account::upsert_account(email.clone(), user_info.name, token_data, google_sub)
 }
 pub async fn import_from_db() -> Result<Account, String> {
     let db_path = db::get_db_path()?;

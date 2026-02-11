@@ -288,10 +288,7 @@ pub(crate) async fn admin_prepare_oauth_url_web(
                                         Some("oauth_save_account".to_string()),
                                         Some(user_info.email.clone()),
                                     );
-                                    if let Err(e) = token_manager
-                                        .add_account(&user_info.email, refresh_token)
-                                        .await
-                                    {
+                                    if let Err(e) = token_manager.add_account(refresh_token).await {
                                         crate::modules::auth::oauth_server::mark_oauth_flow_status(
                                             crate::modules::auth::oauth_server::OAuthFlowPhase::Failed,
                                             Some(format!("oauth_save_account_failed: {}", e)),

@@ -29,7 +29,8 @@ mod tests {
     use crate::proxy::{ProxySecurityConfig, TokenManager};
     use crate::test_utils::ScopedEnvVar;
 
-    static ADMIN_ENDPOINT_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+    static ADMIN_ENDPOINT_TEST_LOCK: Lazy<&'static Mutex<()>> =
+        Lazy::new(|| &crate::proxy::tests::SECURITY_TEST_LOCK);
 
     fn seed_runtime_config_api_key(api_key: &str) {
         let mut cfg = system_config::load_app_config().unwrap_or_default();

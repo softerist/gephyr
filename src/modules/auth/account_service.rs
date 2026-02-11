@@ -1,5 +1,5 @@
 use crate::models::{Account, TokenData};
-use crate::modules::auth::{account, oauth, oauth_server};
+use crate::modules::auth::{account, id_token, oauth, oauth_server};
 use crate::modules::system::{logger, quota};
 
 pub struct AccountService {
@@ -13,8 +13,13 @@ impl AccountService {
     pub async fn add_account(&self, refresh_token: &str) -> Result<Account, String> {
         let temp_account_id = uuid::Uuid::new_v4().to_string();
         let token_res = oauth::refresh_access_token(refresh_token, Some(&temp_account_id)).await?;
-        let user_info =
-            oauth::get_user_info(&token_res.access_token, Some(&temp_account_id)).await?;
+        let access_token = token_res.access_token.clone();
+        let (email, display_name, google_sub) = Self::resolve_identity_from_google(
+            &access_token,
+            token_res.id_token.as_deref(),
+            Some(&temp_account_id),
+        )
+        .await?;
         let project_id = crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
             .await
             .ok();
@@ -22,12 +27,11 @@ impl AccountService {
             token_res.access_token.clone(),
             refresh_token.to_string(),
             token_res.expires_in,
-            Some(user_info.email.clone()),
+            Some(email.clone()),
             project_id,
             None,
         );
-        let mut account =
-            account::upsert_account(user_info.email.clone(), user_info.get_display_name(), token)?;
+        let mut account = account::upsert_account(email.clone(), display_name, token, google_sub)?;
         let email_for_log = account.email.clone();
         let access_token = token_res.access_token.clone();
         match quota::fetch_quota(&access_token, &email_for_log, Some(&account.id)).await {
@@ -111,29 +115,50 @@ impl AccountService {
             "Refresh Token not found. Please revoke permissions and try again.".to_string()
         })?;
         let temp_account_id = uuid::Uuid::new_v4().to_string();
-
-        let user_info =
-            oauth::get_user_info(&token_res.access_token, Some(&temp_account_id)).await?;
+        let access_token = token_res.access_token.clone();
+        let expires_in = token_res.expires_in;
+        let (email, display_name, google_sub) = Self::resolve_identity_from_google(
+            &access_token,
+            token_res.id_token.as_deref(),
+            Some(&temp_account_id),
+        )
+        .await?;
         let project_id = crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
             .await
             .ok();
 
         let token_data = crate::models::TokenData::new(
-            token_res.access_token,
+            access_token,
             refresh_token,
-            token_res.expires_in,
-            Some(user_info.email.clone()),
+            expires_in,
+            Some(email.clone()),
             project_id,
             None,
         );
 
-        let account = account::upsert_account(
-            user_info.email.clone(),
-            user_info.get_display_name(),
-            token_data,
-        )?;
+        let account = account::upsert_account(email, display_name, token_data, google_sub)?;
         self.integration.refresh_runtime_state();
 
         Ok(account)
+    }
+
+    async fn resolve_identity_from_google(
+        access_token: &str,
+        raw_id_token: Option<&str>,
+        account_id: Option<&str>,
+    ) -> Result<(String, Option<String>, Option<String>), String> {
+        if let Some(raw) = raw_id_token {
+            let claims = id_token::validate_id_token(raw)
+                .await
+                .map_err(|e| format!("Invalid id_token: {}", e))?;
+            Ok((claims.email, claims.name, Some(claims.sub)))
+        } else {
+            let user_info = oauth::get_user_info(access_token, account_id).await?;
+            if !user_info.is_email_verified() {
+                return Err("Google userinfo rejected: email is not verified".to_string());
+            }
+            let email = user_info.email.clone();
+            Ok((email, user_info.get_display_name(), user_info.google_sub()))
+        }
     }
 }

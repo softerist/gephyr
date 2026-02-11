@@ -1,11 +1,14 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const OAUTH_SCOPES: &str = concat!(
+    "openid ",
     "https://www.googleapis.com/auth/cloud-platform ",
     "https://www.googleapis.com/auth/userinfo.email ",
     "https://www.googleapis.com/auth/userinfo.profile ",
@@ -25,7 +28,7 @@ fn env_first(keys: &[&str]) -> Option<String> {
     None
 }
 
-fn client_id() -> Result<String, String> {
+pub(crate) fn client_id() -> Result<String, String> {
     env_first(&[
         "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
         "ABV_GOOGLE_OAUTH_CLIENT_ID",
@@ -64,15 +67,23 @@ pub struct TokenResponse {
     pub token_type: String,
     #[serde(default)]
     pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub id_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UserInfo {
     pub email: String,
+    #[serde(default, alias = "verified_email")]
+    pub email_verified: Option<bool>,
+    #[serde(default, alias = "id")]
+    pub sub: Option<String>,
     pub name: Option<String>,
     pub given_name: Option<String>,
     pub family_name: Option<String>,
     pub picture: Option<String>,
+    #[serde(default)]
+    pub hd: Option<String>,
 }
 
 impl UserInfo {
@@ -89,7 +100,49 @@ impl UserInfo {
             (None, None) => None,
         }
     }
+
+    pub fn is_email_verified(&self) -> bool {
+        self.email_verified.unwrap_or(false)
+    }
+
+    pub fn google_sub(&self) -> Option<String> {
+        self.sub.clone()
+    }
 }
+
+fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
+    let id = account_id?;
+    crate::modules::auth::account::load_account(id)
+        .ok()
+        .and_then(|account| account.device_profile)
+}
+
+fn apply_google_identity_headers(
+    mut request: reqwest::RequestBuilder,
+    account_id: Option<&str>,
+) -> reqwest::RequestBuilder {
+    request = request.header(
+        reqwest::header::USER_AGENT,
+        crate::constants::USER_AGENT.as_str(),
+    );
+
+    if let Some(profile) = load_account_device_profile(account_id) {
+        request = request
+            .header("x-machine-id", profile.machine_id)
+            .header("x-mac-machine-id", profile.mac_machine_id)
+            .header("x-dev-device-id", profile.dev_device_id)
+            .header("x-sqm-id", profile.sqm_id);
+    }
+
+    request
+}
+
+fn refresh_jitter_seconds(account_id: Option<&str>) -> i64 {
+    let mut hasher = DefaultHasher::new();
+    account_id.unwrap_or("generic-account").hash(&mut hasher);
+    30 + (hasher.finish() % 91) as i64
+}
+
 pub fn get_auth_url(
     redirect_uri: &str,
     state: &str,
@@ -138,8 +191,7 @@ pub async fn exchange_code(
         params.push(("client_secret", s));
     }
 
-    let response = client
-        .post(TOKEN_URL)
+    let response = apply_google_identity_headers(client.post(TOKEN_URL), None)
         .form(&params)
         .send()
         .await
@@ -211,8 +263,7 @@ pub async fn refresh_access_token(
         );
     }
 
-    let response = client
-        .post(TOKEN_URL)
+    let response = apply_google_identity_headers(client.post(TOKEN_URL), account_id)
         .form(&params)
         .send()
         .await
@@ -250,8 +301,7 @@ pub async fn get_user_info(
         crate::utils::http::get_client()
     };
 
-    let response = client
-        .get(USERINFO_URL)
+    let response = apply_google_identity_headers(client.get(USERINFO_URL), account_id)
         .bearer_auth(access_token)
         .send()
         .await
@@ -272,12 +322,13 @@ pub async fn ensure_fresh_token(
     account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
     let now = chrono::Local::now().timestamp();
-    if current_token.expiry_timestamp > now + 300 {
+    let refresh_window = 300 + refresh_jitter_seconds(account_id);
+    if current_token.expiry_timestamp > now + refresh_window {
         return Ok(current_token.clone());
     }
     crate::modules::system::logger::log_info(&format!(
-        "Token expiring soon for account {:?}, refreshing...",
-        account_id
+        "Token expiring soon for account {:?}, refreshing (window={}s)...",
+        account_id, refresh_window
     ));
     let response = refresh_access_token(&current_token.refresh_token, account_id).await?;
     Ok(crate::models::TokenData::new(
@@ -309,5 +360,16 @@ mod tests {
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
         assert!(url.contains("response_type=code"));
+    }
+
+    #[test]
+    fn refresh_jitter_is_deterministic_and_in_range() {
+        let a = refresh_jitter_seconds(Some("acct-1"));
+        let b = refresh_jitter_seconds(Some("acct-1"));
+        let c = refresh_jitter_seconds(Some("acct-2"));
+
+        assert_eq!(a, b);
+        assert!((30..=120).contains(&a));
+        assert!((30..=120).contains(&c));
     }
 }

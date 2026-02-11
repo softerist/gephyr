@@ -165,6 +165,7 @@ mod tests {
             expires_in: 3600,
             token_type: "Bearer".to_string(),
             refresh_token: None,
+            id_token: None,
         };
 
         save_refreshed_token(&account_path, &token_response).expect("save refreshed token");

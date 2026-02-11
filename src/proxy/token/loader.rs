@@ -268,8 +268,7 @@ pub(crate) async fn load_single_account(
     let refresh_token_raw = token_obj["refresh_token"]
         .as_str()
         .ok_or("Missing refresh_token")?;
-    let refresh_token = match crate::utils::crypto::decrypt_secret_or_plaintext(refresh_token_raw)
-    {
+    let refresh_token = match crate::utils::crypto::decrypt_secret_or_plaintext(refresh_token_raw) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(
@@ -368,10 +367,8 @@ mod tests {
     use dashmap::DashMap;
 
     fn write_account_fixture(access_token: &str, refresh_token: &str) -> std::path::PathBuf {
-        let temp_dir = std::env::temp_dir().join(format!(
-            ".gephyr-loader-test-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!(".gephyr-loader-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).expect("create temp dir");
         let account_path = temp_dir.join("acct-1.json");
 

@@ -136,21 +136,33 @@ pub fn add_account(
     email: String,
     name: Option<String>,
     token: TokenData,
+    google_sub: Option<String>,
 ) -> Result<Account, String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
+    if let Some(sub) = google_sub.as_ref() {
+        if index
+            .accounts
+            .iter()
+            .any(|s| s.google_sub.as_deref() == Some(sub.as_str()))
+        {
+            return Err(format!("Account already exists for google_sub: {}", sub));
+        }
+    }
     if index.accounts.iter().any(|s| s.email == email) {
         return Err(format!("Account already exists: {}", email));
     }
     let account_id = Uuid::new_v4().to_string();
     let mut account = Account::new(account_id.clone(), email.clone(), token);
+    account.google_sub = google_sub.clone();
     account.name = name.clone();
     save_account(&account)?;
     index.accounts.push(AccountSummary {
         id: account_id.clone(),
         email: email.clone(),
+        google_sub,
         name: name.clone(),
         disabled: false,
         proxy_disabled: false,
@@ -169,16 +181,26 @@ pub fn upsert_account(
     email: String,
     name: Option<String>,
     token: TokenData,
+    google_sub: Option<String>,
 ) -> Result<Account, String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
-    let existing_account_id = index
-        .accounts
-        .iter()
-        .find(|s| s.email == email)
-        .map(|s| s.id.clone());
+    let existing_by_sub = google_sub.as_ref().and_then(|sub| {
+        index
+            .accounts
+            .iter()
+            .find(|s| s.google_sub.as_ref() == Some(sub))
+            .map(|s| s.id.clone())
+    });
+    let existing_account_id = existing_by_sub.or_else(|| {
+        index
+            .accounts
+            .iter()
+            .find(|s| s.email == email)
+            .map(|s| s.id.clone())
+    });
 
     if let Some(account_id) = existing_account_id {
         match load_account(&account_id) {
@@ -187,6 +209,10 @@ pub fn upsert_account(
                 let old_refresh_token = account.token.refresh_token.clone();
                 account.token = token;
                 account.name = name.clone();
+                account.email = email.clone();
+                if let Some(sub) = google_sub.as_ref() {
+                    account.google_sub = Some(sub.clone());
+                }
                 if account.disabled
                     && (account.token.refresh_token != old_refresh_token
                         || account.token.access_token != old_access_token)
@@ -198,7 +224,11 @@ pub fn upsert_account(
                 account.update_last_used();
                 save_account(&account)?;
                 if let Some(idx_summary) = index.accounts.iter_mut().find(|s| s.id == account_id) {
+                    idx_summary.email = email;
                     idx_summary.name = name;
+                    if let Some(sub) = google_sub {
+                        idx_summary.google_sub = Some(sub);
+                    }
                     save_account_index(&index)?;
                 }
 
@@ -210,10 +240,15 @@ pub fn upsert_account(
                     account_id, e
                 ));
                 let mut account = Account::new(account_id.clone(), email.clone(), token);
+                account.google_sub = google_sub.clone();
                 account.name = name.clone();
                 save_account(&account)?;
                 if let Some(idx_summary) = index.accounts.iter_mut().find(|s| s.id == account_id) {
+                    idx_summary.email = email;
                     idx_summary.name = name;
+                    if let Some(sub) = google_sub {
+                        idx_summary.google_sub = Some(sub);
+                    }
                     save_account_index(&index)?;
                 }
 
@@ -222,7 +257,7 @@ pub fn upsert_account(
         }
     }
     drop(_lock);
-    add_account(email, name, token)
+    add_account(email, name, token, google_sub)
 }
 pub fn delete_account(account_id: &str) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
@@ -660,7 +695,13 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         };
 
         account.name = name.clone();
-        upsert_account(account.email.clone(), name, token.clone()).map_err(AppError::Account)?;
+        upsert_account(
+            account.email.clone(),
+            name,
+            token.clone(),
+            account.google_sub.clone(),
+        )
+        .map_err(AppError::Account)?;
     }
     if account.name.is_none() || account.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         crate::modules::system::logger::log_info(&format!(
@@ -675,9 +716,12 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     display_name
                 ));
                 account.name = display_name.clone();
-                if let Err(e) =
-                    upsert_account(account.email.clone(), display_name, account.token.clone())
-                {
+                if let Err(e) = upsert_account(
+                    account.email.clone(),
+                    display_name,
+                    account.token.clone(),
+                    account.google_sub.clone(),
+                ) {
                     crate::modules::system::logger::log_warn(&format!(
                         "Failed to save display name: {}",
                         e
@@ -710,6 +754,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 account.email.clone(),
                 account.name.clone(),
                 account.token.clone(),
+                account.google_sub.clone(),
             ) {
                 crate::modules::system::logger::log_warn(&format!(
                     "Failed to sync project_id: {}",
@@ -769,8 +814,13 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
                 account.token = new_token.clone();
                 account.name = name.clone();
-                upsert_account(account.email.clone(), name, new_token.clone())
-                    .map_err(AppError::Account)?;
+                upsert_account(
+                    account.email.clone(),
+                    name,
+                    new_token.clone(),
+                    account.google_sub.clone(),
+                )
+                .map_err(AppError::Account)?;
                 let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
                     crate::modules::system::quota::fetch_quota(
                         &new_token.access_token,
@@ -789,6 +839,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                             account.email.clone(),
                             account.name.clone(),
                             account.token.clone(),
+                            account.google_sub.clone(),
                         );
                     }
                 }
@@ -931,7 +982,8 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_accounts, load_account};
+    use super::{list_accounts, load_account, load_account_index, upsert_account};
+    use crate::models::TokenData;
     use crate::test_utils::ScopedEnvVar;
     use serde_json::json;
     use std::path::{Path, PathBuf};
@@ -1015,8 +1067,20 @@ mod tests {
         dir
     }
 
+    fn make_token(email: &str, suffix: &str) -> TokenData {
+        TokenData::new(
+            format!("access-{}", suffix),
+            format!("refresh-{}", suffix),
+            3600,
+            Some(email.to_string()),
+            None,
+            None,
+        )
+    }
+
     #[test]
     fn load_account_accepts_malformed_v2_tokens_via_deserialize_fallback() {
+        let _security_guard = crate::proxy::tests::acquire_security_test_lock();
         let _guard = ACCOUNT_TEST_ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -1042,6 +1106,7 @@ mod tests {
 
     #[test]
     fn list_accounts_keeps_entries_with_malformed_v2_tokens() {
+        let _security_guard = crate::proxy::tests::acquire_security_test_lock();
         let _guard = ACCOUNT_TEST_ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -1073,13 +1138,108 @@ mod tests {
         );
 
         let accounts = list_accounts().expect("list_accounts should succeed");
-        assert_eq!(accounts.len(), 2, "malformed v2 entry should not be dropped");
+        assert_eq!(
+            accounts.len(),
+            2,
+            "malformed v2 entry should not be dropped"
+        );
         let malformed = accounts
             .iter()
             .find(|a| a.id == "acct-malformed")
             .expect("malformed account should still be present");
         assert_eq!(malformed.token.access_token, "v2:abc");
         assert_eq!(malformed.token.refresh_token, "v2:abc");
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn upsert_prefers_google_sub_over_email() {
+        let _security_guard = crate::proxy::tests::acquire_security_test_lock();
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
+        let _enc_key_env = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-encryption-key");
+
+        let first = upsert_account(
+            "old@example.com".to_string(),
+            Some("Old".to_string()),
+            make_token("old@example.com", "old"),
+            Some("google-sub-1".to_string()),
+        )
+        .expect("initial upsert");
+
+        let second = upsert_account(
+            "new@example.com".to_string(),
+            Some("New".to_string()),
+            make_token("new@example.com", "new"),
+            Some("google-sub-1".to_string()),
+        )
+        .expect("upsert by google_sub");
+
+        assert_eq!(first.id, second.id, "must reuse same account id by sub");
+        assert_eq!(second.email, "new@example.com");
+        assert_eq!(second.google_sub.as_deref(), Some("google-sub-1"));
+
+        let loaded = load_account(&first.id).expect("load updated account");
+        assert_eq!(loaded.email, "new@example.com");
+        assert_eq!(loaded.google_sub.as_deref(), Some("google-sub-1"));
+
+        let index = load_account_index().expect("load index");
+        assert_eq!(index.accounts.len(), 1);
+        assert_eq!(index.accounts[0].email, "new@example.com");
+        assert_eq!(
+            index.accounts[0].google_sub.as_deref(),
+            Some("google-sub-1")
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn upsert_backfills_google_sub() {
+        let _security_guard = crate::proxy::tests::acquire_security_test_lock();
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
+        let _enc_key_env = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-encryption-key");
+
+        let first = upsert_account(
+            "backfill@example.com".to_string(),
+            None,
+            make_token("backfill@example.com", "initial"),
+            None,
+        )
+        .expect("initial email-only upsert");
+        assert!(first.google_sub.is_none());
+
+        let second = upsert_account(
+            "backfill@example.com".to_string(),
+            None,
+            make_token("backfill@example.com", "second"),
+            Some("google-sub-backfill".to_string()),
+        )
+        .expect("backfill sub");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.google_sub.as_deref(), Some("google-sub-backfill"));
+
+        let loaded = load_account(&first.id).expect("load updated account");
+        assert_eq!(loaded.google_sub.as_deref(), Some("google-sub-backfill"));
+
+        let index = load_account_index().expect("load index");
+        assert_eq!(
+            index.accounts[0].google_sub.as_deref(),
+            Some("google-sub-backfill")
+        );
 
         let _ = std::fs::remove_dir_all(&data_dir);
     }

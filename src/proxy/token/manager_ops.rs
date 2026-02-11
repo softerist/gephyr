@@ -203,8 +203,8 @@ impl TokenManager {
     ) -> Result<crate::modules::auth::oauth::UserInfo, String> {
         crate::proxy::token::account_ops::get_user_info(refresh_token).await
     }
-    pub async fn add_account(&self, email: &str, refresh_token: &str) -> Result<(), String> {
-        crate::proxy::token::account_ops::add_account(email, refresh_token).await?;
+    pub async fn add_account(&self, refresh_token: &str) -> Result<(), String> {
+        crate::proxy::token::account_ops::add_account(refresh_token).await?;
         self.reload_all_accounts().await.map(|_| ())
     }
     pub fn record_success(&self, account_id: &str) {
