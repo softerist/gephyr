@@ -1,5 +1,30 @@
 use serde_json::Value;
-pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
+
+fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
+    let id = account_id?;
+    crate::modules::auth::account::load_account(id)
+        .ok()
+        .and_then(|account| account.device_profile)
+}
+
+fn apply_account_device_headers(
+    mut request: reqwest::RequestBuilder,
+    account_id: Option<&str>,
+) -> reqwest::RequestBuilder {
+    if let Some(profile) = load_account_device_profile(account_id) {
+        request = request
+            .header("x-machine-id", profile.machine_id)
+            .header("x-mac-machine-id", profile.mac_machine_id)
+            .header("x-dev-device-id", profile.dev_device_id)
+            .header("x-sqm-id", profile.sqm_id);
+    }
+    request
+}
+
+pub async fn fetch_project_id(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<String, String> {
     let url = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
 
     let request_body = serde_json::json!({
@@ -9,15 +34,18 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     });
 
     let client = crate::utils::http::get_client();
-    let response = client
-        .post(url)
-        .bearer_auth(access_token)
-        .header("User-Agent", crate::constants::USER_AGENT.as_str())
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| format!("loadCodeAssist request failed: {}", e))?;
+    let response = apply_account_device_headers(
+        client
+            .post(url)
+            .bearer_auth(access_token)
+            .header("User-Agent", crate::constants::USER_AGENT.as_str())
+            .header("Content-Type", "application/json"),
+        account_id,
+    )
+    .json(&request_body)
+    .send()
+    .await
+    .map_err(|e| format!("loadCodeAssist request failed: {}", e))?;
 
     if !response.status().is_success() {
         let status = response.status();

@@ -48,6 +48,11 @@ fn client_secret_optional() -> Option<String> {
     ])
 }
 
+fn oauth_user_agent() -> String {
+    env_first(&["ABV_OAUTH_USER_AGENT"])
+        .unwrap_or_else(|| crate::constants::USER_AGENT.as_str().to_string())
+}
+
 pub fn generate_pkce_verifier() -> String {
     let mut bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut bytes);
@@ -121,10 +126,7 @@ fn apply_google_identity_headers(
     mut request: reqwest::RequestBuilder,
     account_id: Option<&str>,
 ) -> reqwest::RequestBuilder {
-    request = request.header(
-        reqwest::header::USER_AGENT,
-        crate::constants::USER_AGENT.as_str(),
-    );
+    request = request.header(reqwest::header::USER_AGENT, oauth_user_agent());
 
     if let Some(profile) = load_account_device_profile(account_id) {
         request = request
@@ -350,6 +352,12 @@ pub async fn ensure_fresh_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn oauth_ua_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_get_auth_url_contains_state() {
@@ -377,5 +385,39 @@ mod tests {
         assert_eq!(a, b);
         assert!((30..=120).contains(&a));
         assert!((30..=120).contains(&c));
+    }
+
+    #[test]
+    fn oauth_user_agent_uses_default_when_override_missing() {
+        let _guard = oauth_ua_test_lock()
+            .lock()
+            .expect("oauth user-agent test lock poisoned");
+        let previous = std::env::var("ABV_OAUTH_USER_AGENT").ok();
+        std::env::remove_var("ABV_OAUTH_USER_AGENT");
+
+        let ua = oauth_user_agent();
+        assert_eq!(ua, crate::constants::USER_AGENT.as_str());
+
+        match previous {
+            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+        }
+    }
+
+    #[test]
+    fn oauth_user_agent_uses_override_when_set() {
+        let _guard = oauth_ua_test_lock()
+            .lock()
+            .expect("oauth user-agent test lock poisoned");
+        let previous = std::env::var("ABV_OAUTH_USER_AGENT").ok();
+        std::env::set_var("ABV_OAUTH_USER_AGENT", "vscode/1.95.0 gephyr-test");
+
+        let ua = oauth_user_agent();
+        assert_eq!(ua, "vscode/1.95.0 gephyr-test");
+
+        match previous {
+            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+        }
     }
 }

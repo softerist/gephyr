@@ -297,6 +297,12 @@ impl TokenManager {
         );
         self.persist_session_bindings_internal();
     }
+    pub async fn run_startup_health_check(
+        &self,
+    ) -> crate::proxy::token::startup_health::HealthCheckSummary {
+        crate::proxy::token::startup_health::run_startup_health_check(&self.tokens, &self.data_dir)
+            .await
+    }
     #[cfg(test)]
     pub fn get_model_quota_from_json_for_test(
         account_path: &PathBuf,

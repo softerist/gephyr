@@ -113,7 +113,8 @@ Main selection and control paths:
 
 Operational snapshot endpoint:
 
-- `GET /api/proxy/metrics` aggregates runtime/monitor/sticky/compliance data.
+- `GET /api/proxy/metrics` aggregates runtime/monitor/sticky/proxy-pool/compliance data (including `runtime.tls_backend`).
+- proxy-pool metrics include shared-fallback usage and strict fail-closed rejection counters.
 - `GET /api/proxy/metrics` also exposes `runtime_apply_policies_supported` for machine-readable policy discovery.
 
 ## Observability and Audit

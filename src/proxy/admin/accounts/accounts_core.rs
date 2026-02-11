@@ -27,6 +27,7 @@ pub(crate) struct AccountResponse {
     quota: Option<QuotaResponse>,
     device_bound: bool,
     last_used: i64,
+    token_expiry: i64,
 }
 
 #[derive(Serialize)]
@@ -82,6 +83,7 @@ pub(crate) fn to_account_response(
         }),
         device_bound: account.device_profile.is_some(),
         last_used: account.last_used,
+        token_expiry: account.token.expiry_timestamp,
         validation_blocked: account.validation_blocked,
         validation_blocked_until: account.validation_blocked_until,
         validation_blocked_reason: account.validation_blocked_reason.clone(),
@@ -104,6 +106,7 @@ pub(crate) async fn admin_list_accounts(
         .into_iter()
         .map(|acc| {
             let is_current = current_id.as_ref().map(|id| id == &acc.id).unwrap_or(false);
+            let token_expiry = acc.token.expiry_timestamp;
             let quota = acc.quota.map(|q| QuotaResponse {
                 models: q
                     .models
@@ -137,6 +140,7 @@ pub(crate) async fn admin_list_accounts(
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
+                token_expiry,
             }
         })
         .collect();
@@ -179,6 +183,7 @@ pub(crate) async fn admin_get_current_account(
     let response = if let Some(id) = current_id {
         let acc = account::load_account(&id).ok();
         acc.map(|acc| {
+            let token_expiry = acc.token.expiry_timestamp;
             let quota = acc.quota.map(|q| QuotaResponse {
                 models: q
                     .models
@@ -212,6 +217,7 @@ pub(crate) async fn admin_get_current_account(
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
+                token_expiry,
             }
         })
     } else {
@@ -444,18 +450,23 @@ pub(crate) async fn admin_toggle_proxy_status(
     Path(account_id): Path<String>,
     Json(payload): Json<ToggleProxyRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::auth::account::toggle_proxy_status(
-        &account_id,
-        payload.enable,
-        payload.reason.as_deref(),
-    )
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    account::toggle_proxy_status(&account_id, payload.enable, payload.reason.as_deref()).map_err(
+        |e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        },
+    )?;
     let _ = state.core.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)
+}
+
+pub(crate) async fn admin_run_health_check(
+    State(state): State<AdminState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    logger::log_info("[API] Running manual account health check");
+    let summary = state.core.token_manager.run_startup_health_check().await;
+    Ok(Json(summary))
 }

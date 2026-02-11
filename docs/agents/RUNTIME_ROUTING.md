@@ -25,8 +25,12 @@ From `src/lib.rs` and `src/proxy/server.rs`:
 - `ABV_PUBLIC_URL`
 - `ABV_DATA_DIR`
 - `ABV_ALLOWED_GOOGLE_DOMAINS`
+- `ABV_OAUTH_USER_AGENT`
 - `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
 - `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
+
+TLS backend note:
+- TLS backend selection is compile-time (`tls-native` default, `tls-rustls` alternate) and is surfaced at runtime via `GET /api/proxy/metrics` -> `runtime.tls_backend`: `Cargo.toml`, `src/utils/http.rs`, `src/proxy/admin/runtime/service_control.rs`
 
 From `proxy` config (`src/proxy/config.rs`):
 
@@ -63,6 +67,7 @@ Shared behavior:
 - Non-stream client requests are often converted to internal stream calls and collected back to JSON.
 - Claude handler now always uses Gemini `streamGenerateContent` upstream and converts back to JSON for non-stream clients via stream collection (unary mapper path removed): `src/proxy/handlers/claude.rs`, `src/proxy/mappers/claude/mod.rs`
 - Model routing uses custom mappings + wildcard rules + defaults: `src/proxy/common/model_mapping.rs`.
+- account-bound upstream requests apply bound device profile headers (`x-machine-id`, `x-mac-machine-id`, `x-dev-device-id`, `x-sqm-id`) when a device profile is available: `src/proxy/upstream/client.rs`
 - Session identity precedence for OpenAI/Gemini requests:
 - explicit session headers (`x-session-id`, `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
 - explicit payload fields (`session_id`/`sessionId`, `conversation_id`/`conversationId`, `thread_id`/`threadId`, metadata session/user id fields)

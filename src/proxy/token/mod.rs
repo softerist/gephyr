@@ -12,6 +12,7 @@ pub(crate) mod persistence;
 pub mod pool;
 pub mod quota;
 pub(crate) mod rate;
+pub(crate) mod startup_health;
 pub mod types;
 pub(crate) mod warmup;
 

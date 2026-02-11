@@ -85,6 +85,7 @@ OAuth Login:
     GEPHYR_GOOGLE_OAUTH_CLIENT_ID
     (optional) GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET
   Optional identity/scheduler hardening envs are also passed through when set:
+    ABV_OAUTH_USER_AGENT
     ABV_ALLOWED_GOOGLE_DOMAINS
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
@@ -166,6 +167,7 @@ start_container() {
     ABV_MAX_BODY_SIZE
     ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS
     ABV_ADMIN_STOP_SHUTDOWN
+    ABV_OAUTH_USER_AGENT
     ABV_ALLOWED_GOOGLE_DOMAINS
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
@@ -370,6 +372,26 @@ for a in accounts:
         status, color = "active", "\033[32m"
     print(f"  \033[36m{marker} \033[0m{email}  \033[90m{name_str}\033[0m  {color}[{status}]\033[0m")
 
+    token_expiry = a.get("token_expiry", 0)
+    if token_expiry and token_expiry > 0:
+        from datetime import timezone
+        expiry_dt = datetime.fromtimestamp(token_expiry, tz=timezone.utc)
+        local_dt = expiry_dt.astimezone()
+        remaining_sec = token_expiry - time.time()
+        expiry_str = local_dt.strftime("%Y-%m-%d %H:%M:%S")
+        if remaining_sec <= 0:
+            expiry_color, label = "\033[31m", "EXPIRED"
+        elif remaining_sec <= 1800:
+            expiry_color, label = "\033[33m", f"expires in {int(remaining_sec // 60)}m"
+        else:
+            total_min = int(remaining_sec // 60)
+            if total_min >= 60:
+                label = f"expires in {total_min // 60}h {total_min % 60}m"
+            else:
+                label = f"expires in {total_min}m"
+            expiry_color = "\033[32m"
+        print(f"      \033[90mToken: \033[0m{expiry_str} {expiry_color}({label})\033[0m")
+
     q = a.get("quota")
     if q:
         tier = q.get("subscription_tier") or "unknown"
@@ -442,6 +464,74 @@ show_health() {
     echo "$result"
   else
     echo "$result" | python3 -m json.tool 2>/dev/null || echo "$result"
+  fi
+}
+
+show_account_health_check() {
+  ensure_api_key
+  echo ""
+  echo -e "  \033[36mRunning account health check...\033[0m"
+  echo ""
+  local payload
+  payload="$(curl -sS -X POST -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    "http://127.0.0.1:${PORT}/api/accounts/health-check" 2>/dev/null || true)"
+
+  if [[ -z "$payload" ]]; then
+    echo -e "  \033[31mHealth check failed: no response\033[0m"
+    return 1
+  fi
+
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    echo "$payload"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'HEALTHEOF' "$payload"
+import sys, json
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    print("  \033[31mFailed to parse response\033[0m")
+    sys.exit(1)
+
+GREEN  = "\033[32m"
+CYAN   = "\033[36m"
+YELLOW = "\033[33m"
+RED    = "\033[31m"
+RESET  = "\033[0m"
+
+total   = data.get("total", 0)
+skipped = data.get("skipped", 0)
+refreshed = data.get("refreshed", 0)
+disabled  = data.get("disabled", 0)
+errors    = data.get("network_errors", 0)
+
+summary = f"  Total: {total} | Skipped: {skipped} | Refreshed: {refreshed} | Disabled: {disabled} | Errors: {errors}"
+if disabled > 0 or errors > 0:
+    print(f"{YELLOW}{summary}{RESET}")
+else:
+    print(f"{GREEN}{summary}{RESET}")
+print()
+
+STATUS_COLORS = {
+    "ok": GREEN,
+    "refreshed": CYAN,
+    "disabled": RED,
+    "error": YELLOW,
+}
+
+for acct in data.get("accounts", []):
+    s = acct.get("status", "unknown")
+    color = STATUS_COLORS.get(s, "")
+    tag = f"[{s.upper()}]".ljust(12)
+    detail = f" -- {acct['detail']}" if acct.get("detail") else ""
+    print(f"    {color}{tag} {acct.get('email','?')}{detail}{RESET}")
+print()
+HEALTHEOF
+  else
+    echo "$payload" | python3 -m json.tool 2>/dev/null || echo "$payload"
   fi
 }
 
@@ -937,6 +1027,7 @@ case "$COMMAND" in
   status) show_status ;;
   logs) show_logs ;;
   health) show_health ;;
+  check) show_account_health_check ;;
   login|oauth|auth) oauth_flow ;;
   accounts) show_accounts ;;
   api-test) api_test ;;

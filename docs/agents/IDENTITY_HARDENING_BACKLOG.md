@@ -20,6 +20,7 @@ This backlog focuses on Google identity hardening and one-IP risk controls.
 
 ## PR-1: OAuth/User-Agent Profile Override
 
+- Status: Implemented (2026-02-11)
 - Goal: Allow optional UA pinning for OAuth calls without changing global relay UA behavior.
 - Scope:
   - Add env var `ABV_OAUTH_USER_AGENT` (optional).
@@ -33,6 +34,7 @@ This backlog focuses on Google identity hardening and one-IP risk controls.
 
 ## PR-2: Proxy-Pool Strict Mode Observability
 
+- Status: Implemented (2026-02-11)
 - Goal: Make one-IP strict mode diagnosable in production.
 - Scope:
   - Add counters/log fields for:
@@ -47,7 +49,8 @@ This backlog focuses on Google identity hardening and one-IP risk controls.
 
 ## PR-3: TLS Fingerprint Strategy Toggle (Point 4)
 
-- Goal: Provide an explicit choice between current rustls path and OS TLS stack.
+- Status: Implemented (2026-02-11)
+- Goal: Provide an explicit choice between current default-tls/native-tls path and an alternate TLS stack when needed.
 - Scope:
   - Add optional runtime toggle for OAuth HTTP client TLS backend (or document build/profile split if runtime toggle is not feasible).
   - Keep existing default behavior unchanged.
@@ -59,6 +62,7 @@ This backlog focuses on Google identity hardening and one-IP risk controls.
 
 ## PR-4: Device Profile Coverage Audit (Point 5)
 
+- Status: Implemented (2026-02-11)
 - Goal: Ensure device profile consistency on all Google identity-sensitive calls.
 - Scope:
   - Audit all outbound Google endpoints (`oauth2.googleapis.com`, `www.googleapis.com`, `content-autofill.googleapis.com`, v1internal paths).
@@ -71,6 +75,7 @@ This backlog focuses on Google identity hardening and one-IP risk controls.
 
 ## PR-5: One-IP Operations Runbook
 
+- Status: Implemented (2026-02-11)
 - Goal: Make one-IP deployment choices explicit and safe by default.
 - Scope:
   - Add runbook section with two presets:
@@ -81,4 +86,3 @@ This backlog focuses on Google identity hardening and one-IP risk controls.
   - Docs/config examples validated against current config schema.
 - Risk:
   - Low. Documentation-only.
-

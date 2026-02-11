@@ -171,7 +171,12 @@ impl TokenManager {
         let project_id = if let Some(pid) = &token.project_id {
             pid.clone()
         } else {
-            match crate::proxy::project_resolver::fetch_project_id(&token.access_token).await {
+            match crate::proxy::project_resolver::fetch_project_id(
+                &token.access_token,
+                Some(&token.account_id),
+            )
+            .await
+            {
                 Ok(pid) => {
                     self.apply_project_id(&mut token, &pid);
                     pid

@@ -20,9 +20,10 @@ impl AccountService {
             Some(&temp_account_id),
         )
         .await?;
-        let project_id = crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
-            .await
-            .ok();
+        let project_id =
+            crate::proxy::project_resolver::fetch_project_id(&token_res.access_token, None)
+                .await
+                .ok();
         let token = TokenData::new(
             token_res.access_token.clone(),
             refresh_token.to_string(),
@@ -123,9 +124,10 @@ impl AccountService {
             Some(&temp_account_id),
         )
         .await?;
-        let project_id = crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
-            .await
-            .ok();
+        let project_id =
+            crate::proxy::project_resolver::fetch_project_id(&token_res.access_token, None)
+                .await
+                .ok();
 
         let token_data = crate::models::TokenData::new(
             access_token,

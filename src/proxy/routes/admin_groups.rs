@@ -15,6 +15,10 @@ pub(super) fn add_account_routes(router: Router<AppState>) -> Router<AppState> {
         .route("/accounts/current", get(admin::admin_get_current_account))
         .route("/accounts/switch", post(admin::admin_switch_account))
         .route("/accounts/refresh", post(admin::admin_refresh_all_quotas))
+        .route(
+            "/accounts/health-check",
+            post(admin::admin_run_health_check),
+        )
         .route("/accounts/:accountId", delete(admin::admin_delete_account))
         .route(
             "/accounts/:accountId/bind-device",

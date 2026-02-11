@@ -364,7 +364,11 @@ impl TokenManager {
             "Account {} is missing project_id, attempting to fetch...",
             token.email
         );
-        let pid = crate::proxy::project_resolver::fetch_project_id(&token.access_token).await?;
+        let pid = crate::proxy::project_resolver::fetch_project_id(
+            &token.access_token,
+            Some(&token.account_id),
+        )
+        .await?;
         self.apply_project_id(token, &pid);
         Ok(pid)
     }

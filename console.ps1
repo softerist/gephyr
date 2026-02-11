@@ -87,6 +87,7 @@ OAuth Login:
     GEPHYR_GOOGLE_OAUTH_CLIENT_ID
     (optional) GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET
   Optional identity/scheduler hardening envs are also passed through when set:
+    ABV_OAUTH_USER_AGENT
     ABV_ALLOWED_GOOGLE_DOMAINS
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
@@ -207,6 +208,9 @@ function Start-Container {
     }
     if ($env:ABV_ADMIN_STOP_SHUTDOWN) {
         $runtimeArgs += @("-e", "ABV_ADMIN_STOP_SHUTDOWN=$($env:ABV_ADMIN_STOP_SHUTDOWN)")
+    }
+    if ($env:ABV_OAUTH_USER_AGENT) {
+        $runtimeArgs += @("-e", "ABV_OAUTH_USER_AGENT=$($env:ABV_OAUTH_USER_AGENT)")
     }
     if ($env:ABV_ALLOWED_GOOGLE_DOMAINS) {
         $runtimeArgs += @("-e", "ABV_ALLOWED_GOOGLE_DOMAINS=$($env:ABV_ALLOWED_GOOGLE_DOMAINS)")
@@ -388,6 +392,32 @@ function Show-Status {
                     Write-Host "  $nameStr" -NoNewline -ForegroundColor DarkGray
                     Write-Host "  [$status]" -ForegroundColor $statusColor
 
+                    # Token expiry display
+                    if ($acc.token_expiry -and $acc.token_expiry -gt 0) {
+                        $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds($acc.token_expiry).UtcDateTime
+                        $expiryLocal = $expiryUtc.ToLocalTime()
+                        $remaining = $expiryUtc - [DateTime]::UtcNow
+                        $expiryStr = $expiryLocal.ToString("yyyy-MM-dd HH:mm:ss")
+                        if ($remaining.TotalSeconds -le 0) {
+                            $expiryColor = "Red"
+                            $expiryLabel = "EXPIRED"
+                        } elseif ($remaining.TotalMinutes -le 30) {
+                            $expiryColor = "Yellow"
+                            $expiryLabel = "expires in $([Math]::Floor($remaining.TotalMinutes))m"
+                        } else {
+                            $expiryColor = "Green"
+                            $totalMin = [Math]::Floor($remaining.TotalMinutes)
+                            if ($totalMin -ge 60) {
+                                $expiryLabel = "expires in $([Math]::Floor($remaining.TotalHours))h $($totalMin % 60)m"
+                            } else {
+                                $expiryLabel = "expires in ${totalMin}m"
+                            }
+                        }
+                        Write-Host "      Token: " -NoNewline -ForegroundColor DarkGray
+                        Write-Host "$expiryStr" -NoNewline -ForegroundColor White
+                        Write-Host " ($expiryLabel)" -ForegroundColor $expiryColor
+                    }
+
                     # Quota display
                     if ($acc.quota) {
                         $q = $acc.quota
@@ -497,6 +527,49 @@ function Show-Health {
             throw "Health check failed. If status is 401, your local GEPHYR_API_KEY does not match the running container; run restart or rotate-key."
         }
     }
+}
+
+function Show-AccountHealthCheck {
+    param([switch]$AsJson)
+    $headers = Get-AuthHeaders
+    Write-Host ""
+    Write-Host "  Running account health check..." -ForegroundColor Cyan
+    Write-Host ""
+    try {
+        $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/health-check" -Headers $headers -Method Post -TimeoutSec 60
+    } catch {
+        Write-Host "  Health check failed: $($_.Exception.Message)" -ForegroundColor Red
+        return
+    }
+
+    if ($AsJson) {
+        $resp | ConvertTo-Json -Depth 5
+        return
+    }
+
+    # Summary line
+    $summary = "  Total: $($resp.total) | Skipped: $($resp.skipped) | Refreshed: $($resp.refreshed) | Disabled: $($resp.disabled) | Errors: $($resp.network_errors)"
+    if ($resp.disabled -gt 0 -or $resp.network_errors -gt 0) {
+        Write-Host $summary -ForegroundColor Yellow
+    } else {
+        Write-Host $summary -ForegroundColor Green
+    }
+    Write-Host ""
+
+    # Per-account results
+    foreach ($acct in $resp.accounts) {
+        $statusColor = switch ($acct.status) {
+            "ok"        { "Green" }
+            "refreshed" { "Cyan" }
+            "disabled"  { "Red" }
+            "error"     { "Yellow" }
+            default     { "White" }
+        }
+        $statusTag = "[$($acct.status.ToUpper())]".PadRight(12)
+        $detail = if ($acct.detail) { " -- $($acct.detail)" } else { "" }
+        Write-Host "    $statusTag $($acct.email)$detail" -ForegroundColor $statusColor
+    }
+    Write-Host ""
 }
 
 function Show-Accounts {
@@ -879,7 +952,7 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-and-stop")
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-and-stop")
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -905,6 +978,7 @@ switch ($Command) {
     "status" { Show-Status }
     "logs" { Show-Logs }
     "health" { Show-Health -AsJson:$Json.IsPresent }
+    "check" { Show-AccountHealthCheck -AsJson:$Json.IsPresent }
     "login" { Start-OAuthFlow }
     "oauth" { Start-OAuthFlow }
     "auth" { Start-OAuthFlow }

@@ -1,6 +1,12 @@
 use crate::modules::system::config::load_app_config;
 use once_cell::sync::Lazy;
 use reqwest::{Client, Proxy};
+
+#[cfg(all(feature = "tls-native", feature = "tls-rustls"))]
+compile_error!("features `tls-native` and `tls-rustls` are mutually exclusive");
+#[cfg(not(any(feature = "tls-native", feature = "tls-rustls")))]
+compile_error!("one TLS backend feature must be enabled: `tls-native` or `tls-rustls`");
+
 pub static SHARED_CLIENT: Lazy<Client> = Lazy::new(|| create_base_client(15));
 pub static SHARED_CLIENT_LONG: Lazy<Client> = Lazy::new(|| create_base_client(60));
 fn create_base_client(timeout_secs: u64) -> Client {
@@ -33,4 +39,26 @@ pub fn get_client() -> Client {
 }
 pub fn get_long_client() -> Client {
     SHARED_CLIENT_LONG.clone()
+}
+
+pub fn tls_backend_name() -> &'static str {
+    #[cfg(feature = "tls-rustls")]
+    {
+        "rustls"
+    }
+    #[cfg(all(feature = "tls-native", not(feature = "tls-rustls")))]
+    {
+        "native-tls"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tls_backend_name;
+
+    #[test]
+    fn tls_backend_name_is_supported_value() {
+        let v = tls_backend_name();
+        assert!(v == "native-tls" || v == "rustls");
+    }
 }

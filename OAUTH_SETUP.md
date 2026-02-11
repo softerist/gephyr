@@ -91,6 +91,40 @@ Behavior:
 - Empty/unset: all domains accepted.
 - Set: login/import is rejected when Google identity does not match the allowlist.
 
+### Optional: override OAuth User-Agent
+
+Use this only if you want OAuth token/userinfo calls to send a specific UA:
+
+```env
+ABV_OAUTH_USER_AGENT=vscode/1.95.0 gephyr
+```
+
+Behavior:
+- Empty/unset: Gephyr default UA is used.
+- Set: applied to OAuth exchange, refresh, and userinfo calls.
+
+### TLS backend profile (build-time)
+
+Gephyr TLS backend selection is a build profile (not a runtime env toggle):
+- Default build: `native-tls`
+- Alternate build: `rustls`
+
+Build rustls profile:
+
+```bash
+cargo build --release --no-default-features --features tls-rustls
+```
+
+### Device profile header consistency
+
+When an account has a bound device profile, Gephyr applies these headers consistently on account-bound Google calls:
+- `x-machine-id`
+- `x-mac-machine-id`
+- `x-dev-device-id`
+- `x-sqm-id`
+
+Coverage includes OAuth calls, quota/loadCodeAssist calls, and account-bound `v1internal` upstream calls.
+
 ### 2) Add scheduler jitter to avoid synchronized refresh waves
 
 ```env
@@ -180,6 +214,53 @@ Example:
   }
 }
 ```
+
+## One-IP Operations Runbook
+
+Use one of these presets based on your priority.
+
+### Preset A: Availability-first (recommended starting point)
+
+Use when you have a single egress IP and want fewer hard failures.
+
+Settings:
+- `proxy.proxy_pool.allow_shared_proxy_fallback = true`
+- `proxy.proxy_pool.require_proxy_for_account_requests = false`
+- `proxy.compliance.enabled = true`
+- `proxy.compliance.max_account_requests_per_minute = 10`
+- `proxy.compliance.max_account_concurrency = 1`
+- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS = 30`
+- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS = 120`
+
+Expected behavior:
+- If no unbound healthy proxy is available, requests can still route through a shared healthy proxy.
+- Account requests keep working more often, with higher correlation risk than strict mode.
+
+### Preset B: Isolation-first (strict mode)
+
+Use when anti-correlation behavior is more important than availability.
+
+Settings:
+- `proxy.proxy_pool.allow_shared_proxy_fallback = false`
+- `proxy.proxy_pool.require_proxy_for_account_requests = true`
+- `proxy.compliance.enabled = true`
+- `proxy.compliance.max_account_requests_per_minute = 10`
+- `proxy.compliance.max_account_concurrency = 1`
+- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS = 30`
+- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS = 120`
+
+Expected behavior:
+- If no eligible proxy is available, account-routed requests fail closed.
+- Fewer cross-account proxy sharing events, but more user-visible failures during proxy saturation/outage.
+
+### Failure Modes to Monitor
+
+- `strict_rejections_total` increasing in `GET /api/proxy/metrics`:
+  - Indicates fail-closed drops from strict routing.
+- `shared_fallback_selections_total` increasing in `GET /api/proxy/metrics`:
+  - Indicates shared fallback routing is active (availability mode).
+- Frequent `401/403/429`:
+  - Lower per-account RPM/concurrency further and keep jitter enabled.
 
 ## Common Errors
 

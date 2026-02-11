@@ -2,7 +2,7 @@ use crate::proxy::config::{ProxyEntry, ProxyPoolConfig, ProxySelectionStrategy};
 use dashmap::DashMap;
 use futures::{stream, StreamExt};
 use reqwest::Client;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
@@ -22,11 +22,20 @@ pub struct PoolProxyConfig {
     pub proxy: reqwest::Proxy,
     pub entry_id: String,
 }
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ProxyPoolObservabilitySnapshot {
+    pub shared_fallback_selections_total: u64,
+    pub strict_rejections_total: u64,
+}
+
 pub struct ProxyPoolManager {
     config: Arc<RwLock<ProxyPoolConfig>>,
     total_usage_counter: Arc<DashMap<String, usize>>,
     account_bindings: Arc<DashMap<String, String>>,
     round_robin_index: Arc<AtomicUsize>,
+    shared_fallback_selections_total: Arc<AtomicU64>,
+    strict_rejections_total: Arc<AtomicU64>,
     bind_lock: Mutex<()>,
 }
 
@@ -50,6 +59,8 @@ impl ProxyPoolManager {
             total_usage_counter: Arc::new(DashMap::new()),
             account_bindings,
             round_robin_index: Arc::new(AtomicUsize::new(0)),
+            shared_fallback_selections_total: Arc::new(AtomicU64::new(0)),
+            strict_rejections_total: Arc::new(AtomicU64::new(0)),
             bind_lock: Mutex::new(()),
         }
     }
@@ -115,6 +126,11 @@ impl ProxyPoolManager {
 
         if !config.enabled || config.proxies.is_empty() {
             if config.require_proxy_for_account_requests {
+                self.strict_rejections_total.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    "[ProxyPool] Strict account routing rejection for {}: pool disabled or no proxies configured",
+                    account_id
+                );
                 return Err(
                     "Proxy routing rejected: proxy pool is disabled or has no proxies configured"
                         .to_string(),
@@ -139,6 +155,11 @@ impl ProxyPoolManager {
             );
         }
         if res.is_none() && config.require_proxy_for_account_requests {
+            self.strict_rejections_total.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                "[ProxyPool] Strict account routing rejection for {}: no eligible proxy available",
+                account_id
+            );
             return Err(format!(
                 "Proxy routing rejected for account {}: no eligible proxy available",
                 account_id
@@ -216,10 +237,24 @@ impl ProxyPoolManager {
             tracing::warn!(
                 "[ProxyPool] All healthy proxies are currently bound; allowing shared proxy selection for unbound account."
             );
-            return self.select_and_build_proxy(config, &shared_healthy);
+            let selected = self.select_and_build_proxy(config, &shared_healthy)?;
+            if selected.is_some() {
+                self.shared_fallback_selections_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            return Ok(selected);
         }
 
         self.select_and_build_proxy(config, &healthy_proxies)
+    }
+
+    pub fn get_observability_snapshot(&self) -> ProxyPoolObservabilitySnapshot {
+        ProxyPoolObservabilitySnapshot {
+            shared_fallback_selections_total: self
+                .shared_fallback_selections_total
+                .load(Ordering::Relaxed),
+            strict_rejections_total: self.strict_rejections_total.load(Ordering::Relaxed),
+        }
     }
 
     fn select_and_build_proxy(
@@ -570,6 +605,9 @@ mod tests {
             "proxy-a",
             "priority strategy should still be applied in shared-selection mode"
         );
+        let snapshot = manager.get_observability_snapshot();
+        assert_eq!(snapshot.shared_fallback_selections_total, 1);
+        assert_eq!(snapshot.strict_rejections_total, 0);
     }
 
     #[tokio::test]
@@ -683,5 +721,8 @@ mod tests {
             .await
             .expect_err("expected strict proxy requirement error");
         assert!(err.contains("no eligible proxy available"));
+        let snapshot = manager.get_observability_snapshot();
+        assert_eq!(snapshot.strict_rejections_total, 1);
+        assert_eq!(snapshot.shared_fallback_selections_total, 0);
     }
 }

@@ -394,6 +394,16 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
         .get_compliance_debug_snapshot()
         .await;
     let sticky = state.core.token_manager.get_sticky_debug_snapshot();
+    let proxy_pool_cfg = { state.runtime.proxy_pool_state.read().await.clone() };
+    let proxy_pool_observability = state
+        .runtime
+        .proxy_pool_manager
+        .get_observability_snapshot();
+    let proxy_pool_bindings_count = state
+        .runtime
+        .proxy_pool_manager
+        .get_all_bindings_snapshot()
+        .len();
     let active_accounts = state.core.token_manager.len();
     let request_timeout = state.config.request_timeout_secs();
     let running = *state.runtime.is_running.read().await;
@@ -413,6 +423,7 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
             "active_accounts": active_accounts,
             "request_timeout": request_timeout,
             "effective_request_timeout": request_timeout.max(5),
+            "tls_backend": crate::utils::http::tls_backend_name(),
         },
         "monitor": {
             "enabled": state.core.monitor.is_enabled(),
@@ -426,6 +437,17 @@ pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> 
             "scheduling_max_wait_seconds": sticky.scheduling.max_wait_seconds,
             "session_bindings_count": sticky.session_bindings.len(),
             "recent_events_count": sticky.recent_events.len(),
+        },
+        "proxy_pool": {
+            "enabled": proxy_pool_cfg.enabled,
+            "auto_failover": proxy_pool_cfg.auto_failover,
+            "allow_shared_proxy_fallback": proxy_pool_cfg.allow_shared_proxy_fallback,
+            "require_proxy_for_account_requests": proxy_pool_cfg.require_proxy_for_account_requests,
+            "strategy": proxy_pool_cfg.strategy,
+            "configured_proxies": proxy_pool_cfg.proxies.len(),
+            "account_bindings_count": proxy_pool_bindings_count,
+            "shared_fallback_selections_total": proxy_pool_observability.shared_fallback_selections_total,
+            "strict_rejections_total": proxy_pool_observability.strict_rejections_total,
         },
         "compliance": {
             "enabled": compliance.config.enabled,

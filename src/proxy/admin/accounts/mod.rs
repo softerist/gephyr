@@ -6,7 +6,7 @@ mod oauth;
 pub(crate) use accounts_core::{
     admin_add_account, admin_delete_account, admin_delete_accounts, admin_export_accounts,
     admin_fetch_account_quota, admin_get_current_account, admin_list_accounts,
-    admin_refresh_all_quotas, admin_reorder_accounts, admin_switch_account,
+    admin_refresh_all_quotas, admin_reorder_accounts, admin_run_health_check, admin_switch_account,
     admin_toggle_proxy_status,
 };
 pub(crate) use device::{

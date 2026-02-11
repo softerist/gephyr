@@ -24,7 +24,7 @@ pub(crate) use accounts::{
     admin_list_device_versions, admin_open_folder, admin_prepare_oauth_url,
     admin_prepare_oauth_url_web, admin_preview_generate_profile, admin_refresh_all_quotas,
     admin_reorder_accounts, admin_restore_device_version, admin_restore_original_device,
-    admin_start_oauth_login, admin_submit_oauth_code, admin_switch_account,
+    admin_run_health_check, admin_start_oauth_login, admin_submit_oauth_code, admin_switch_account,
     admin_sync_account_from_db, admin_toggle_proxy_status, handle_oauth_callback,
 };
 

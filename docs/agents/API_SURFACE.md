@@ -48,7 +48,9 @@ Primary groups:
 - `GET /api/version/routes` is now generated from shared admin-route capability metadata (reduces manual drift risk)
 - sticky runtime snapshot/config update (`GET|POST /api/proxy/sticky`) for scheduling + `persist_session_bindings` without full config round-trip
 - request-timeout runtime snapshot/config update (`GET|POST /api/proxy/request-timeout`) to tune timeout without full config round-trip
-- metrics snapshot (`GET /api/proxy/metrics`) with runtime/monitor/sticky/compliance aggregates
+- metrics snapshot (`GET /api/proxy/metrics`) with runtime/monitor/sticky/proxy-pool/compliance aggregates
+- runtime metrics include `runtime.tls_backend` (compile-time TLS backend profile visibility)
+- proxy-pool metrics include shared-fallback usage and strict fail-closed rejection counters
 - metrics snapshot also includes `runtime_apply_policies_supported` for policy discovery
 - scoped proxy update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`) for hot-reload transparency
 - session bindings debug snapshot (bindings + recent sticky decisions)

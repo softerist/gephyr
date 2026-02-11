@@ -15,6 +15,40 @@ const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
     V1_INTERNAL_BASE_URL_PROD,
 ];
 
+fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
+    let id = account_id?;
+    crate::modules::auth::account::load_account(id)
+        .ok()
+        .and_then(|account| account.device_profile)
+}
+
+fn insert_custom_header(headers: &mut header::HeaderMap, name: &'static str, value: &str) {
+    match header::HeaderValue::from_str(value) {
+        Ok(v) => {
+            headers.insert(header::HeaderName::from_static(name), v);
+        }
+        Err(e) => {
+            tracing::warn!("Invalid {} header value skipped: {}", name, e);
+        }
+    }
+}
+
+fn apply_device_profile_headers(
+    headers: &mut header::HeaderMap,
+    profile: &crate::models::DeviceProfile,
+) {
+    insert_custom_header(headers, "x-machine-id", &profile.machine_id);
+    insert_custom_header(headers, "x-mac-machine-id", &profile.mac_machine_id);
+    insert_custom_header(headers, "x-dev-device-id", &profile.dev_device_id);
+    insert_custom_header(headers, "x-sqm-id", &profile.sqm_id);
+}
+
+fn apply_account_device_headers(headers: &mut header::HeaderMap, account_id: Option<&str>) {
+    if let Some(profile) = load_account_device_profile(account_id) {
+        apply_device_profile_headers(headers, &profile);
+    }
+}
+
 pub struct UpstreamClient {
     default_client: Client,
     proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
@@ -176,6 +210,7 @@ impl UpstreamClient {
                 header::HeaderValue::from_static("antigravity")
             }),
         );
+        apply_account_device_headers(&mut headers, account_id);
         for (k, v) in extra_headers {
             if let Ok(hk) = header::HeaderName::from_bytes(k.as_bytes()) {
                 if let Ok(hv) = header::HeaderValue::from_str(&v) {
@@ -269,5 +304,36 @@ mod tests {
     fn test_client_creation_initializes_user_agent_path() {
         let _client = UpstreamClient::new(None, None);
         assert!(crate::constants::USER_AGENT.starts_with("antigravity/"));
+    }
+
+    #[test]
+    fn device_profile_headers_are_applied_to_header_map() {
+        let profile = crate::models::DeviceProfile {
+            machine_id: "machine-1".to_string(),
+            mac_machine_id: "mac-1".to_string(),
+            dev_device_id: "dev-1".to_string(),
+            sqm_id: "{SQM-1}".to_string(),
+        };
+        let mut headers = header::HeaderMap::new();
+        apply_device_profile_headers(&mut headers, &profile);
+
+        assert_eq!(
+            headers.get("x-machine-id").and_then(|v| v.to_str().ok()),
+            Some("machine-1")
+        );
+        assert_eq!(
+            headers
+                .get("x-mac-machine-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("mac-1")
+        );
+        assert_eq!(
+            headers.get("x-dev-device-id").and_then(|v| v.to_str().ok()),
+            Some("dev-1")
+        );
+        assert_eq!(
+            headers.get("x-sqm-id").and_then(|v| v.to_str().ok()),
+            Some("{SQM-1}")
+        );
     }
 }

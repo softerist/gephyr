@@ -43,6 +43,9 @@ GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
 # Optional: restrict accepted Google Workspace domains for identity verification
 ABV_ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
 
+# Optional: override User-Agent for OAuth token/userinfo calls only
+ABV_OAUTH_USER_AGENT=vscode/1.95.0 gephyr
+
 # Optional: scheduler jitter window in seconds (defaults shown)
 ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
 ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
@@ -129,6 +132,7 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `ABV_ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_ID` / `ABV_GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` / `ABV_GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
+| `ABV_OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
 | `ABV_ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
 | `ABV_DATA_DIR` | — | `~/.gephyr` | Data directory path |
 | `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
@@ -172,7 +176,7 @@ Admin visibility:
 - `POST /api/proxy/pool/runtime` updates only proxy-pool runtime knobs (avoids full `/api/config` round-trip).
 - `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
 - `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
-- `GET /api/proxy/metrics` returns runtime/monitor/sticky/compliance aggregates and supported runtime-apply policy values.
+- `GET /api/proxy/metrics` returns runtime/monitor/sticky/proxy-pool/compliance aggregates (including `runtime.tls_backend`) and supported runtime-apply policy values.
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
 - `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
 - scoped `POST /api/proxy/*` update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`).
@@ -286,6 +290,25 @@ Example:
   }
 }
 ```
+
+### One-IP Presets (Runbook)
+
+Choose one profile and monitor `/api/proxy/metrics` proxy-pool counters.
+
+- Availability-first:
+- `allow_shared_proxy_fallback=true`
+- `require_proxy_for_account_requests=false`
+- keeps traffic flowing when pool is saturated, but allows shared-proxy reuse
+
+- Isolation-first:
+- `allow_shared_proxy_fallback=false`
+- `require_proxy_for_account_requests=true`
+- fails closed when no eligible proxy exists, reducing shared routing but increasing hard failures
+
+Keep these in both modes:
+- `max_account_requests_per_minute=10`
+- `max_account_concurrency=1`
+- scheduler jitter enabled (`ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`, `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
 
 ### Console Commands
 
@@ -414,6 +437,14 @@ Use aggressive mode (clears more builder cache; next build will be slower):
 
 ```bash
 cargo build --release
+```
+
+TLS backend build profiles:
+- Default build uses `native-tls`.
+- Rustls build profile:
+
+```bash
+cargo build --release --no-default-features --features tls-rustls
 ```
 
 ### Run Tests

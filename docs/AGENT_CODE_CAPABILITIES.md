@@ -15,6 +15,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
 - Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ABV_ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
 - HTTP/2 is currently deferred after local HTTP/1.1 concurrency benchmark (`1500` requests @ `64` concurrency, `~1676.90 req/s`): `src/proxy/server.rs`
+- TLS backend is compile-time selectable via Cargo features (`tls-native` default, optional `tls-rustls` profile): `Cargo.toml`, `src/utils/http.rs`
 
 ## Public Proxy API Surface
 
@@ -50,7 +51,7 @@ Main admin groups include:
 - OAuth prepare/start/complete/cancel/manual-code
 - Proxy start/stop/status/mapping/api-key/session/rate-limit/preferred-account
 - Proxy scoped update endpoints expose runtime-apply contract (`runtime_apply.policy`, `runtime_apply.applied`, `runtime_apply.requires_restart`)
-- Proxy metrics snapshot endpoint (`GET /api/proxy/metrics`) exposes runtime/monitor/sticky/compliance aggregates and supported runtime-apply policies
+- Proxy metrics snapshot endpoint (`GET /api/proxy/metrics`) exposes runtime/monitor/sticky/proxy-pool/compliance aggregates (including `runtime.tls_backend`, shared-fallback, and strict-rejection counters) and supported runtime-apply policies
 - Proxy pool config/bindings/bind/unbind/health-check
 - Logs and proxy stats
 - Token stats (hourly/daily/weekly/by-account/by-model/trends/summary/clear)
@@ -217,6 +218,7 @@ Main admin groups include:
 - version history
 - restore baseline/current/version
 - delete non-current history version
+- bound device headers (`x-machine-id`, `x-mac-machine-id`, `x-dev-device-id`, `x-sqm-id`) are applied to OAuth calls, quota/loadCodeAssist calls, and account-bound v1internal upstream calls when a device profile is present
 
 ## CLI and OpenCode Integrations
 
@@ -245,6 +247,7 @@ Main admin groups include:
 - `ABV_PUBLIC_URL`
 - `ABV_DATA_DIR`
 - `ABV_ALLOWED_GOOGLE_DOMAINS`
+- `ABV_OAUTH_USER_AGENT`
 - `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
 - `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
 - OAuth:
