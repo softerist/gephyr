@@ -610,12 +610,14 @@ function Show-TlsCanary {
         }
 
         $snapshot = if ($Run) { $resp.tls_canary } else { $resp }
+        $configuredColor = if ($snapshot.configured) { "Green" } else { "Gray" }
+        $requiredColor = if ($snapshot.required) { "Yellow" } else { "Gray" }
 
         Write-Host ""
         Write-Host "  TLS Canary Snapshot:" -ForegroundColor Cyan
         Write-Host ""
-        Write-Host "    Configured: " -NoNewline; Write-Host "$($snapshot.configured)" -ForegroundColor (if ($snapshot.configured) { "Green" } else { "Gray" })
-        Write-Host "    Required:   " -NoNewline; Write-Host "$($snapshot.required)" -ForegroundColor (if ($snapshot.required) { "Yellow" } else { "Gray" })
+        Write-Host "    Configured: " -NoNewline; Write-Host "$($snapshot.configured)" -ForegroundColor $configuredColor
+        Write-Host "    Required:   " -NoNewline; Write-Host "$($snapshot.required)" -ForegroundColor $requiredColor
         Write-Host "    URL:        $($snapshot.url)"
         Write-Host "    Timeout:    $($snapshot.timeout_seconds)s"
 

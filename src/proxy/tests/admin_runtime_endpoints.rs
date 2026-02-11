@@ -200,6 +200,7 @@ mod tests {
         assert_eq!(body["routes"]["POST /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["GET /api/proxy/compliance"], true);
         assert_eq!(body["routes"]["POST /api/proxy/compliance"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/tls-canary"], true);
         assert_eq!(body["routes"]["POST /api/proxy/tls-canary/run"], true);
         assert_eq!(body["routes"]["GET /api/proxy/metrics"], true);
         assert_eq!(body["routes"]["GET /api/version/routes"], true);
