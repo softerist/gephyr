@@ -173,7 +173,9 @@ pub async fn exchange_code(
     code_verifier: &str,
 ) -> Result<TokenResponse, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(None, 60).await
+        pool.get_effective_client(None, 60)
+            .await
+            .map_err(|e| format!("Failed to prepare OAuth exchange client: {}", e))?
     } else {
         crate::utils::http::get_long_client()
     };
@@ -237,7 +239,9 @@ pub async fn refresh_access_token(
     account_id: Option<&str>,
 ) -> Result<TokenResponse, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 60).await
+        pool.get_effective_client(account_id, 60)
+            .await
+            .map_err(|e| format!("Failed to prepare OAuth refresh client: {}", e))?
     } else {
         crate::utils::http::get_long_client()
     };
@@ -296,7 +300,9 @@ pub async fn get_user_info(
     account_id: Option<&str>,
 ) -> Result<UserInfo, String> {
     let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 15).await
+        pool.get_effective_client(account_id, 15)
+            .await
+            .map_err(|e| format!("Failed to prepare userinfo client: {}", e))?
     } else {
         crate::utils::http::get_client()
     };

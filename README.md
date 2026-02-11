@@ -39,6 +39,13 @@ Edit `.env.local` with your API key and OAuth credentials:
 GEPHYR_API_KEY=gph_your_secure_api_key
 GEPHYR_GOOGLE_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
 GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
+
+# Optional: restrict accepted Google Workspace domains for identity verification
+ABV_ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
+
+# Optional: scheduler jitter window in seconds (defaults shown)
+ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
+ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
 ```
 
 ### 2. Build & Run
@@ -122,9 +129,16 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `ABV_ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_ID` / `ABV_GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
 | `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` / `ABV_GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
+| `ABV_ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
 | `ABV_DATA_DIR` | — | `~/.gephyr` | Data directory path |
 | `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
 | `ABV_MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
+| `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` | — | `30` | Min random delay before each scheduled quota-refresh batch |
+| `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` | — | `120` | Max random delay before each scheduled quota-refresh batch |
+
+Proxy-pool isolation knobs are config/API settings (not env vars):
+- `proxy.proxy_pool.allow_shared_proxy_fallback`
+- `proxy.proxy_pool.require_proxy_for_account_requests`
 
 ### Persistent Session Bindings (Sticky Sessions Across Restart)
 
@@ -154,7 +168,7 @@ Admin visibility:
 - `POST /api/proxy/sticky` updates sticky settings only (avoids full `/api/config` round-trip).
 - `GET /api/proxy/request-timeout` returns configured/effective runtime timeout.
 - `POST /api/proxy/request-timeout` updates timeout only (avoids full `/api/config` round-trip).
-- `GET /api/proxy/pool/runtime` returns proxy-pool runtime knobs (`enabled`, `auto_failover`, `health_check_interval`) plus strategy snapshot.
+- `GET /api/proxy/pool/runtime` returns proxy-pool runtime knobs (`enabled`, `auto_failover`, `allow_shared_proxy_fallback`, `require_proxy_for_account_requests`, `health_check_interval`) plus strategy snapshot.
 - `POST /api/proxy/pool/runtime` updates only proxy-pool runtime knobs (avoids full `/api/config` round-trip).
 - `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
 - `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
@@ -172,8 +186,8 @@ curl -X POST http://127.0.0.1:8045/api/proxy/compliance \
   -d '{
     "enabled": true,
     "max_global_requests_per_minute": 120,
-    "max_account_requests_per_minute": 20,
-    "max_account_concurrency": 2,
+    "max_account_requests_per_minute": 10,
+    "max_account_concurrency": 1,
     "risk_cooldown_seconds": 300,
     "max_retry_attempts": 2
   }'
@@ -225,6 +239,8 @@ curl -X POST http://127.0.0.1:8045/api/proxy/pool/runtime \
   -d '{
     "enabled": true,
     "auto_failover": true,
+    "allow_shared_proxy_fallback": false,
+    "require_proxy_for_account_requests": true,
     "health_check_interval": 120
   }'
 ```
@@ -237,6 +253,8 @@ Practical notes:
 - sticky / request-timeout / compliance updates: `always_hot_applied`
 - proxy-pool strategy / runtime updates: `hot_applied_when_safe`
 - `scheduling.max_wait_seconds` keeps sticky binding during short bound-account rate-limit windows; long windows release/rebind.
+- `allow_shared_proxy_fallback=false` prevents borrowing an already-bound proxy for unbound accounts.
+- `require_proxy_for_account_requests=true` makes account requests fail closed when no eligible proxy is available (instead of app-upstream/direct fallback).
 - For maximum stickiness from clients, send a stable explicit session id:
 - Header: `x-session-id` (or `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
 - Payload: `session_id` / `sessionId` (also `conversation_id` / `conversationId`, `thread_id` / `threadId`)
@@ -247,8 +265,8 @@ Practical notes:
 
 - `enabled`: turns guardrails on/off (default: `false`)
 - `max_global_requests_per_minute`: global request budget across all accounts
-- `max_account_requests_per_minute`: per-account request budget
-- `max_account_concurrency`: max in-flight requests per account
+- `max_account_requests_per_minute`: per-account request budget (default `10`)
+- `max_account_concurrency`: max in-flight requests per account (default `1`)
 - `risk_cooldown_seconds`: temporary cooldown applied after risky upstream statuses (`401`, `403`, `429`, `500`, `503`, `529`)
 - `max_retry_attempts`: hard cap for handler retry loops when compliance mode is enabled
 
@@ -260,8 +278,8 @@ Example:
     "compliance": {
       "enabled": true,
       "max_global_requests_per_minute": 120,
-      "max_account_requests_per_minute": 20,
-      "max_account_concurrency": 2,
+      "max_account_requests_per_minute": 10,
+      "max_account_concurrency": 1,
       "risk_cooldown_seconds": 300,
       "max_retry_attempts": 2
     }

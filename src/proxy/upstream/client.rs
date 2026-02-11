@@ -85,13 +85,13 @@ impl UpstreamClient {
             .cloned()
             .unwrap_or_else(|| crate::constants::USER_AGENT.clone())
     }
-    pub async fn get_client(&self, account_id: Option<&str>) -> Client {
+    pub async fn get_client(&self, account_id: Option<&str>) -> Result<Client, String> {
         if let Some(pool) = &self.proxy_pool {
             if let Some(acc_id) = account_id {
                 match pool.get_proxy_for_account(acc_id).await {
                     Ok(Some(proxy_cfg)) => {
                         if let Some(client) = self.client_cache.get(&proxy_cfg.entry_id) {
-                            return client.clone();
+                            return Ok(client.clone());
                         }
                         match self.build_client_with_proxy(proxy_cfg.clone()) {
                             Ok(client) => {
@@ -102,7 +102,7 @@ impl UpstreamClient {
                                     proxy_cfg.entry_id,
                                     acc_id
                                 );
-                                return client;
+                                return Ok(client);
                             }
                             Err(e) => {
                                 tracing::error!("Failed to build client for proxy {}: {}, falling back to default", proxy_cfg.entry_id, e);
@@ -111,16 +111,12 @@ impl UpstreamClient {
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        tracing::error!(
-                            "Error getting proxy for account {}: {}, falling back to default",
-                            acc_id,
-                            e
-                        );
+                        return Err(format!("Error getting proxy for account {}: {}", acc_id, e));
                     }
                 }
             }
         }
-        self.default_client.clone()
+        Ok(self.default_client.clone())
     }
     fn build_url(base_url: &str, method: &str, query_string: Option<&str>) -> String {
         if let Some(qs) = query_string {
@@ -162,7 +158,7 @@ impl UpstreamClient {
         extra_headers: std::collections::HashMap<String, String>,
         account_id: Option<&str>,
     ) -> Result<Response, String> {
-        let client = self.get_client(account_id).await;
+        let client = self.get_client(account_id).await?;
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::CONTENT_TYPE,

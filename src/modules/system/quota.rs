@@ -66,11 +66,11 @@ struct Tier {
     _name: Option<String>,
     _slug: Option<String>,
 }
-async fn create_client(account_id: Option<&str>) -> reqwest::Client {
+async fn create_client(account_id: Option<&str>) -> Result<reqwest::Client, String> {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
         pool.get_effective_client(account_id, 15).await
     } else {
-        crate::utils::http::get_client()
+        Ok(crate::utils::http::get_client())
     }
 }
 
@@ -79,8 +79,8 @@ async fn fetch_project_id(
     access_token: &str,
     email: &str,
     account_id: Option<&str>,
-) -> (Option<String>, Option<String>) {
-    let client = create_client(account_id).await;
+) -> Result<(Option<String>, Option<String>), String> {
+    let client = create_client(account_id).await?;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
 
     let res = apply_account_device_headers(
@@ -118,7 +118,7 @@ async fn fetch_project_id(
                         ));
                     }
 
-                    return (project_id, subscription_tier);
+                    return Ok((project_id, subscription_tier));
                 }
             } else {
                 crate::modules::system::logger::log_warn(&format!(
@@ -136,7 +136,7 @@ async fn fetch_project_id(
         }
     }
 
-    (None, None)
+    Ok((None, None))
 }
 pub async fn fetch_quota(
     access_token: &str,
@@ -155,12 +155,14 @@ pub async fn fetch_quota_with_cache(
     let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
         (Some(pid.to_string()), None)
     } else {
-        fetch_project_id(access_token, email, account_id).await
+        fetch_project_id(access_token, email, account_id)
+            .await
+            .map_err(AppError::Unknown)?
     };
 
     let final_project_id = project_id.as_deref().unwrap_or("bamboo-precept-lgxtn");
 
-    let client = create_client(account_id).await;
+    let client = create_client(account_id).await.map_err(AppError::Unknown)?;
     let payload = json!({
         "project": final_project_id
     });

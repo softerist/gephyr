@@ -31,6 +31,7 @@ Gephyr runs as a local/headless proxy and uses OAuth Authorization Code + PKCE.
 
 3. Configure scopes:
    - Use the exact scopes currently requested by Gephyr:
+   - `openid`
    - `https://www.googleapis.com/auth/cloud-platform`
    - `https://www.googleapis.com/auth/userinfo.email`
    - `https://www.googleapis.com/auth/userinfo.profile`
@@ -73,6 +74,112 @@ Notes:
 - Callback: `https://proxy.example.com/auth/callback`
 - OAuth client type: `Web application`
 - Set `ABV_PUBLIC_URL=https://proxy.example.com`
+
+## Identity Hardening (Recommended)
+
+Use these settings to reduce account-correlation risk and tighten identity checks.
+
+### 1) Restrict accepted Google domains (optional but recommended for Workspace)
+
+If you only expect accounts from specific Workspace domains:
+
+```env
+ABV_ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
+```
+
+Behavior:
+- Empty/unset: all domains accepted.
+- Set: login/import is rejected when Google identity does not match the allowlist.
+
+### 2) Add scheduler jitter to avoid synchronized refresh waves
+
+```env
+ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
+ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
+```
+
+Behavior:
+- Scheduler still runs every 10 minutes, but each run waits a random delay in this range before starting refresh.
+- Keep `MIN <= MAX`.
+
+### 3) One-IP hardening: disable shared proxy fallback (optional)
+
+This is a runtime config setting (not an env var):
+
+```json
+{
+  "proxy": {
+    "proxy_pool": {
+      "allow_shared_proxy_fallback": false
+    }
+  }
+}
+```
+
+Equivalent admin API update:
+
+```bash
+curl -X POST http://127.0.0.1:8045/api/proxy/pool/runtime \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "allow_shared_proxy_fallback": false
+  }'
+```
+
+### 4) One-IP hardening: fail-closed account proxy routing (optional)
+
+Use this only if you prefer strict isolation over availability.
+
+```json
+{
+  "proxy": {
+    "proxy_pool": {
+      "allow_shared_proxy_fallback": false,
+      "require_proxy_for_account_requests": true
+    }
+  }
+}
+```
+
+Equivalent admin API update:
+
+```bash
+curl -X POST http://127.0.0.1:8045/api/proxy/pool/runtime \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "allow_shared_proxy_fallback": false,
+    "require_proxy_for_account_requests": true
+  }'
+```
+
+One-IP guidance:
+- If availability is more important, keep shared fallback enabled.
+- If strict anti-correlation behavior is more important, disable fallback and enable fail-closed routing.
+
+### 5) One-IP hardening: stricter per-account traffic budgets
+
+Default compliance guidance is now:
+- `max_account_requests_per_minute = 10`
+- `max_account_concurrency = 1`
+
+Example:
+
+```json
+{
+  "proxy": {
+    "compliance": {
+      "enabled": true,
+      "max_global_requests_per_minute": 120,
+      "max_account_requests_per_minute": 10,
+      "max_account_concurrency": 1,
+      "risk_cooldown_seconds": 300,
+      "max_retry_attempts": 2
+    }
+  }
+}
+```
 
 ## Common Errors
 

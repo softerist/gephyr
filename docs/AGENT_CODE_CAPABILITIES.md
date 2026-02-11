@@ -10,7 +10,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Security DB: `src/modules/persistence/security_db.rs`
 - User token DB: `src/modules/persistence/user_token_db.rs`
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
-- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
+- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
 - One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
 - Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ABV_ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
@@ -166,7 +166,8 @@ Main admin groups include:
 - `LeastConnections`
 - `WeightedRoundRobin` (weighted random selection using priority-derived weights)
 - Supports account-to-proxy bindings with max-accounts enforcement
-- When all healthy proxies are already bound, unbound account routing can fall back to shared healthy proxy selection instead of returning no proxy
+- When all healthy proxies are already bound, unbound account routing uses shared healthy proxy fallback only if `proxy.proxy_pool.allow_shared_proxy_fallback=true` (default true); when false, selection returns no proxy
+- When `proxy.proxy_pool.require_proxy_for_account_requests=true`, account-routed requests fail closed if no eligible proxy exists (no app-upstream/direct fallback path for account requests)
 - `max_accounts` semantics apply to persistent bindings; shared fallback is request-scoped routing for unbound accounts and does not create bindings
 - `LeastConnections` strategy currently uses total historical usage counter (monotonic) rather than live active-connection count
 - Persists bindings to app config
@@ -243,6 +244,9 @@ Main admin groups include:
 - `ABV_ENABLE_ADMIN_API`
 - `ABV_PUBLIC_URL`
 - `ABV_DATA_DIR`
+- `ABV_ALLOWED_GOOGLE_DOMAINS`
+- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
+- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
 - OAuth:
 - `GEPHYR_GOOGLE_OAUTH_CLIENT_ID`, `ABV_GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`
 - `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET`, `ABV_GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`

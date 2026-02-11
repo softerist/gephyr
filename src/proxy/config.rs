@@ -308,11 +308,11 @@ fn default_compliance_global_rpm() -> u32 {
 }
 
 fn default_compliance_account_rpm() -> u32 {
-    20
+    10
 }
 
 fn default_compliance_account_concurrency() -> usize {
-    2
+    1
 }
 
 fn default_compliance_cooldown_seconds() -> u64 {
@@ -502,6 +502,10 @@ pub struct ProxyPoolConfig {
     pub proxies: Vec<ProxyEntry>,
     pub health_check_interval: u64,
     pub auto_failover: bool,
+    #[serde(default = "default_true")]
+    pub allow_shared_proxy_fallback: bool,
+    #[serde(default)]
+    pub require_proxy_for_account_requests: bool,
     pub strategy: ProxySelectionStrategy,
     #[serde(default)]
     pub account_bindings: HashMap<String, String>,
@@ -514,6 +518,8 @@ impl Default for ProxyPoolConfig {
             proxies: Vec::new(),
             health_check_interval: 300,
             auto_failover: true,
+            allow_shared_proxy_fallback: true,
+            require_proxy_for_account_requests: false,
             strategy: ProxySelectionStrategy::Priority,
             account_bindings: HashMap::new(),
         }

@@ -58,8 +58,8 @@ Use this `config.json` shape when validating sticky sessions across restart:
     "compliance": {
       "enabled": true,
       "max_global_requests_per_minute": 120,
-      "max_account_requests_per_minute": 20,
-      "max_account_concurrency": 2,
+      "max_account_requests_per_minute": 10,
+      "max_account_concurrency": 1,
       "risk_cooldown_seconds": 300,
       "max_retry_attempts": 2
     }

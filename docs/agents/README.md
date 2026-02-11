@@ -7,6 +7,7 @@ These files split the code-derived capability report into focused sections.
 - API surface: `docs/agents/API_SURFACE.md`
 - Runtime and routing: `docs/agents/RUNTIME_ROUTING.md`
 - Security and auth: `docs/agents/SECURITY_AUTH.md`
+- Identity hardening backlog: `docs/agents/IDENTITY_HARDENING_BACKLOG.md`
 - Edge cases and defects: `docs/agents/EDGE_CASES_DEFECTS.md`
 - Architecture overview: `docs/ARCHITECTURE.md`
 - Sticky session persistence quick config: `docs/agents/QUICK_START_WORKFLOW.md` ("Session Persistence Quick Config")

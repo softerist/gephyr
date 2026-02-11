@@ -65,7 +65,8 @@ Primary groups:
 - scoped policy note: pool strategy/runtime updates currently return `runtime_apply.policy = hot_applied_when_safe`; sticky/request-timeout/compliance return `always_hot_applied`
 - trigger proxy health check
 - runtime behavior note: default pool health checks require HTTP `204` when using the default generate_204 URL; custom per-proxy health-check URLs accept any `2xx`: `src/proxy/proxy_pool.rs`
-- runtime behavior note: when all healthy proxies are already account-bound, unbound account selection may still use a shared healthy proxy rather than returning no proxy: `src/proxy/proxy_pool.rs`
+- runtime behavior note: when all healthy proxies are already account-bound, unbound account selection uses shared fallback only if `allow_shared_proxy_fallback=true` in proxy-pool runtime config; otherwise selection returns no proxy: `src/proxy/proxy_pool.rs`
+- runtime behavior note: when `require_proxy_for_account_requests=true`, account-routed requests fail closed if no eligible proxy is available (instead of app-upstream/direct fallback): `src/proxy/proxy_pool.rs`, `src/proxy/upstream/client.rs`
 - semantics note: `max_accounts` is enforced for explicit account-to-proxy bindings; shared fallback selection does not create persistent bindings: `src/proxy/proxy_pool.rs`
 - Logs/stats:
 - proxy stats

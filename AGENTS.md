@@ -10,6 +10,7 @@ This agent guide is derived from `src/` code analysis, not from markdown docs as
 - API-focused: `docs/agents/API_SURFACE.md`
 - Runtime/routing-focused: `docs/agents/RUNTIME_ROUTING.md`
 - Security/auth-focused: `docs/agents/SECURITY_AUTH.md`
+- Identity hardening backlog: `docs/agents/IDENTITY_HARDENING_BACKLOG.md`
 - Edge-cases/defects: `docs/agents/EDGE_CASES_DEFECTS.md`
 - Defect report: `docs/agents/DEFECT_DISCOVERY_REPORT.md`
 - Pre-PR checklist: `docs/agents/PRE_PR_VERIFICATION_CHECKLIST.md`

@@ -57,12 +57,12 @@ impl ProxyPoolManager {
         &self,
         account_id: Option<&str>,
         timeout_secs: u64,
-    ) -> Client {
+    ) -> Result<Client, String> {
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .user_agent(crate::constants::USER_AGENT.as_str());
         let proxy_opt = if let Some(acc_id) = account_id {
-            self.get_proxy_for_account(acc_id).await.ok().flatten()
+            self.get_proxy_for_account(acc_id).await?
         } else {
             let config = self.config.read().await;
             if config.enabled {
@@ -103,7 +103,9 @@ impl ProxyPoolManager {
             }
         }
 
-        builder.build().unwrap_or_else(|_| Client::new())
+        builder
+            .build()
+            .map_err(|e| format!("Failed to build effective HTTP client: {}", e))
     }
     pub async fn get_proxy_for_account(
         &self,
@@ -112,6 +114,12 @@ impl ProxyPoolManager {
         let config = self.config.read().await;
 
         if !config.enabled || config.proxies.is_empty() {
+            if config.require_proxy_for_account_requests {
+                return Err(
+                    "Proxy routing rejected: proxy pool is disabled or has no proxies configured"
+                        .to_string(),
+                );
+            }
             return Ok(None);
         }
         if let Some(proxy) = self.get_bound_proxy(account_id, &config).await? {
@@ -129,6 +137,12 @@ impl ProxyPoolManager {
                 account_id,
                 p.entry_id
             );
+        }
+        if res.is_none() && config.require_proxy_for_account_requests {
+            return Err(format!(
+                "Proxy routing rejected for account {}: no eligible proxy available",
+                account_id
+            ));
         }
         Ok(res)
     }
@@ -177,6 +191,12 @@ impl ProxyPoolManager {
             .collect();
 
         if healthy_proxies.is_empty() {
+            if !config.allow_shared_proxy_fallback {
+                tracing::warn!(
+                    "[ProxyPool] All healthy proxies are currently bound; shared fallback is disabled."
+                );
+                return Ok(None);
+            }
             let shared_healthy: Vec<_> = config
                 .proxies
                 .iter()
@@ -529,6 +549,8 @@ mod tests {
             ],
             health_check_interval: 300,
             auto_failover: true,
+            allow_shared_proxy_fallback: true,
+            require_proxy_for_account_requests: false,
             strategy: ProxySelectionStrategy::Priority,
             account_bindings: bindings,
         };
@@ -560,6 +582,8 @@ mod tests {
             ],
             health_check_interval: 300,
             auto_failover: true,
+            allow_shared_proxy_fallback: true,
+            require_proxy_for_account_requests: false,
             strategy: ProxySelectionStrategy::LeastConnections,
             account_bindings: HashMap::new(),
         };
@@ -602,5 +626,62 @@ mod tests {
             reqwest::StatusCode::BAD_GATEWAY,
             false
         ));
+    }
+
+    #[tokio::test]
+    async fn select_proxy_from_pool_returns_none_when_shared_fallback_disabled() {
+        let mut bindings = HashMap::new();
+        bindings.insert("acct-1".to_string(), "proxy-a".to_string());
+        bindings.insert("acct-2".to_string(), "proxy-b".to_string());
+        let cfg = ProxyPoolConfig {
+            enabled: true,
+            proxies: vec![
+                build_proxy_entry("proxy-a", 1),
+                build_proxy_entry("proxy-b", 2),
+            ],
+            health_check_interval: 300,
+            auto_failover: true,
+            allow_shared_proxy_fallback: false,
+            require_proxy_for_account_requests: false,
+            strategy: ProxySelectionStrategy::Priority,
+            account_bindings: bindings,
+        };
+        let manager = ProxyPoolManager::new(Arc::new(RwLock::new(cfg.clone())));
+
+        let selected = manager
+            .select_proxy_from_pool(&cfg)
+            .await
+            .expect("selection should succeed");
+        assert!(
+            selected.is_none(),
+            "selection should return none when all proxies are bound and shared fallback is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_proxy_for_account_errors_when_required_and_no_proxy_available() {
+        let mut bindings = HashMap::new();
+        bindings.insert("acct-1".to_string(), "proxy-a".to_string());
+        bindings.insert("acct-2".to_string(), "proxy-b".to_string());
+        let cfg = ProxyPoolConfig {
+            enabled: true,
+            proxies: vec![
+                build_proxy_entry("proxy-a", 1),
+                build_proxy_entry("proxy-b", 2),
+            ],
+            health_check_interval: 300,
+            auto_failover: true,
+            allow_shared_proxy_fallback: false,
+            require_proxy_for_account_requests: true,
+            strategy: ProxySelectionStrategy::Priority,
+            account_bindings: bindings,
+        };
+        let manager = ProxyPoolManager::new(Arc::new(RwLock::new(cfg.clone())));
+
+        let err = manager
+            .get_proxy_for_account("acct-unbound")
+            .await
+            .expect_err("expected strict proxy requirement error");
+        assert!(err.contains("no eligible proxy available"));
     }
 }

@@ -120,6 +120,8 @@ fn proxy_pool_runtime_snapshot(
         "strategy": config.strategy,
         "enabled": config.enabled,
         "auto_failover": config.auto_failover,
+        "allow_shared_proxy_fallback": config.allow_shared_proxy_fallback,
+        "require_proxy_for_account_requests": config.require_proxy_for_account_requests,
         "health_check_interval": config.health_check_interval,
         "proxies_total": total,
         "proxies_enabled": enabled
@@ -208,6 +210,18 @@ pub(crate) struct UpdateProxyPoolRuntimeRequest {
     auto_failover: Option<bool>,
     #[serde(
         default,
+        alias = "allowSharedProxyFallback",
+        alias = "allow_shared_proxy_fallback"
+    )]
+    allow_shared_proxy_fallback: Option<bool>,
+    #[serde(
+        default,
+        alias = "requireProxyForAccountRequests",
+        alias = "require_proxy_for_account_requests"
+    )]
+    require_proxy_for_account_requests: Option<bool>,
+    #[serde(
+        default,
         alias = "healthCheckInterval",
         alias = "healthCheckIntervalSeconds"
     )]
@@ -226,11 +240,12 @@ pub(crate) async fn admin_update_proxy_pool_runtime(
         |proxy| {
             if payload.enabled.is_none()
                 && payload.auto_failover.is_none()
+                && payload.allow_shared_proxy_fallback.is_none()
+                && payload.require_proxy_for_account_requests.is_none()
                 && payload.health_check_interval.is_none()
             {
                 return Err(
-                    "At least one of enabled, auto_failover, health_check_interval must be provided"
-                        .to_string(),
+                    "At least one of enabled, auto_failover, allow_shared_proxy_fallback, require_proxy_for_account_requests, health_check_interval must be provided".to_string(),
                 );
             }
 
@@ -239,6 +254,15 @@ pub(crate) async fn admin_update_proxy_pool_runtime(
             }
             if let Some(auto_failover) = payload.auto_failover {
                 proxy.proxy_pool.auto_failover = auto_failover;
+            }
+            if let Some(allow_shared_proxy_fallback) = payload.allow_shared_proxy_fallback {
+                proxy.proxy_pool.allow_shared_proxy_fallback = allow_shared_proxy_fallback;
+            }
+            if let Some(require_proxy_for_account_requests) =
+                payload.require_proxy_for_account_requests
+            {
+                proxy.proxy_pool.require_proxy_for_account_requests =
+                    require_proxy_for_account_requests;
             }
             if let Some(health_check_interval) = payload.health_check_interval {
                 proxy.proxy_pool.health_check_interval = health_check_interval;
@@ -256,6 +280,13 @@ pub(crate) async fn admin_update_proxy_pool_runtime(
         }
         if let Some(auto_failover) = payload.auto_failover {
             runtime_cfg.auto_failover = auto_failover;
+        }
+        if let Some(allow_shared_proxy_fallback) = payload.allow_shared_proxy_fallback {
+            runtime_cfg.allow_shared_proxy_fallback = allow_shared_proxy_fallback;
+        }
+        if let Some(require_proxy_for_account_requests) = payload.require_proxy_for_account_requests
+        {
+            runtime_cfg.require_proxy_for_account_requests = require_proxy_for_account_requests;
         }
         if let Some(health_check_interval) = payload.health_check_interval {
             runtime_cfg.health_check_interval = health_check_interval;

@@ -793,6 +793,14 @@ mod tests {
         assert_eq!(initial_status, StatusCode::OK);
         assert_eq!(initial_body["enabled"], Value::from(false));
         assert_eq!(initial_body["auto_failover"], Value::from(true));
+        assert_eq!(
+            initial_body["allow_shared_proxy_fallback"],
+            Value::from(true)
+        );
+        assert_eq!(
+            initial_body["require_proxy_for_account_requests"],
+            Value::from(false)
+        );
         assert_eq!(initial_body["health_check_interval"], Value::from(300));
 
         let post_request = Request::builder()
@@ -804,6 +812,8 @@ mod tests {
                 json!({
                     "enabled": true,
                     "auto_failover": false,
+                    "allow_shared_proxy_fallback": false,
+                    "require_proxy_for_account_requests": true,
                     "health_check_interval": 45
                 })
                 .to_string(),
@@ -822,6 +832,14 @@ mod tests {
         assert_eq!(post_body["proxy_pool"]["enabled"], Value::from(true));
         assert_eq!(post_body["proxy_pool"]["auto_failover"], Value::from(false));
         assert_eq!(
+            post_body["proxy_pool"]["allow_shared_proxy_fallback"],
+            Value::from(false)
+        );
+        assert_eq!(
+            post_body["proxy_pool"]["require_proxy_for_account_requests"],
+            Value::from(true)
+        );
+        assert_eq!(
             post_body["proxy_pool"]["health_check_interval"],
             Value::from(45)
         );
@@ -835,6 +853,11 @@ mod tests {
         assert_eq!(get_status, StatusCode::OK);
         assert_eq!(get_body["enabled"], Value::from(true));
         assert_eq!(get_body["auto_failover"], Value::from(false));
+        assert_eq!(get_body["allow_shared_proxy_fallback"], Value::from(false));
+        assert_eq!(
+            get_body["require_proxy_for_account_requests"],
+            Value::from(true)
+        );
         assert_eq!(get_body["health_check_interval"], Value::from(45));
 
         let bad_post = Request::builder()

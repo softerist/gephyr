@@ -1273,7 +1273,10 @@ async fn call_gemini_sync(
 
     debug!("[{}] Calling Gemini API: {}", trace_id, model);
 
-    let client = upstream.get_client(Some(account_id.as_str())).await;
+    let client = upstream
+        .get_client(Some(account_id.as_str()))
+        .await
+        .map_err(|e| format!("Failed to prepare upstream client: {}", e))?;
     let response = client
         .post(&upstream_url)
         .header("Authorization", format!("Bearer {}", access_token))
