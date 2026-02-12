@@ -217,6 +217,7 @@ function Start-Container {
     Remove-ContainerIfExists
 
     $adminApi = if ($AdminApiEnabled) { "true" } else { "false" }
+    $allowLan = if ($env:ALLOW_LAN_ACCESS) { $env:ALLOW_LAN_ACCESS } else { "false" }
 
     if (-not $env:GOOGLE_OAUTH_CLIENT_ID -and (Test-Path $envFilePath)) {
         $legacy = Get-Content $envFilePath |
@@ -261,9 +262,6 @@ function Start-Container {
     if ($env:ADMIN_STOP_SHUTDOWN) {
         $runtimeArgs += @("-e", "ADMIN_STOP_SHUTDOWN=$($env:ADMIN_STOP_SHUTDOWN)")
     }
-    if ($env:OAUTH_USER_AGENT) {
-        $runtimeArgs += @("-e", "OAUTH_USER_AGENT=$($env:OAUTH_USER_AGENT)")
-    }
     if ($env:ALLOWED_GOOGLE_DOMAINS) {
         $runtimeArgs += @("-e", "ALLOWED_GOOGLE_DOMAINS=$($env:ALLOWED_GOOGLE_DOMAINS)")
     }
@@ -297,7 +295,7 @@ function Start-Container {
         -e API_KEY=$env:API_KEY `
         -e AUTH_MODE=strict `
         -e ENABLE_ADMIN_API=$adminApi `
-        -e ALLOW_LAN_ACCESS=true `
+        -e ALLOW_LAN_ACCESS=$allowLan `
         @oauthArgs `
         @runtimeArgs `
         -v "${DataDir}:/home/gephyr/.gephyr" `
@@ -335,6 +333,12 @@ function Wait-ServiceReady {
                 return $true
             }
         } catch {
+            # Surface API key mismatch explicitly; otherwise this looks like a startup hang.
+            try {
+                if ($_.Exception.Response -and $_.Exception.Response.StatusCode -eq 401) {
+                    throw "Health check failed with 401 (API key mismatch). Run restart or rotate-key."
+                }
+            } catch {}
             Start-Sleep -Milliseconds $DelayMs
         }
     }

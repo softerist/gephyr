@@ -218,7 +218,6 @@ start_container() {
     MAX_BODY_SIZE
     SHUTDOWN_DRAIN_TIMEOUT_SECS
     ADMIN_STOP_SHUTDOWN
-    OAUTH_USER_AGENT
     ALLOWED_GOOGLE_DOMAINS
     TLS_BACKEND
     TLS_CANARY_URL
@@ -237,12 +236,14 @@ start_container() {
     fi
   done
 
+  local allow_lan="${ALLOW_LAN_ACCESS:-false}"
+
   docker run --rm -d --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${PORT}:8045" \
     -e API_KEY="$API_KEY" \
     -e AUTH_MODE=strict \
     -e ENABLE_ADMIN_API="$admin_api" \
-    -e ALLOW_LAN_ACCESS=true \
+    -e ALLOW_LAN_ACCESS="$allow_lan" \
     "${extra_env[@]}" \
     "${runtime_env[@]}" \
     -v "${DATA_DIR}:/home/gephyr/.gephyr" \
@@ -269,6 +270,10 @@ wait_service_ready() {
       -H "Authorization: Bearer ${API_KEY}" \
       "http://127.0.0.1:${PORT}/healthz" || true)"
     [[ "$code" == "200" ]] && return 0
+    if [[ "$code" == "401" ]]; then
+      echo "Health check failed with 401 (API key mismatch). Run restart or rotate-key." >&2
+      return 1
+    fi
     sleep 0.5
   done
   return 1

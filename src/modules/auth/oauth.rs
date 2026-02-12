@@ -294,13 +294,9 @@ async fn exchange_code_at(
     code_verifier: &str,
     token_url: &str,
 ) -> Result<TokenResponse, String> {
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(None, 60)
-            .await
-            .map_err(|e| format!("Failed to prepare OAuth exchange client: {}", e))?
-    } else {
-        crate::utils::http::get_long_client()
-    };
+    // OAuth code exchange happens before an account exists. Keep routing consistent with the
+    // upstream "default client" policy (upstream proxy config, but no proxy-pool selection).
+    let client = crate::utils::http::get_long_client();
 
     let cid = client_id()?;
     let secret = client_secret_optional();
@@ -377,8 +373,11 @@ async fn refresh_access_token_at(
 ) -> Result<TokenResponse, String> {
     record_refresh_attempt(account_id);
 
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 60)
+    let client = if let (Some(pool), Some(acc_id)) = (
+        crate::proxy::proxy_pool::get_global_proxy_pool(),
+        account_id,
+    ) {
+        pool.get_effective_client(Some(acc_id), 60)
             .await
             .map_err(|e| format!("Failed to prepare OAuth refresh client: {}", e))?
     } else {
@@ -440,8 +439,11 @@ async fn revoke_refresh_token_at(
     account_id: Option<&str>,
     revoke_url: &str,
 ) -> Result<(), String> {
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 15)
+    let client = if let (Some(pool), Some(acc_id)) = (
+        crate::proxy::proxy_pool::get_global_proxy_pool(),
+        account_id,
+    ) {
+        pool.get_effective_client(Some(acc_id), 15)
             .await
             .map_err(|e| format!("Failed to prepare OAuth revoke client: {}", e))?
     } else {
@@ -481,8 +483,11 @@ async fn get_user_info_at(
     account_id: Option<&str>,
     userinfo_url: &str,
 ) -> Result<UserInfo, String> {
-    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 15)
+    let client = if let (Some(pool), Some(acc_id)) = (
+        crate::proxy::proxy_pool::get_global_proxy_pool(),
+        account_id,
+    ) {
+        pool.get_effective_client(Some(acc_id), 15)
             .await
             .map_err(|e| format!("Failed to prepare userinfo client: {}", e))?
     } else {

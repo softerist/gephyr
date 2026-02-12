@@ -10,15 +10,39 @@ fn scheduler_refresh_account_delay_bounds_seconds() -> (u64, u64) {
     let min = std::env::var("SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(1);
+        .unwrap_or(5);
     let max = std::env::var("SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(10);
+        .unwrap_or(30);
     if min <= max {
         (min, max)
     } else {
         (max, min)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scheduler_refresh_account_delay_bounds_seconds;
+    use crate::test_utils::lock_env;
+
+    #[test]
+    fn scheduler_refresh_account_delay_defaults_are_reasonable() {
+        let _guard = lock_env();
+        std::env::remove_var("SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS");
+        std::env::remove_var("SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS");
+        assert_eq!(scheduler_refresh_account_delay_bounds_seconds(), (5, 30));
+    }
+
+    #[test]
+    fn scheduler_refresh_account_delay_bounds_swap_when_reversed() {
+        let _guard = lock_env();
+        std::env::set_var("SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS", "30");
+        std::env::set_var("SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS", "5");
+        assert_eq!(scheduler_refresh_account_delay_bounds_seconds(), (5, 30));
+        std::env::remove_var("SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS");
+        std::env::remove_var("SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS");
     }
 }
 

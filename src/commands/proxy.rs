@@ -248,6 +248,7 @@ mod tests {
     use crate::modules::system::integration::SystemManager;
     use crate::proxy::monitor::ProxyRequestLog;
     use crate::proxy::ProxyConfig;
+    use crate::test_utils::{lock_env, ScopedEnvVar};
     use std::sync::OnceLock;
     use tokio::sync::Mutex;
 
@@ -265,10 +266,20 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn startup_runs_monitor_maintenance_and_initializes_proxy_db() {
         let _security_guard = crate::proxy::tests::acquire_security_test_lock();
+        let _env_guard = lock_env();
         let _guard = PROXY_STARTUP_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
             .await;
+
+        // Isolate DATA_DIR to avoid parallel test env var interference (proxy_db uses DATA_DIR).
+        let data_dir = std::env::temp_dir().join(format!(
+            ".gephyr-proxy-startup-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&data_dir).expect("create temp data dir");
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
+
         proxy_db::init_db().expect("proxy db init");
         let old_log_id = format!("startup-maintenance-{}", uuid::Uuid::new_v4());
         let old_timestamp = chrono::Utc::now().timestamp() - (40 * 24 * 3600);
@@ -316,5 +327,6 @@ mod tests {
         );
 
         let _ = internal_stop_proxy_service(&state).await;
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 }
