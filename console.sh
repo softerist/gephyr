@@ -130,9 +130,12 @@ save_env_value() {
 }
 
 ensure_api_key() {
-  # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
-  if [[ -z "${API_KEY:-}" && -n "${GEPHYR_API_KEY:-}" ]]; then
-    export API_KEY="$GEPHYR_API_KEY"
+  if [[ -z "${API_KEY:-}" && -f "$ENV_LOCAL" ]]; then
+    local legacy
+    legacy="$(grep -E '^[A-Za-z_][A-Za-z0-9_]*_API_KEY=' "$ENV_LOCAL" | head -n 1 | cut -d '=' -f2- | tr -d '\r' | sed -E "s/^['\"]|['\"]$//g")"
+    if [[ -n "${legacy:-}" ]]; then
+      export API_KEY="$legacy"
+    fi
   fi
 
   if [[ -z "${API_KEY:-}" ]]; then
@@ -164,12 +167,19 @@ start_container() {
   mkdir -p "$DATA_DIR"
   remove_container_if_exists
 
-  # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
-  if [[ -z "${GOOGLE_OAUTH_CLIENT_ID:-}" && -n "${GEPHYR_OAUTH_CLIENT_ID:-}" ]]; then
-    export GOOGLE_OAUTH_CLIENT_ID="$GEPHYR_OAUTH_CLIENT_ID"
+  if [[ -z "${GOOGLE_OAUTH_CLIENT_ID:-}" && -f "$ENV_LOCAL" ]]; then
+    local legacy
+    legacy="$(grep -E '^[A-Za-z_][A-Za-z0-9_]*_OAUTH_CLIENT_ID=' "$ENV_LOCAL" | head -n 1 | cut -d '=' -f2- | tr -d '\r' | sed -E "s/^['\"]|['\"]$//g")"
+    if [[ -n "${legacy:-}" ]]; then
+      export GOOGLE_OAUTH_CLIENT_ID="$legacy"
+    fi
   fi
-  if [[ -z "${GOOGLE_OAUTH_CLIENT_SECRET:-}" && -n "${GEPHYR_OAUTH_CLIENT_SECRET:-}" ]]; then
-    export GOOGLE_OAUTH_CLIENT_SECRET="$GEPHYR_OAUTH_CLIENT_SECRET"
+  if [[ -z "${GOOGLE_OAUTH_CLIENT_SECRET:-}" && -f "$ENV_LOCAL" ]]; then
+    local legacy
+    legacy="$(grep -E '^[A-Za-z_][A-Za-z0-9_]*_OAUTH_CLIENT_SECRET=' "$ENV_LOCAL" | head -n 1 | cut -d '=' -f2- | tr -d '\r' | sed -E "s/^['\"]|['\"]$//g")"
+    if [[ -n "${legacy:-}" ]]; then
+      export GOOGLE_OAUTH_CLIENT_SECRET="$legacy"
+    fi
   fi
 
   local extra_env=()

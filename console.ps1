@@ -151,9 +151,13 @@ function Save-EnvValue {
 }
 
 function Ensure-ApiKey {
-    # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
-    if (-not $env:API_KEY -and $env:GEPHYR_API_KEY) {
-        $env:API_KEY = $env:GEPHYR_API_KEY
+    if (-not $env:API_KEY -and (Test-Path $envFilePath)) {
+        $legacy = Get-Content $envFilePath |
+            Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*_API_KEY=' } |
+            Select-Object -First 1
+        if ($legacy) {
+            $env:API_KEY = ($legacy.Split("=", 2)[1]).Trim().Trim('"').Trim("'")
+        }
     }
 
     if (-not $env:API_KEY) {
@@ -195,12 +199,21 @@ function Start-Container {
 
     $adminApi = if ($AdminApiEnabled) { "true" } else { "false" }
 
-    # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
-    if (-not $env:GOOGLE_OAUTH_CLIENT_ID -and $env:GEPHYR_OAUTH_CLIENT_ID) {
-        $env:GOOGLE_OAUTH_CLIENT_ID = $env:GEPHYR_OAUTH_CLIENT_ID
+    if (-not $env:GOOGLE_OAUTH_CLIENT_ID -and (Test-Path $envFilePath)) {
+        $legacy = Get-Content $envFilePath |
+            Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*_OAUTH_CLIENT_ID=' } |
+            Select-Object -First 1
+        if ($legacy) {
+            $env:GOOGLE_OAUTH_CLIENT_ID = ($legacy.Split("=", 2)[1]).Trim().Trim('"').Trim("'")
+        }
     }
-    if (-not $env:GOOGLE_OAUTH_CLIENT_SECRET -and $env:GEPHYR_OAUTH_CLIENT_SECRET) {
-        $env:GOOGLE_OAUTH_CLIENT_SECRET = $env:GEPHYR_OAUTH_CLIENT_SECRET
+    if (-not $env:GOOGLE_OAUTH_CLIENT_SECRET -and (Test-Path $envFilePath)) {
+        $legacy = Get-Content $envFilePath |
+            Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*_OAUTH_CLIENT_SECRET=' } |
+            Select-Object -First 1
+        if ($legacy) {
+            $env:GOOGLE_OAUTH_CLIENT_SECRET = ($legacy.Split("=", 2)[1]).Trim().Trim('"').Trim("'")
+        }
     }
 
     $oauthArgs = @()
