@@ -1,5 +1,6 @@
 use crate::modules::{auth::account, system::logger};
 use crate::proxy::admin::ErrorResponse;
+use crate::proxy::admin::runtime::audit;
 use crate::proxy::state::AdminState;
 use axum::{
     extract::{Json, Path, State},
@@ -482,6 +483,57 @@ pub(crate) async fn admin_toggle_proxy_status(
     let _ = state.core.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LogoutAccountRequest {
+    #[serde(default = "default_logout_revoke_remote")]
+    revoke_remote: bool,
+}
+
+fn default_logout_revoke_remote() -> bool {
+    true
+}
+
+pub(crate) async fn admin_logout_account(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Path(account_id): Path<String>,
+    Json(payload): Json<LogoutAccountRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+
+    state
+        .core
+        .account_service
+        .logout_account(&account_id, payload.revoke_remote)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
+
+    let _ = state.core.token_manager.reload_account(&account_id).await;
+
+    audit::log_admin_audit(
+        "logout_account",
+        &actor,
+        serde_json::json!({
+            "account_id": account_id,
+            "revoke_remote": payload.revoke_remote,
+        }),
+    );
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "account_id": account_id,
+        "revoked_remote": payload.revoke_remote,
+        "local_cleared": true,
+        "disabled": true,
+    })))
 }
 
 pub(crate) async fn admin_run_health_check(

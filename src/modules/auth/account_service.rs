@@ -79,6 +79,12 @@ impl AccountService {
         account::get_current_account_id()
     }
 
+    pub async fn logout_account(&self, account_id: &str, revoke_remote: bool) -> Result<(), String> {
+        account::logout_account(account_id, revoke_remote).await?;
+        self.integration.refresh_runtime_state();
+        Ok(())
+    }
+
     pub async fn prepare_oauth_url(&self) -> Result<String, String> {
         oauth_server::prepare_oauth_url().await
     }

@@ -8,6 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const OAUTH_SCOPES: &str = concat!(
@@ -364,6 +365,10 @@ pub async fn refresh_access_token(
     refresh_access_token_at(refresh_token, account_id, TOKEN_URL).await
 }
 
+pub async fn revoke_refresh_token(refresh_token: &str, account_id: Option<&str>) -> Result<(), String> {
+    revoke_refresh_token_at(refresh_token, account_id, REVOKE_URL).await
+}
+
 async fn refresh_access_token_at(
     refresh_token: &str,
     account_id: Option<&str>,
@@ -427,6 +432,41 @@ async fn refresh_access_token_at(
         let error_text = response.text().await.unwrap_or_default();
         Err(format!("Refresh failed: {}", error_text))
     }
+}
+
+async fn revoke_refresh_token_at(
+    refresh_token: &str,
+    account_id: Option<&str>,
+    revoke_url: &str,
+) -> Result<(), String> {
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_client(account_id, 15)
+            .await
+            .map_err(|e| format!("Failed to prepare OAuth revoke client: {}", e))?
+    } else {
+        crate::utils::http::get_client()
+    };
+
+    let params = vec![
+        ("token", refresh_token.to_string()),
+        ("token_type_hint", "refresh_token".to_string()),
+    ];
+
+    let response = apply_google_identity_headers(client.post(revoke_url), account_id)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("Revoke request failed: {}", e))?;
+
+    // Google typically returns 200 even when the token is already invalid. If it doesn't,
+    // we still treat 400 as a "best-effort" success to preserve idempotence.
+    if response.status().is_success() || response.status() == reqwest::StatusCode::BAD_REQUEST {
+        return Ok(());
+    }
+
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(format!("Revoke failed: HTTP {} - {}", status, body))
 }
 pub async fn get_user_info(
     access_token: &str,

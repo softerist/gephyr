@@ -26,10 +26,13 @@ Primary groups:
 
   Accounts:
 - list/add/current/switch/refresh/delete
+- logout (revoke + local token clear/disable)
 - bind device/profile, version list/restore/delete
 - import v1/db/custom-db, sync-db
 - bulk delete, export, reorder
 - fetch quota, toggle proxy status
+- `POST /api/accounts/:accountId/logout` revokes the refresh token (default) and clears local tokens, disabling the account.
+- request body: `{ "revokeRemote": true|false }` (default: `true`)
 - `POST /api/accounts/refresh` now requires explicit confirmation header:
 - `x-gephyr-confirm-bulk-refresh: true` (accepted truthy values: `1|true|yes|confirm`)
 - without confirmation header, endpoint returns `400` with warning text

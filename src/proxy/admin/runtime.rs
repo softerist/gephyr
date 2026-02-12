@@ -1,4 +1,4 @@
-mod audit;
+pub(crate) mod audit;
 pub(crate) mod audit_event;
 mod config_patch;
 mod config_pool;

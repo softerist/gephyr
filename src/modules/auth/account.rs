@@ -113,6 +113,56 @@ pub fn save_account(account: &Account) -> Result<(), String> {
 
     fs::write(&account_path, content).map_err(|e| format!("failed_to_save_account_data: {}", e))
 }
+
+pub async fn logout_account(account_id: &str, revoke_remote: bool) -> Result<(), String> {
+    // Load the account first. We intentionally do not hold ACCOUNT_INDEX_LOCK across the network
+    // request to Google's revoke endpoint.
+    let mut account = load_account(account_id)?;
+
+    // If there's nothing to revoke, treat as idempotent local logout.
+    let refresh_token_raw = account.token.refresh_token.clone();
+    let refresh_token_is_empty = refresh_token_raw.trim().is_empty();
+
+    if revoke_remote && !refresh_token_is_empty {
+        // Ensure encryption prerequisites are satisfied (required when tokens are persisted as v2:*).
+        crate::utils::crypto::validate_encryption_key_prerequisites()?;
+        let refresh_token =
+            crate::utils::crypto::decrypt_secret_or_plaintext(&refresh_token_raw)?;
+        crate::modules::auth::oauth::revoke_refresh_token(&refresh_token, Some(account_id)).await?;
+    }
+
+    // Local wipe + disable.
+    let now = chrono::Utc::now().timestamp();
+    account.disabled = true;
+    account.disabled_at = Some(now);
+    account.disabled_reason = Some("logged_out".to_string());
+
+    account.token.access_token = "".to_string();
+    account.token.refresh_token = "".to_string();
+    account.token.expires_in = 0;
+    account.token.expiry_timestamp = 0;
+    account.token.project_id = None;
+    account.token.session_id = None;
+
+    save_account(&account)?;
+
+    // Keep account index summary consistent.
+    let mut index = load_account_index()?;
+    if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+        summary.disabled = true;
+    }
+    if index.current_account_id.as_deref() == Some(account_id) {
+        index.current_account_id = index
+            .accounts
+            .iter()
+            .find(|a| a.id != account_id && !a.disabled && !a.proxy_disabled)
+            .map(|a| a.id.clone());
+    }
+    save_account_index(&index)?;
+
+    crate::proxy::server::trigger_account_reload(account_id);
+    Ok(())
+}
 pub fn list_accounts() -> Result<Vec<Account>, String> {
     crate::modules::system::logger::log_info("Listing accounts...");
     let index = load_account_index()?;

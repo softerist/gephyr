@@ -25,6 +25,10 @@ pub(super) fn add_account_routes(router: Router<AppState>) -> Router<AppState> {
             post(admin::admin_bind_device),
         )
         .route(
+            "/accounts/:accountId/logout",
+            post(admin::admin_logout_account),
+        )
+        .route(
             "/accounts/:accountId/device-profiles",
             get(admin::admin_get_device_profiles),
         )
