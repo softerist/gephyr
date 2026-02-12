@@ -3,7 +3,7 @@ services:
     image: gephyr:latest
     container_name: gephyr
     ports:
-      - "127.0.0.1:8045:8045"
+      - "127.0.0.1:8145:8145"
     volumes:
       - ~/.gephyr:/home/gephyr/.gephyr
     env_file:
