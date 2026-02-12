@@ -198,6 +198,10 @@ pub(super) fn add_proxy_routes(router: Router<AppState>) -> Router<AppState> {
             "/proxy/tls-canary/run",
             post(admin::admin_run_tls_canary_probe),
         )
+        .route(
+            "/proxy/operator-status",
+            get(admin::admin_get_operator_status),
+        )
         .route("/proxy/metrics", get(admin::admin_get_proxy_metrics))
         .route(
             "/proxy/rate-limits",

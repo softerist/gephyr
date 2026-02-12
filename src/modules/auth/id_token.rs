@@ -139,7 +139,13 @@ fn get_cached_keys_if_fresh(now: i64) -> Result<Option<HashMap<String, Arc<Decod
 }
 
 async fn fetch_google_jwks() -> Result<HashMap<String, Arc<DecodingKey>>, String> {
-    let client = crate::utils::http::get_long_client();
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_client(None, 60)
+            .await
+            .map_err(|e| format!("Failed to prepare JWKS client: {}", e))?
+    } else {
+        crate::utils::http::get_long_client()
+    };
     let response = client
         .get(GOOGLE_JWKS_URL)
         .header(

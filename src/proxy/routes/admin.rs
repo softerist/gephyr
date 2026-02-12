@@ -18,6 +18,7 @@ const ADMIN_PATH_PROXY_STICKY: &str = "/proxy/sticky";
 const ADMIN_PATH_PROXY_COMPLIANCE: &str = "/proxy/compliance";
 const ADMIN_PATH_PROXY_TLS_CANARY: &str = "/proxy/tls-canary";
 const ADMIN_PATH_PROXY_TLS_CANARY_RUN: &str = "/proxy/tls-canary/run";
+const ADMIN_PATH_PROXY_OPERATOR_STATUS: &str = "/proxy/operator-status";
 const ADMIN_PATH_PROXY_METRICS: &str = "/proxy/metrics";
 
 const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
@@ -39,6 +40,7 @@ const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("POST", ADMIN_PATH_PROXY_COMPLIANCE),
     ("GET", ADMIN_PATH_PROXY_TLS_CANARY),
     ("POST", ADMIN_PATH_PROXY_TLS_CANARY_RUN),
+    ("GET", ADMIN_PATH_PROXY_OPERATOR_STATUS),
     ("GET", ADMIN_PATH_PROXY_METRICS),
     ("GET", ADMIN_PATH_PROXY_STATUS),
     ("GET", ADMIN_PATH_VERSION_ROUTES),

@@ -202,6 +202,7 @@ mod tests {
         assert_eq!(body["routes"]["POST /api/proxy/compliance"], true);
         assert_eq!(body["routes"]["GET /api/proxy/tls-canary"], true);
         assert_eq!(body["routes"]["POST /api/proxy/tls-canary/run"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/operator-status"], true);
         assert_eq!(body["routes"]["GET /api/proxy/metrics"], true);
         assert_eq!(body["routes"]["GET /api/version/routes"], true);
     }
@@ -218,6 +219,7 @@ mod tests {
             "/accounts",
             "/auth/status",
             "/proxy/status",
+            "/proxy/operator-status",
             "/logs",
             "/system/data-dir",
             "/security/stats",

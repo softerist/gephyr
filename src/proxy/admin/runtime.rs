@@ -4,6 +4,7 @@ mod config_patch;
 mod config_pool;
 mod logs;
 mod maintenance;
+mod operator_status;
 mod service_control;
 mod user_tokens;
 
@@ -22,6 +23,7 @@ pub(crate) use maintenance::{
     admin_get_antigravity_cache_paths, admin_get_antigravity_path, admin_get_data_dir_path,
     admin_should_check_updates,
 };
+pub(crate) use operator_status::admin_get_operator_status;
 pub(crate) use service_control::{
     admin_clear_all_rate_limits, admin_clear_proxy_session_bindings, admin_clear_rate_limit,
     admin_fetch_zai_models, admin_generate_api_key, admin_get_preferred_account,

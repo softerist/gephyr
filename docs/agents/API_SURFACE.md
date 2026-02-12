@@ -53,6 +53,7 @@ Primary groups:
 - OAuth consent denial from callback (`error=access_denied`) is mapped to `phase=rejected` with `detail=oauth_access_denied`
   Proxy control:
 - status/start/stop
+- operator status: `GET /api/proxy/operator-status` returns encryption-key/token decryptability status and account linkage summary for operators
 - model mapping update
 - api-key generation
 - config save (`POST /api/config`) now returns `{ ok, saved, message, warnings[] }` and protects against empty `proxy.api_key` lockout by preserving the existing key
