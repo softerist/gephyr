@@ -61,6 +61,21 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
         }
     }
 
+    // Docker images commonly set PORT; treat it as an override for the bind/listen port in headless mode.
+    // This prevents persisted config in the data dir from accidentally breaking container port mappings.
+    if let Ok(port) = std::env::var("PORT") {
+        let trimmed = port.trim();
+        if !trimmed.is_empty() {
+            match trimmed.parse::<u16>() {
+                Ok(p) if p > 0 => {
+                    config.proxy.port = p;
+                    info!("Using proxy port from environment: {}", p);
+                }
+                _ => warn!("[W-PORT-INVALID] ignoring_invalid_port_value: {}", port),
+            }
+        }
+    }
+
     if let Ok(password) = std::env::var("WEB_PASSWORD") {
         if !password.trim().is_empty() {
             info!("Using web admin password from environment");
@@ -276,5 +291,20 @@ mod tests {
         apply_security_hardening(&mut config);
 
         assert!(matches!(config.proxy.auth_mode, ProxyAuthMode::Strict));
+    }
+
+    #[test]
+    fn headless_env_port_overrides_config_port() {
+        let _guard = LIB_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lib env test lock");
+        let _port = ScopedEnvVar::set("PORT", "8045");
+
+        let mut config = AppConfig::default();
+        config.proxy.port = 8145;
+        apply_headless_env_overrides(&mut config);
+
+        assert_eq!(config.proxy.port, 8045);
     }
 }
