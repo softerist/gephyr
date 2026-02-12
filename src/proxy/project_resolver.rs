@@ -12,11 +12,18 @@ fn apply_account_device_headers(
     account_id: Option<&str>,
 ) -> reqwest::RequestBuilder {
     if let Some(profile) = load_account_device_profile(account_id) {
-        request = request
-            .header("x-machine-id", profile.machine_id)
-            .header("x-mac-machine-id", profile.mac_machine_id)
-            .header("x-dev-device-id", profile.dev_device_id)
-            .header("x-sqm-id", profile.sqm_id);
+        if let Some(v) = profile.machine_id.as_deref() {
+            request = request.header("x-machine-id", v);
+        }
+        if let Some(v) = profile.mac_machine_id.as_deref() {
+            request = request.header("x-mac-machine-id", v);
+        }
+        if let Some(v) = profile.dev_device_id.as_deref() {
+            request = request.header("x-dev-device-id", v);
+        }
+        if let Some(v) = profile.sqm_id.as_deref() {
+            request = request.header("x-sqm-id", v);
+        }
     }
     request
 }

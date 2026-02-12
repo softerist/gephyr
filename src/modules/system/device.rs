@@ -91,11 +91,12 @@ pub fn read_profile(storage_path: &Path) -> Result<DeviceProfile, String> {
         None
     };
 
+    let machine_id = get_field("machineId").ok_or("missing_machine_id")?;
     Ok(DeviceProfile {
-        machine_id: get_field("machineId").ok_or("missing_machine_id")?,
-        mac_machine_id: get_field("macMachineId").ok_or("missing_mac_machine_id")?,
-        dev_device_id: get_field("devDeviceId").ok_or("missing_dev_device_id")?,
-        sqm_id: get_field("sqmId").ok_or("missing_sqm_id")?,
+        machine_id: Some(machine_id),
+        mac_machine_id: get_field("macMachineId"),
+        dev_device_id: get_field("devDeviceId"),
+        sqm_id: get_field("sqmId"),
     })
 }
 pub fn load_global_original() -> Option<DeviceProfile> {
@@ -124,10 +125,10 @@ pub fn save_global_original(profile: &DeviceProfile) -> Result<(), String> {
 }
 pub fn generate_profile() -> DeviceProfile {
     DeviceProfile {
-        machine_id: format!("auth0|user_{}", random_hex(32)),
-        mac_machine_id: new_standard_machine_id(),
-        dev_device_id: Uuid::new_v4().to_string(),
-        sqm_id: format!("{{{}}}", Uuid::new_v4().to_string().to_uppercase()),
+        machine_id: Some(format!("auth0|user_{}", random_hex(32))),
+        mac_machine_id: Some(new_standard_machine_id()),
+        dev_device_id: Some(Uuid::new_v4().to_string()),
+        sqm_id: Some(format!("{{{}}}", Uuid::new_v4().to_string().to_uppercase())),
     }
 }
 

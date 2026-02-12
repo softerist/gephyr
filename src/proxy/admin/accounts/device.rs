@@ -15,7 +15,9 @@ pub(crate) struct BindDeviceRequest {
 }
 
 fn default_bind_mode() -> String {
-    "generate".to_string()
+    // Prefer capture from local Antigravity storage.json to avoid generating
+    // synthetic telemetry identifiers unless the operator explicitly opts in.
+    "capture".to_string()
 }
 
 pub(crate) async fn admin_bind_device(
@@ -79,13 +81,13 @@ pub(crate) struct BindDeviceProfileWrapper {
 #[derive(Deserialize)]
 pub(crate) struct DeviceProfileApiWrapper {
     #[serde(alias = "machineId")]
-    machine_id: String,
+    machine_id: Option<String>,
     #[serde(alias = "macMachineId")]
-    mac_machine_id: String,
+    mac_machine_id: Option<String>,
     #[serde(alias = "devDeviceId")]
-    dev_device_id: String,
+    dev_device_id: Option<String>,
     #[serde(alias = "sqmId")]
-    sqm_id: String,
+    sqm_id: Option<String>,
 }
 
 impl From<DeviceProfileApiWrapper> for crate::models::account::DeviceProfile {

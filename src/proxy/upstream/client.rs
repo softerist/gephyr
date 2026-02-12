@@ -37,10 +37,18 @@ fn apply_device_profile_headers(
     headers: &mut header::HeaderMap,
     profile: &crate::models::DeviceProfile,
 ) {
-    insert_custom_header(headers, "x-machine-id", &profile.machine_id);
-    insert_custom_header(headers, "x-mac-machine-id", &profile.mac_machine_id);
-    insert_custom_header(headers, "x-dev-device-id", &profile.dev_device_id);
-    insert_custom_header(headers, "x-sqm-id", &profile.sqm_id);
+    if let Some(v) = profile.machine_id.as_deref() {
+        insert_custom_header(headers, "x-machine-id", v);
+    }
+    if let Some(v) = profile.mac_machine_id.as_deref() {
+        insert_custom_header(headers, "x-mac-machine-id", v);
+    }
+    if let Some(v) = profile.dev_device_id.as_deref() {
+        insert_custom_header(headers, "x-dev-device-id", v);
+    }
+    if let Some(v) = profile.sqm_id.as_deref() {
+        insert_custom_header(headers, "x-sqm-id", v);
+    }
 }
 
 fn apply_account_device_headers(headers: &mut header::HeaderMap, account_id: Option<&str>) {
@@ -309,10 +317,10 @@ mod tests {
     #[test]
     fn device_profile_headers_are_applied_to_header_map() {
         let profile = crate::models::DeviceProfile {
-            machine_id: "machine-1".to_string(),
-            mac_machine_id: "mac-1".to_string(),
-            dev_device_id: "dev-1".to_string(),
-            sqm_id: "{SQM-1}".to_string(),
+            machine_id: Some("machine-1".to_string()),
+            mac_machine_id: Some("mac-1".to_string()),
+            dev_device_id: Some("dev-1".to_string()),
+            sqm_id: Some("{SQM-1}".to_string()),
         };
         let mut headers = header::HeaderMap::new();
         apply_device_profile_headers(&mut headers, &profile);

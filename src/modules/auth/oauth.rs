@@ -153,11 +153,18 @@ fn apply_google_identity_headers(
     request = request.header(reqwest::header::USER_AGENT, oauth_user_agent());
 
     if let Some(profile) = load_account_device_profile(account_id) {
-        request = request
-            .header("x-machine-id", profile.machine_id)
-            .header("x-mac-machine-id", profile.mac_machine_id)
-            .header("x-dev-device-id", profile.dev_device_id)
-            .header("x-sqm-id", profile.sqm_id);
+        if let Some(v) = profile.machine_id.as_deref() {
+            request = request.header("x-machine-id", v);
+        }
+        if let Some(v) = profile.mac_machine_id.as_deref() {
+            request = request.header("x-mac-machine-id", v);
+        }
+        if let Some(v) = profile.dev_device_id.as_deref() {
+            request = request.header("x-dev-device-id", v);
+        }
+        if let Some(v) = profile.sqm_id.as_deref() {
+            request = request.header("x-sqm-id", v);
+        }
     }
 
     request
@@ -554,6 +561,7 @@ pub async fn ensure_fresh_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::ScopedEnvVar;
     use axum::{
         extract::State,
         http::HeaderMap,
@@ -733,11 +741,14 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_access_token_sends_user_agent_header() {
         let _guard = oauth_ua_test_guard();
-        let previous_ua = std::env::var("ABV_OAUTH_USER_AGENT").ok();
-        let previous_client_id = std::env::var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID").ok();
-        std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-integration-test");
-        std::env::set_var(
+        let _ua = ScopedEnvVar::set("ABV_OAUTH_USER_AGENT", "ua-integration-test");
+        // Set both keys to avoid cross-test env races (other tests may remove only one).
+        let _cid_primary = ScopedEnvVar::set(
             "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "test-client.apps.googleusercontent.com",
+        );
+        let _cid_fallback = ScopedEnvVar::set(
+            "ABV_GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
 
@@ -755,15 +766,6 @@ mod tests {
             captured.iter().any(|ua| ua == "ua-integration-test"),
             "expected OAuth refresh call to carry configured User-Agent"
         );
-
-        match previous_ua {
-            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
-        }
-        match previous_client_id {
-            Some(value) => std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", value),
-            None => std::env::remove_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID"),
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -798,9 +800,13 @@ mod tests {
         let _guard = oauth_ua_test_guard();
         clear_refresh_observability_for_tests();
 
-        let previous_client_id = std::env::var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID").ok();
-        std::env::set_var(
+        // Set both keys to avoid cross-test env races (other tests may remove only one).
+        let _cid_primary = ScopedEnvVar::set(
             "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "test-client.apps.googleusercontent.com",
+        );
+        let _cid_fallback = ScopedEnvVar::set(
+            "ABV_GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
 
@@ -834,11 +840,6 @@ mod tests {
                 .unwrap_or(0),
             1
         );
-
-        match previous_client_id {
-            Some(value) => std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", value),
-            None => std::env::remove_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID"),
-        }
         clear_refresh_observability_for_tests();
     }
 

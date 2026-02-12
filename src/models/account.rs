@@ -120,10 +120,14 @@ impl Default for AccountIndex {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceProfile {
-    pub machine_id: String,
-    pub mac_machine_id: String,
-    pub dev_device_id: String,
-    pub sqm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac_machine_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev_device_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqm_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceProfileVersion {
