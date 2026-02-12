@@ -71,10 +71,14 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
     let router = admin_groups::add_system_routes(router);
     let router = admin_groups::add_security_routes(router);
     let router = admin_groups::add_user_token_routes(router);
-    add_legacy_stats_alias_routes(router).layer(axum::middleware::from_fn_with_state(
-        state.clone(),
-        crate::proxy::middleware::admin_auth_middleware,
-    ))
+    add_legacy_stats_alias_routes(router)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::proxy::middleware::admin_auth_middleware,
+        ))
+        .layer(axum::middleware::from_fn(
+            crate::proxy::middleware::request_context_middleware,
+        ))
 }
 
 fn add_legacy_stats_alias_routes(router: Router<AppState>) -> Router<AppState> {

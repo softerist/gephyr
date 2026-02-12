@@ -61,6 +61,17 @@ pub async fn monitor_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    let correlation_id = request
+        .headers()
+        .get("x-correlation-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let mut model = if uri.contains("/v1beta/models/") {
         uri.split("/v1beta/models/")
             .nth(1)
@@ -147,6 +158,8 @@ pub async fn monitor_middleware(
         mapped_model,
         account_email,
         client_ip,
+        correlation_id,
+        request_id,
         error: None,
         request_body: request_body_str,
         response_body: None,

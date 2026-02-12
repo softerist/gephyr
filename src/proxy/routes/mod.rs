@@ -8,7 +8,9 @@ use axum::{
 
 use crate::proxy::handlers;
 use crate::proxy::health;
-use crate::proxy::middleware::{auth_middleware, ip_filter_middleware, monitor_middleware};
+use crate::proxy::middleware::{
+    auth_middleware, ip_filter_middleware, monitor_middleware, request_context_middleware,
+};
 use crate::proxy::state::AppState;
 
 pub use admin::admin_version_route_capabilities;
@@ -62,4 +64,5 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
             state.clone(),
             ip_filter_middleware,
         ))
+        .layer(axum::middleware::from_fn(request_context_middleware))
 }

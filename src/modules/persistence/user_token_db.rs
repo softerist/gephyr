@@ -594,4 +594,24 @@ mod tests {
         assert!(fetched.is_ok());
         assert_eq!(fetched.unwrap().unwrap().username, username);
     }
+
+    #[test]
+    fn validate_token_rejects_disabled_token() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        let _ = init_db();
+        let username = format!("DisabledUser_{}", Uuid::new_v4());
+        let token =
+            create_token(username, "day".to_string(), None, 0, None, None).expect("create token");
+
+        update_token(&token.id, None, None, Some(false), None, None, None).expect("disable token");
+
+        let (ok, reason) = validate_token(&token.token, "203.0.113.10").expect("validate_token");
+        assert!(!ok, "disabled token should not validate");
+        let msg = reason.unwrap_or_default();
+        assert!(
+            msg.to_ascii_lowercase().contains("disabled"),
+            "expected disabled reason, got: {}",
+            msg
+        );
+    }
 }

@@ -18,6 +18,8 @@ pub struct ProxyRequestLog {
     pub mapped_model: Option<String>,
     pub account_email: Option<String>,
     pub client_ip: Option<String>,
+    pub correlation_id: Option<String>,
+    pub request_id: Option<String>,
     pub error: Option<String>,
     pub request_body: Option<String>,
     pub response_body: Option<String>,
@@ -93,7 +95,28 @@ impl ProxyMonitor {
         if !self.is_enabled() {
             return;
         }
-        tracing::info!("[Monitor] Logging request: {} {}", log.method, log.url);
+        match (log.request_id.as_deref(), log.correlation_id.as_deref()) {
+            (Some(request_id), Some(correlation_id)) => tracing::info!(
+                request_id = %request_id,
+                correlation_id = %correlation_id,
+                "[Monitor] Logging request: {} {}",
+                log.method,
+                log.url
+            ),
+            (Some(request_id), None) => tracing::info!(
+                request_id = %request_id,
+                "[Monitor] Logging request: {} {}",
+                log.method,
+                log.url
+            ),
+            (None, Some(correlation_id)) => tracing::info!(
+                correlation_id = %correlation_id,
+                "[Monitor] Logging request: {} {}",
+                log.method,
+                log.url
+            ),
+            (None, None) => tracing::info!("[Monitor] Logging request: {} {}", log.method, log.url),
+        };
         {
             let mut stats = self.stats.write().await;
             stats.total_requests += 1;
@@ -287,6 +310,8 @@ mod tests {
             mapped_model: Some("gemini-2.5-pro".to_string()),
             account_email: Some("acct@example.com".to_string()),
             client_ip: Some("127.0.0.1".to_string()),
+            correlation_id: None,
+            request_id: None,
             error: None,
             request_body: None,
             response_body: None,

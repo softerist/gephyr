@@ -7,6 +7,7 @@ pub mod logger;
 pub mod migration;
 pub mod process;
 pub mod quota;
+pub mod request_context;
 pub mod scheduler;
 pub mod update_checker;
 pub mod validation;

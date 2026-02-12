@@ -71,7 +71,7 @@ async fn auth_middleware_internal(
     let is_health_check = path == "/healthz" || path == "/api/health" || path == "/health";
     let is_internal_endpoint = path.starts_with("/internal/");
     if !path.contains("event_logging") && !is_health_check {
-        tracing::info!("Request: {} {}", method, path);
+        crate::modules::system::logger::log_info(&format!("Request: {} {}", method, path));
     } else {
         tracing::trace!("Heartbeat/Health: {} {}", method, path);
     }
@@ -233,6 +233,11 @@ mod tests {
     use super::*;
     use crate::proxy::config::SecurityMonitorConfig;
     use crate::proxy::ProxyAuthMode;
+    use axum::{
+        body::Body, extract::ConnectInfo, http::Request as HttpRequest, routing::get, Router,
+    };
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use tower::ServiceExt;
 
     fn make_security(api_key: &str, admin_password: Option<&str>) -> ProxySecurityConfig {
         ProxySecurityConfig {
@@ -289,5 +294,50 @@ mod tests {
         assert!(is_authorized(&security, Some("sk-api"), false));
         assert!(!is_authorized(&security, Some("admin123"), false));
         assert!(!is_authorized(&security, None, false));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn user_token_auth_rejects_disabled_tokens() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        let _ = crate::modules::persistence::user_token_db::init_db();
+
+        let token = crate::modules::persistence::user_token_db::create_token(
+            format!("AuthTestUser_{}", uuid::Uuid::new_v4()),
+            "day".to_string(),
+            None,
+            0,
+            None,
+            None,
+        )
+        .expect("create token");
+        crate::modules::persistence::user_token_db::update_token(
+            &token.id,
+            None,
+            None,
+            Some(false),
+            None,
+            None,
+            None,
+        )
+        .expect("disable token");
+
+        let security = Arc::new(RwLock::new(make_security("sk-api", None)));
+        let app = Router::new()
+            .route("/v1/models", get(|| async { StatusCode::OK }))
+            .layer(axum::middleware::from_fn_with_state(
+                security,
+                auth_middleware,
+            ));
+
+        let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)), 4242);
+        let mut req = HttpRequest::builder()
+            .uri("/v1/models")
+            .header("Authorization", format!("Bearer {}", token.token))
+            .body(Body::empty())
+            .expect("request");
+        req.extensions_mut().insert(ConnectInfo(socket));
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

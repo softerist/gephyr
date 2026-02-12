@@ -169,11 +169,61 @@ pub fn clear_logs() -> Result<(), String> {
     Ok(())
 }
 pub fn log_info(message: &str) {
-    info!("{}", message);
+    if let Some(ctx) = crate::modules::system::request_context::try_get() {
+        match (ctx.request_id.as_deref(), ctx.correlation_id.as_deref()) {
+            (Some(request_id), Some(correlation_id)) => {
+                info!(request_id = %request_id, correlation_id = %correlation_id, "{}", message);
+            }
+            (Some(request_id), None) => {
+                info!(request_id = %request_id, "{}", message);
+            }
+            (None, Some(correlation_id)) => {
+                info!(correlation_id = %correlation_id, "{}", message);
+            }
+            (None, None) => info!("{}", message),
+        }
+    } else {
+        info!("{}", message);
+    }
 }
 pub fn log_warn(message: &str) {
-    warn!("{}", message);
+    if let Some(ctx) = crate::modules::system::request_context::try_get() {
+        match (ctx.request_id.as_deref(), ctx.correlation_id.as_deref()) {
+            (Some(request_id), Some(correlation_id)) => {
+                warn!(request_id = %request_id, correlation_id = %correlation_id, "{}", message);
+            }
+            (Some(request_id), None) => {
+                warn!(request_id = %request_id, "{}", message);
+            }
+            (None, Some(correlation_id)) => {
+                warn!(correlation_id = %correlation_id, "{}", message);
+            }
+            (None, None) => warn!("{}", message),
+        }
+    } else {
+        warn!("{}", message);
+    }
 }
 pub fn log_error(message: &str) {
-    error!("{}", message);
+    if let Some(ctx) = crate::modules::system::request_context::try_get() {
+        match (ctx.request_id.as_deref(), ctx.correlation_id.as_deref()) {
+            (Some(request_id), Some(correlation_id)) => {
+                error!(
+                    request_id = %request_id,
+                    correlation_id = %correlation_id,
+                    "{}",
+                    message
+                );
+            }
+            (Some(request_id), None) => {
+                error!(request_id = %request_id, "{}", message);
+            }
+            (None, Some(correlation_id)) => {
+                error!(correlation_id = %correlation_id, "{}", message);
+            }
+            (None, None) => error!("{}", message),
+        }
+    } else {
+        error!("{}", message);
+    }
 }

@@ -283,6 +283,8 @@ mod tests {
             mapped_model: None,
             account_email: None,
             client_ip: Some("127.0.0.1".to_string()),
+            correlation_id: None,
+            request_id: None,
             error: None,
             request_body: None,
             response_body: None,
