@@ -54,23 +54,21 @@ fn parse_auth_mode(value: &str) -> Option<crate::proxy::ProxyAuthMode> {
 }
 
 fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
-    if let Ok(key) = std::env::var("ABV_API_KEY").or_else(|_| std::env::var("API_KEY")) {
+    if let Ok(key) = std::env::var("API_KEY").or_else(|_| std::env::var("API_KEY")) {
         if !key.trim().is_empty() {
             info!("Using API key from environment");
             config.proxy.api_key = key;
         }
     }
 
-    if let Ok(password) =
-        std::env::var("ABV_WEB_PASSWORD").or_else(|_| std::env::var("WEB_PASSWORD"))
-    {
+    if let Ok(password) = std::env::var("WEB_PASSWORD").or_else(|_| std::env::var("WEB_PASSWORD")) {
         if !password.trim().is_empty() {
             info!("Using web admin password from environment");
             config.proxy.admin_password = Some(password);
         }
     }
 
-    if let Ok(mode) = std::env::var("ABV_AUTH_MODE").or_else(|_| std::env::var("AUTH_MODE")) {
+    if let Ok(mode) = std::env::var("AUTH_MODE").or_else(|_| std::env::var("AUTH_MODE")) {
         if mode.trim().eq_ignore_ascii_case("auto") {
             warn!(
                 "[W-AUTH-MODE-AUTO-DEPRECATED] auth_mode_auto_is_deprecated_coercing_to_strict_in_headless_mode"
@@ -91,7 +89,7 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
     }
 
     if let Ok(allow_lan) =
-        std::env::var("ABV_ALLOW_LAN_ACCESS").or_else(|_| std::env::var("ALLOW_LAN_ACCESS"))
+        std::env::var("ALLOW_LAN_ACCESS").or_else(|_| std::env::var("ALLOW_LAN_ACCESS"))
     {
         if let Some(parsed) = parse_env_bool(&allow_lan) {
             config.proxy.allow_lan_access = parsed;
@@ -119,7 +117,7 @@ async fn start_headless_runtime() -> Result<commands::proxy::ProxyServiceState, 
     let proxy_state = commands::proxy::ProxyServiceState::new();
     crate::utils::crypto::validate_encryption_key_prerequisites().map_err(|e| {
         format!(
-            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] startup_encryption_preflight_failed: {} Refusing to start because encrypted token/config operations would fail at runtime. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY (for example in .env.local/.env or container env), restart Gephyr, then rerun OAuth login.",
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] startup_encryption_preflight_failed: {} Refusing to start because encrypted token/config operations would fail at runtime. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY (for example in .env.local/.env or container env), restart Gephyr, then rerun OAuth login.",
             e
         )
     })?;
@@ -266,7 +264,7 @@ mod tests {
             .lock()
             .expect("lib env test lock");
         let _auth_mode = ScopedEnvVar::set("AUTH_MODE", "auto");
-        let _abv_auth_mode = ScopedEnvVar::unset("ABV_AUTH_MODE");
+        let _auth_mode = ScopedEnvVar::unset("AUTH_MODE");
 
         let mut config = AppConfig::default();
         config.proxy.auth_mode = ProxyAuthMode::AllExceptHealth;

@@ -20,7 +20,7 @@ fn parse_env_flag(value: &str) -> bool {
 }
 
 fn admin_stop_shutdown_hook_enabled() -> bool {
-    std::env::var("ABV_ADMIN_STOP_SHUTDOWN")
+    std::env::var("ADMIN_STOP_SHUTDOWN")
         .ok()
         .map(|value| parse_env_flag(&value))
         .unwrap_or(false)
@@ -81,11 +81,11 @@ pub(crate) async fn admin_stop_proxy_service(State(state): State<AdminState>) ->
     if admin_stop_shutdown_hook_enabled() {
         if crate::proxy::server::request_global_shutdown() {
             logger::log_warn(
-                "[API] ABV_ADMIN_STOP_SHUTDOWN enabled: requested graceful server shutdown",
+                "[API] ADMIN_STOP_SHUTDOWN enabled: requested graceful server shutdown",
             );
         } else {
             logger::log_warn(
-                "[API] ABV_ADMIN_STOP_SHUTDOWN enabled but no active server shutdown hook found",
+                "[API] ADMIN_STOP_SHUTDOWN enabled but no active server shutdown hook found",
             );
         }
     }

@@ -37,35 +37,35 @@ Edit `.env.local` with your API key and OAuth credentials:
 
 ```env
 GEPHYR_API_KEY=gph_your_secure_api_key
-GEPHYR_GOOGLE_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
-GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
+GEPHYR_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GEPHYR_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
 
 # Optional: restrict accepted Google Workspace domains for identity verification
-ABV_ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
+ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
 
 # Optional: override User-Agent for OAuth token/userinfo calls only
-ABV_OAUTH_USER_AGENT=vscode/1.95.0 gephyr
+OAUTH_USER_AGENT=vscode/1.95.0 gephyr
 
 # Optional: scheduler jitter window in seconds (defaults shown)
-ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
-ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
+SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
+SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
 
 # Optional: deterministic per-account stagger before each batch refresh task
-ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS=250
-ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
+ACCOUNT_REFRESH_STAGGER_MIN_MS=250
+ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
 
 # Optional: startup health-check smoothing (boot-time token refresh)
-ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
-ABV_STARTUP_HEALTH_JITTER_MIN_MS=150
-ABV_STARTUP_HEALTH_JITTER_MAX_MS=1200
+STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
+STARTUP_HEALTH_JITTER_MIN_MS=150
+STARTUP_HEALTH_JITTER_MAX_MS=1200
 
 # Optional runtime TLS backend override when binary includes both stacks
-ABV_TLS_BACKEND=rustls
+TLS_BACKEND=rustls
 
 # Optional startup TLS canary probe (recommended when changing TLS backend)
-ABV_TLS_CANARY_URL=https://oauth2.googleapis.com/token
-ABV_TLS_CANARY_TIMEOUT_SECS=5
-ABV_TLS_CANARY_REQUIRED=false
+TLS_CANARY_URL=https://oauth2.googleapis.com/token
+TLS_CANARY_TIMEOUT_SECS=5
+TLS_CANARY_REQUIRED=false
 ```
 
 ### 2. Build & Run
@@ -143,28 +143,28 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GEPHYR_API_KEY` | ✅ (for scripts) | — | API key used by `console.ps1`; passed to container as `API_KEY` |
-| `API_KEY` / `ABV_API_KEY` | ✅ (runtime) | — | Runtime API authentication token |
-| `AUTH_MODE` / `ABV_AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
-| `ALLOW_LAN_ACCESS` / `ABV_ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
-| `ABV_ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
-| `GEPHYR_GOOGLE_OAUTH_CLIENT_ID` / `ABV_GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
-| `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` / `ABV_GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
-| `ABV_OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
-| `ABV_TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
-| `ABV_TLS_CANARY_URL` | — | — | Optional startup TLS canary probe URL |
-| `ABV_TLS_CANARY_TIMEOUT_SECS` | — | `5` | Startup TLS canary timeout seconds (clamped 1..60) |
-| `ABV_TLS_CANARY_REQUIRED` | — | `false` | If `true`, startup fails when TLS canary probe fails |
-| `ABV_ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
-| `ABV_DATA_DIR` | — | `~/.gephyr` | Data directory path |
-| `ABV_PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
-| `ABV_MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
-| `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` | — | `30` | Min random delay before each scheduled quota-refresh batch |
-| `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` | — | `120` | Max random delay before each scheduled quota-refresh batch |
-| `ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS` | — | `250` | Min deterministic per-account delay before each batch refresh task |
-| `ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS` | — | `1500` | Max deterministic per-account delay before each batch refresh task |
-| `ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES` | — | `5` | Max concurrent token refreshes during startup health-check (clamped 1..32) |
-| `ABV_STARTUP_HEALTH_JITTER_MIN_MS` | — | `150` | Min random per-account delay before startup health refresh |
-| `ABV_STARTUP_HEALTH_JITTER_MAX_MS` | — | `1200` | Max random per-account delay before startup health refresh |
+| `API_KEY` / `API_KEY` | ✅ (runtime) | — | Runtime API authentication token |
+| `AUTH_MODE` / `AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
+| `ALLOW_LAN_ACCESS` / `ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
+| `ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
+| `GEPHYR_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
+| `GEPHYR_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
+| `OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
+| `TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
+| `TLS_CANARY_URL` | — | — | Optional startup TLS canary probe URL |
+| `TLS_CANARY_TIMEOUT_SECS` | — | `5` | Startup TLS canary timeout seconds (clamped 1..60) |
+| `TLS_CANARY_REQUIRED` | — | `false` | If `true`, startup fails when TLS canary probe fails |
+| `ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
+| `DATA_DIR` | — | `~/.gephyr` | Data directory path |
+| `PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
+| `MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
+| `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` | — | `30` | Min random delay before each scheduled quota-refresh batch |
+| `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` | — | `120` | Max random delay before each scheduled quota-refresh batch |
+| `ACCOUNT_REFRESH_STAGGER_MIN_MS` | — | `250` | Min deterministic per-account delay before each batch refresh task |
+| `ACCOUNT_REFRESH_STAGGER_MAX_MS` | — | `1500` | Max deterministic per-account delay before each batch refresh task |
+| `STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES` | — | `5` | Max concurrent token refreshes during startup health-check (clamped 1..32) |
+| `STARTUP_HEALTH_JITTER_MIN_MS` | — | `150` | Min random per-account delay before startup health refresh |
+| `STARTUP_HEALTH_JITTER_MAX_MS` | — | `1200` | Max random per-account delay before startup health refresh |
 
 Proxy-pool isolation knobs are config/API settings (not env vars):
 - `proxy.proxy_pool.allow_shared_proxy_fallback`
@@ -344,7 +344,7 @@ Choose one profile and monitor `/api/proxy/metrics` proxy-pool counters.
 Keep these in both modes:
 - `max_account_requests_per_minute=10`
 - `max_account_concurrency=1`
-- scheduler jitter enabled (`ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`, `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
+- scheduler jitter enabled (`SCHEDULER_REFRESH_JITTER_MIN_SECONDS`, `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
 
 ### Console Commands
 
@@ -410,7 +410,7 @@ See [OAUTH_SETUP.md](OAUTH_SETUP.md) for detailed Google Cloud OAuth configurati
 
 **Quick summary:**
 - **Local/Docker**: Use "Desktop app" OAuth client type
-- **Hosted deployment**: Use "Web application" client with `ABV_PUBLIC_URL` set
+- **Hosted deployment**: Use "Web application" client with `PUBLIC_URL` set
 
 ---
 
@@ -421,7 +421,7 @@ See [OAUTH_SETUP.md](OAUTH_SETUP.md) for detailed Google Cloud OAuth configurati
 | Linux/macOS | `~/.gephyr` |
 | Windows | `%USERPROFILE%\.gephyr` |
 
-Override with `ABV_DATA_DIR` environment variable.
+Override with `DATA_DIR` environment variable.
 
 ---
 

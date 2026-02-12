@@ -135,7 +135,7 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .expect("token persist env lock");
-        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "token-persistence-test-key");
+        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "token-persistence-test-key");
 
         let temp_dir = std::env::temp_dir().join(format!(
             ".gephyr-save-refreshed-token-test-{}",

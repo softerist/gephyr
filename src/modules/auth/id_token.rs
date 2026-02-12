@@ -92,7 +92,7 @@ where
 }
 
 fn parse_allowed_domains() -> Option<HashSet<String>> {
-    let raw = std::env::var("ABV_ALLOWED_GOOGLE_DOMAINS").ok()?;
+    let raw = std::env::var("ALLOWED_GOOGLE_DOMAINS").ok()?;
     let set: HashSet<String> = raw
         .split(',')
         .map(|s| s.trim().to_ascii_lowercase())
@@ -111,14 +111,14 @@ fn validate_domain_allowlist(hd: Option<&str>) -> Result<(), String> {
     };
     let Some(domain) = hd.map(|v| v.trim().to_ascii_lowercase()) else {
         return Err(
-            "Google hosted domain is required but missing (ABV_ALLOWED_GOOGLE_DOMAINS)".to_string(),
+            "Google hosted domain is required but missing (ALLOWED_GOOGLE_DOMAINS)".to_string(),
         );
     };
     if allowed.contains(&domain) {
         Ok(())
     } else {
         Err(format!(
-            "Google hosted domain '{}' is not in ABV_ALLOWED_GOOGLE_DOMAINS",
+            "Google hosted domain '{}' is not in ALLOWED_GOOGLE_DOMAINS",
             domain
         ))
     }
@@ -348,13 +348,13 @@ BQIDAQAB
         let mut keys = HashMap::new();
         keys.insert(TEST_KID.to_string(), Arc::new(decoding));
         set_jwks_cache_for_tests(keys);
-        std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", TEST_CLIENT_ID);
-        std::env::remove_var("ABV_ALLOWED_GOOGLE_DOMAINS");
+        std::env::set_var("GEPHYR_OAUTH_CLIENT_ID", TEST_CLIENT_ID);
+        std::env::remove_var("ALLOWED_GOOGLE_DOMAINS");
     }
 
     fn teardown_test_env() {
-        std::env::remove_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID");
-        std::env::remove_var("ABV_ALLOWED_GOOGLE_DOMAINS");
+        std::env::remove_var("GEPHYR_OAUTH_CLIENT_ID");
+        std::env::remove_var("ALLOWED_GOOGLE_DOMAINS");
         clear_jwks_cache_for_tests();
     }
 
@@ -503,7 +503,7 @@ BQIDAQAB
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         setup_test_env();
-        std::env::set_var("ABV_ALLOWED_GOOGLE_DOMAINS", "corp.example.com");
+        std::env::set_var("ALLOWED_GOOGLE_DOMAINS", "corp.example.com");
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: TEST_ISSUER,
@@ -519,7 +519,7 @@ BQIDAQAB
         let err = validate_id_token(&token)
             .await
             .expect_err("disallowed domain must fail");
-        assert!(err.contains("not in ABV_ALLOWED_GOOGLE_DOMAINS"));
+        assert!(err.contains("not in ALLOWED_GOOGLE_DOMAINS"));
         teardown_test_env();
     }
 }

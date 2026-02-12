@@ -20,7 +20,7 @@ Defined in `src/proxy/routes/mod.rs`.
 
 ## Admin Routes
 
-Defined in `src/proxy/routes/admin.rs`; mounted under `/api` only if `ABV_ENABLE_ADMIN_API=true` (`src/proxy/server.rs`).
+Defined in `src/proxy/routes/admin.rs`; mounted under `/api` only if `ENABLE_ADMIN_API=true` (`src/proxy/server.rs`).
 
 Primary groups:
 
@@ -99,6 +99,6 @@ Primary groups:
 
 ## Route-Mounted Conditions
 
-- `/api/*` routes are not exposed unless `ABV_ENABLE_ADMIN_API=true`: `src/proxy/server.rs`.
+- `/api/*` routes are not exposed unless `ENABLE_ADMIN_API=true`: `src/proxy/server.rs`.
 - `/auth/callback` is also only mounted when admin API is enabled: `src/proxy/server.rs`.
 - Sticky debug endpoint is `GET /api/proxy/session-bindings`; clear endpoint is `POST /api/proxy/session-bindings/clear`.

@@ -529,7 +529,7 @@ mod tests {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()
             .expect("admin endpoint test lock");
-        let _shutdown_hook = ScopedEnvVar::set("ABV_ADMIN_STOP_SHUTDOWN", "true");
+        let _shutdown_hook = ScopedEnvVar::set("ADMIN_STOP_SHUTDOWN", "true");
         let api_key = "admin-test-key";
         let router = build_test_router(api_key);
 
@@ -591,9 +591,9 @@ mod tests {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()
             .expect("admin endpoint test lock");
-        let _canary_url = ScopedEnvVar::unset("ABV_TLS_CANARY_URL");
-        let _canary_timeout = ScopedEnvVar::unset("ABV_TLS_CANARY_TIMEOUT_SECS");
-        let _canary_required = ScopedEnvVar::unset("ABV_TLS_CANARY_REQUIRED");
+        let _canary_url = ScopedEnvVar::unset("TLS_CANARY_URL");
+        let _canary_timeout = ScopedEnvVar::unset("TLS_CANARY_TIMEOUT_SECS");
+        let _canary_required = ScopedEnvVar::unset("TLS_CANARY_REQUIRED");
 
         let api_key = "admin-test-key";
         let router = build_test_router(api_key);

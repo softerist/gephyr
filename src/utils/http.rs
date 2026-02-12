@@ -49,7 +49,7 @@ fn tls_canary_state() -> &'static Mutex<TlsCanarySnapshot> {
 }
 
 fn parse_tls_backend_override() -> Option<TlsBackendSelection> {
-    let raw = std::env::var("ABV_TLS_BACKEND").ok()?;
+    let raw = std::env::var("TLS_BACKEND").ok()?;
     match raw.trim().to_ascii_lowercase().as_str() {
         "native" | "native-tls" | "default-tls" => Some(TlsBackendSelection::NativeTls),
         "rustls" => Some(TlsBackendSelection::Rustls),
@@ -105,7 +105,7 @@ fn selected_tls_backend() -> TlsBackendSelection {
             return requested;
         }
         tracing::warn!(
-            "ABV_TLS_BACKEND requested an unavailable backend for this build; falling back to compiled default"
+            "TLS_BACKEND requested an unavailable backend for this build; falling back to compiled default"
         );
     }
     compiled_default_tls_backend()
@@ -176,7 +176,7 @@ pub fn tls_backend_name() -> &'static str {
 }
 
 pub fn log_tls_startup_diagnostics() {
-    let requested_raw = std::env::var("ABV_TLS_BACKEND").ok();
+    let requested_raw = std::env::var("TLS_BACKEND").ok();
     let requested_normalized = tls_requested_backend_name();
     let compiled = tls_compiled_backends().join(",");
     let effective = tls_backend_name();
@@ -191,7 +191,7 @@ pub fn log_tls_startup_diagnostics() {
 }
 
 fn tls_canary_url() -> Option<String> {
-    let raw = std::env::var("ABV_TLS_CANARY_URL").ok()?;
+    let raw = std::env::var("TLS_CANARY_URL").ok()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -201,7 +201,7 @@ fn tls_canary_url() -> Option<String> {
 }
 
 fn tls_canary_timeout_seconds() -> u64 {
-    std::env::var("ABV_TLS_CANARY_TIMEOUT_SECS")
+    std::env::var("TLS_CANARY_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .map(|v| v.clamp(1, 60))
@@ -209,7 +209,7 @@ fn tls_canary_timeout_seconds() -> u64 {
 }
 
 pub fn tls_canary_required() -> bool {
-    std::env::var("ABV_TLS_CANARY_REQUIRED")
+    std::env::var("TLS_CANARY_REQUIRED")
         .ok()
         .map(|value| {
             matches!(
@@ -362,19 +362,19 @@ mod tests {
     #[test]
     fn parse_tls_backend_override_handles_supported_labels() {
         let _guard = tls_env_test_lock().lock().expect("tls env test lock");
-        std::env::set_var("ABV_TLS_BACKEND", "native-tls");
+        std::env::set_var("TLS_BACKEND", "native-tls");
         assert_eq!(
             parse_tls_backend_override(),
             Some(TlsBackendSelection::NativeTls)
         );
 
-        std::env::set_var("ABV_TLS_BACKEND", "rustls");
+        std::env::set_var("TLS_BACKEND", "rustls");
         assert_eq!(
             parse_tls_backend_override(),
             Some(TlsBackendSelection::Rustls)
         );
 
-        std::env::remove_var("ABV_TLS_BACKEND");
+        std::env::remove_var("TLS_BACKEND");
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -419,9 +419,9 @@ mod tests {
     #[test]
     fn tls_canary_required_parses_truthy_flag() {
         let _guard = tls_env_test_lock().lock().expect("tls env test lock");
-        std::env::set_var("ABV_TLS_CANARY_REQUIRED", "true");
+        std::env::set_var("TLS_CANARY_REQUIRED", "true");
         assert!(tls_canary_required());
-        std::env::remove_var("ABV_TLS_CANARY_REQUIRED");
+        std::env::remove_var("TLS_CANARY_REQUIRED");
         assert!(!tls_canary_required());
     }
 
@@ -439,9 +439,9 @@ mod tests {
                 .expect("serve canary test app");
         });
 
-        std::env::set_var("ABV_TLS_CANARY_URL", format!("http://{}/canary", addr));
-        std::env::set_var("ABV_TLS_CANARY_TIMEOUT_SECS", "2");
-        std::env::set_var("ABV_TLS_CANARY_REQUIRED", "true");
+        std::env::set_var("TLS_CANARY_URL", format!("http://{}/canary", addr));
+        std::env::set_var("TLS_CANARY_TIMEOUT_SECS", "2");
+        std::env::set_var("TLS_CANARY_REQUIRED", "true");
 
         let probe = run_tls_startup_canary_probe().await;
         server.abort();
@@ -453,18 +453,18 @@ mod tests {
         assert_eq!(snapshot.last_http_status, Some(200));
         assert!(snapshot.last_error.is_none());
 
-        std::env::remove_var("ABV_TLS_CANARY_URL");
-        std::env::remove_var("ABV_TLS_CANARY_TIMEOUT_SECS");
-        std::env::remove_var("ABV_TLS_CANARY_REQUIRED");
+        std::env::remove_var("TLS_CANARY_URL");
+        std::env::remove_var("TLS_CANARY_TIMEOUT_SECS");
+        std::env::remove_var("TLS_CANARY_REQUIRED");
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn tls_startup_canary_failure_updates_snapshot() {
         let _guard = tls_env_test_lock().lock().expect("tls env test lock");
 
-        std::env::set_var("ABV_TLS_CANARY_URL", "http://127.0.0.1:9/invalid");
-        std::env::set_var("ABV_TLS_CANARY_TIMEOUT_SECS", "1");
-        std::env::remove_var("ABV_TLS_CANARY_REQUIRED");
+        std::env::set_var("TLS_CANARY_URL", "http://127.0.0.1:9/invalid");
+        std::env::set_var("TLS_CANARY_TIMEOUT_SECS", "1");
+        std::env::remove_var("TLS_CANARY_REQUIRED");
 
         let probe = run_tls_startup_canary_probe().await;
         assert!(probe.is_err());
@@ -474,7 +474,7 @@ mod tests {
         assert_eq!(snapshot.required, false);
         assert!(snapshot.last_error.is_some());
 
-        std::env::remove_var("ABV_TLS_CANARY_URL");
-        std::env::remove_var("ABV_TLS_CANARY_TIMEOUT_SECS");
+        std::env::remove_var("TLS_CANARY_URL");
+        std::env::remove_var("TLS_CANARY_TIMEOUT_SECS");
     }
 }

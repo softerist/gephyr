@@ -10,12 +10,12 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Security DB: `src/modules/persistence/security_db.rs`
 - User token DB: `src/modules/persistence/user_token_db.rs`
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
-- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
-- Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `1..10`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
-- Startup token health refresh now processes accounts sequentially with randomized per-account delay controlled by `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS` / `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS` (default `1..10`) to avoid simultaneous Google refresh spikes: `src/commands/proxy.rs`, `src/proxy/token/startup_health.rs`
+- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
+- Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `1..10`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
+- Startup token health refresh now processes accounts sequentially with randomized per-account delay controlled by `STARTUP_HEALTH_DELAY_MIN_SECONDS` / `STARTUP_HEALTH_DELAY_MAX_SECONDS` (default `1..10`) to avoid simultaneous Google refresh spikes: `src/commands/proxy.rs`, `src/proxy/token/startup_health.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
 - One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
-- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ABV_ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
+- Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
 - HTTP/2 is currently deferred after local HTTP/1.1 concurrency benchmark (`1500` requests @ `64` concurrency, `~1676.90 req/s`): `src/proxy/server.rs`
 - TLS backend is compile-time selectable via Cargo features (`tls-native` default, optional `tls-rustls` profile): `Cargo.toml`, `src/utils/http.rs`
 
@@ -45,7 +45,7 @@ Proxy middleware order:
 
 ## Admin API Surface
 
-Admin routes are defined in `src/proxy/routes/admin.rs` and mounted under `/api` only when `ABV_ENABLE_ADMIN_API=true` (`src/proxy/server.rs`).
+Admin routes are defined in `src/proxy/routes/admin.rs` and mounted under `/api` only when `ENABLE_ADMIN_API=true` (`src/proxy/server.rs`).
 
 Main admin groups include:
 
@@ -90,7 +90,7 @@ Main admin groups include:
 - default `strict` mode with localhost allowlist
 - explicit `permissive` mode for any-origin local/dev compatibility
 - credentials remain disabled: `src/proxy/middleware/cors.rs`, `src/proxy/config.rs`
-- Body limit defaults to 100MB via `DefaultBodyLimit::max`, configurable by `ABV_MAX_BODY_SIZE`: `src/proxy/server.rs`
+- Body limit defaults to 100MB via `DefaultBodyLimit::max`, configurable by `MAX_BODY_SIZE`: `src/proxy/server.rs`
 - `USER_AGENT` initialization is deterministic/local and does not perform blocking remote fetch on first use: `src/constants.rs`
 
 ## Protocol Handling and Transformations
@@ -238,28 +238,28 @@ Main admin groups include:
 ## Environment Variables Used by Code
 
 - Runtime proxy/auth:
-- `ABV_API_KEY`, `API_KEY`
-- `ABV_WEB_PASSWORD`, `WEB_PASSWORD`
-- `ABV_AUTH_MODE`, `AUTH_MODE`
-- `ABV_ALLOW_LAN_ACCESS`, `ALLOW_LAN_ACCESS`
-- `ABV_ENCRYPTION_KEY`
-- `ABV_MAX_BODY_SIZE`
-- `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`
-- `ABV_ADMIN_STOP_SHUTDOWN`
-- `ABV_ENABLE_ADMIN_API`
-- `ABV_PUBLIC_URL`
-- `ABV_DATA_DIR`
-- `ABV_ALLOWED_GOOGLE_DOMAINS`
-- `ABV_OAUTH_USER_AGENT`
-- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
-- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
-- `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`
-- `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`
-- `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS`
-- `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS`
+- `API_KEY`, `API_KEY`
+- `WEB_PASSWORD`, `WEB_PASSWORD`
+- `AUTH_MODE`, `AUTH_MODE`
+- `ALLOW_LAN_ACCESS`, `ALLOW_LAN_ACCESS`
+- `ENCRYPTION_KEY`
+- `MAX_BODY_SIZE`
+- `SHUTDOWN_DRAIN_TIMEOUT_SECS`
+- `ADMIN_STOP_SHUTDOWN`
+- `ENABLE_ADMIN_API`
+- `PUBLIC_URL`
+- `DATA_DIR`
+- `ALLOWED_GOOGLE_DOMAINS`
+- `OAUTH_USER_AGENT`
+- `SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
+- `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
+- `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`
+- `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`
+- `STARTUP_HEALTH_DELAY_MIN_SECONDS`
+- `STARTUP_HEALTH_DELAY_MAX_SECONDS`
 - OAuth:
-- `GEPHYR_GOOGLE_OAUTH_CLIENT_ID`, `ABV_GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`
-- `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET`, `ABV_GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GEPHYR_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`
+- `GEPHYR_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`
 
 ## Open Edge Cases / Defects
 

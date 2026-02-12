@@ -146,12 +146,12 @@ Operational snapshot endpoint:
   - callback success means `authorization received`, not `account linked`
   - account linking is only successful when OAuth flow reaches terminal `linked`
   - if token exchange/user-info/account-save fails, terminal state must be explicit (`failed`, `rejected`, or `cancelled`) and never presented as linked
-  - containerized/runtime prerequisite for reliable encrypted persistence: set `ABV_ENCRYPTION_KEY` (machine UID may be unavailable in some containers)
+  - containerized/runtime prerequisite for reliable encrypted persistence: set `ENCRYPTION_KEY` (machine UID may be unavailable in some containers)
 - Graceful shutdown path:
   - Ctrl+C signals accept-loop shutdown
-  - optional admin stop hook can also signal graceful shutdown when `ABV_ADMIN_STOP_SHUTDOWN=true` and `POST /api/proxy/stop` is called
+  - optional admin stop hook can also signal graceful shutdown when `ADMIN_STOP_SHUTDOWN=true` and `POST /api/proxy/stop` is called
   - listener stops accepting new sockets
-  - active connections are drained with bounded timeout (`ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s, range 1-600), then aborted if needed
+  - active connections are drained with bounded timeout (`SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s, range 1-600), then aborted if needed
   - long-running streams may be aborted on shutdown once drain timeout is exceeded
 
 ## HTTP/2 Evaluation

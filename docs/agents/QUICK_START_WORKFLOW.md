@@ -21,7 +21,7 @@ Use this when starting a new task quickly and safely.
 
 ## Execution Checklist
 
-1. Confirm whether admin API exposure (`ABV_ENABLE_ADMIN_API`) affects reproducibility.
+1. Confirm whether admin API exposure (`ENABLE_ADMIN_API`) affects reproducibility.
 2. Confirm whether headless-only startup assumptions apply (`src/lib.rs` path).
 3. Validate middleware interaction order before changing handlers.
 4. Re-check known defect list before finalizing any fix (or confirm it is still empty).

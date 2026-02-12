@@ -379,7 +379,7 @@ pub(crate) async fn admin_get_oauth_flow_status() -> impl IntoResponse {
 }
 
 fn get_oauth_redirect_uri(port: u16, _host: Option<&str>, _proto: Option<&str>) -> String {
-    if let Ok(public_url) = std::env::var("ABV_PUBLIC_URL") {
+    if let Ok(public_url) = std::env::var("PUBLIC_URL") {
         let base = public_url.trim_end_matches('/');
         format!("{}/auth/callback", base)
     } else {

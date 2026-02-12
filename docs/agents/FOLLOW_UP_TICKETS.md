@@ -12,12 +12,12 @@ Problem:
 
 - Current key derivation uses raw SHA-256 over key source material.
 - Upgrading to PBKDF2/Argon2 is a breaking data-format change unless a migration strategy is introduced.
-- For current threat model (server-side operator key via `ABV_ENCRYPTION_KEY`), migration complexity is higher than immediate security gain.
+- For current threat model (server-side operator key via `ENCRYPTION_KEY`), migration complexity is higher than immediate security gain.
 
 Scope:
 
 - Near-term guardrails (do now):
-- document that `ABV_ENCRYPTION_KEY` must be high entropy (recommend >= 32 random chars)
+- document that `ENCRYPTION_KEY` must be high entropy (recommend >= 32 random chars)
 - add startup warning for weak/short key material
 - keep current versioned ciphertext compatibility behavior unchanged
 - Long-term migration (deferred):

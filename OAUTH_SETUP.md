@@ -10,7 +10,7 @@ These credentials are needed as environment variables in the .env.local file.
   - `http://127.0.0.1:<port>/auth/callback`
 - Use `Web application` client if your callback is public HTTPS:
   - `https://proxy.example.com/auth/callback`
-  - Typically used with `ABV_PUBLIC_URL`.
+  - Typically used with `PUBLIC_URL`.
 
 ## Why This Matters
 
@@ -51,15 +51,15 @@ Gephyr runs as a local/headless proxy and uses OAuth Authorization Code + PKCE.
 6. Put credentials in `.env.local`:
 
 ```env
-GEPHYR_GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+GEPHYR_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GEPHYR_OAUTH_CLIENT_SECRET=your-client-secret
 ```
 
 Notes:
-- `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET` is optional in Gephyr code path, but some client types/policies may require it for exchange/refresh.
+- `GEPHYR_OAUTH_CLIENT_SECRET` is optional in Gephyr code path, but some client types/policies may require it for exchange/refresh.
 - OAuth scopes are fixed in code (no runtime scope override env var).
 - If you use a public hosted callback flow, set:
-  - `ABV_PUBLIC_URL=https://proxy.example.com`
+  - `PUBLIC_URL=https://proxy.example.com`
 
 7. Restart Gephyr so env vars are loaded, then run login flow again.
 
@@ -68,12 +68,12 @@ Notes:
 ### Example A: Local machine (Docker or bare metal)
 - Callback: `http://localhost:8045/auth/callback`
 - OAuth client type: `Desktop app`
-- `ABV_PUBLIC_URL`: not needed
+- `PUBLIC_URL`: not needed
 
 ### Example B: Hosted server (VPS/K8s) with domain
 - Callback: `https://proxy.example.com/auth/callback`
 - OAuth client type: `Web application`
-- Set `ABV_PUBLIC_URL=https://proxy.example.com`
+- Set `PUBLIC_URL=https://proxy.example.com`
 
 ## Identity Hardening (Recommended)
 
@@ -84,7 +84,7 @@ Use these settings to reduce account-correlation risk and tighten identity check
 If you only expect accounts from specific Workspace domains:
 
 ```env
-ABV_ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
+ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
 ```
 
 Behavior:
@@ -96,7 +96,7 @@ Behavior:
 Use this only if you want OAuth token/userinfo calls to send a specific UA:
 
 ```env
-ABV_OAUTH_USER_AGENT=vscode/1.95.0 gephyr
+OAUTH_USER_AGENT=vscode/1.95.0 gephyr
 ```
 
 Behavior:
@@ -109,7 +109,7 @@ Gephyr supports:
 - Build-time profile selection:
   - Default build: `native-tls`
   - Alternate build: `rustls` (`--no-default-features --features tls-rustls`)
-- Optional runtime override via `ABV_TLS_BACKEND` when both TLS features are compiled into the binary.
+- Optional runtime override via `TLS_BACKEND` when both TLS features are compiled into the binary.
 
 Examples:
 
@@ -124,21 +124,21 @@ cargo build --release --features tls-native,tls-rustls
 Runtime override:
 
 ```env
-ABV_TLS_BACKEND=rustls
+TLS_BACKEND=rustls
 ```
 
 Optional startup canary (recommended before/while switching backends):
 
 ```env
-ABV_TLS_CANARY_URL=https://oauth2.googleapis.com/token
-ABV_TLS_CANARY_TIMEOUT_SECS=5
-ABV_TLS_CANARY_REQUIRED=false
+TLS_CANARY_URL=https://oauth2.googleapis.com/token
+TLS_CANARY_TIMEOUT_SECS=5
+TLS_CANARY_REQUIRED=false
 ```
 
 Behavior:
-- If `ABV_TLS_CANARY_URL` is unset, no startup canary is executed.
+- If `TLS_CANARY_URL` is unset, no startup canary is executed.
 - If set, Gephyr performs one startup probe using the selected TLS backend.
-- If `ABV_TLS_CANARY_REQUIRED=true`, startup fails closed when probe fails.
+- If `TLS_CANARY_REQUIRED=true`, startup fails closed when probe fails.
 - Probe status is visible in `GET /api/proxy/metrics` under `runtime.tls_canary` and in `GET /api/proxy/tls-canary`.
 - You can trigger a manual probe any time with `POST /api/proxy/tls-canary/run`.
 
@@ -155,13 +155,13 @@ Coverage includes OAuth calls, quota/loadCodeAssist calls, and account-bound `v1
 ### 2) Add scheduler jitter to avoid synchronized refresh waves
 
 ```env
-ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
-ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
-ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS=250
-ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
-ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
-ABV_STARTUP_HEALTH_JITTER_MIN_MS=150
-ABV_STARTUP_HEALTH_JITTER_MAX_MS=1200
+SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
+SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
+ACCOUNT_REFRESH_STAGGER_MIN_MS=250
+ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
+STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
+STARTUP_HEALTH_JITTER_MIN_MS=150
+STARTUP_HEALTH_JITTER_MAX_MS=1200
 ```
 
 Behavior:
@@ -263,8 +263,8 @@ Settings:
 - `proxy.compliance.enabled = true`
 - `proxy.compliance.max_account_requests_per_minute = 10`
 - `proxy.compliance.max_account_concurrency = 1`
-- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS = 30`
-- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS = 120`
+- `SCHEDULER_REFRESH_JITTER_MIN_SECONDS = 30`
+- `SCHEDULER_REFRESH_JITTER_MAX_SECONDS = 120`
 
 Expected behavior:
 - If no unbound healthy proxy is available, requests can still route through a shared healthy proxy.
@@ -280,8 +280,8 @@ Settings:
 - `proxy.compliance.enabled = true`
 - `proxy.compliance.max_account_requests_per_minute = 10`
 - `proxy.compliance.max_account_concurrency = 1`
-- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS = 30`
-- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS = 120`
+- `SCHEDULER_REFRESH_JITTER_MIN_SECONDS = 30`
+- `SCHEDULER_REFRESH_JITTER_MAX_SECONDS = 120`
 
 Expected behavior:
 - If no eligible proxy is available, account-routed requests fail closed.
@@ -302,6 +302,6 @@ Expected behavior:
   - Your callback URI does not exactly match a registered Web client redirect URI.
 - OAuth success page shown but login not completed:
   - Verify callback reachability and state handling.
-  - For hosted setups, ensure `ABV_PUBLIC_URL` is correct and HTTPS is valid.
+  - For hosted setups, ensure `PUBLIC_URL` is correct and HTTPS is valid.
 - Health/API returns `401` after key rotation:
   - Your local API key and running container key differ. Restart container with the updated key.

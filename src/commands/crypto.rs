@@ -162,7 +162,7 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&data_dir).expect("create temp dir");
-        let _enc_key_env = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "reencrypt-test-key");
+        let _enc_key_env = ScopedEnvVar::set("ENCRYPTION_KEY", "reencrypt-test-key");
 
         let mut cfg = crate::models::AppConfig::default();
         cfg.proxy.proxy_pool.enabled = true;

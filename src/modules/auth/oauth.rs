@@ -34,26 +34,26 @@ fn env_first(keys: &[&str]) -> Option<String> {
 
 pub(crate) fn client_id() -> Result<String, String> {
     env_first(&[
-        "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
-        "ABV_GOOGLE_OAUTH_CLIENT_ID",
+        "GEPHYR_OAUTH_CLIENT_ID",
+        "GOOGLE_OAUTH_CLIENT_ID",
         "GOOGLE_OAUTH_CLIENT_ID",
     ])
     .ok_or_else(|| {
-        "Missing Google OAuth client_id. Set GEPHYR_GOOGLE_OAUTH_CLIENT_ID (or ABV_GOOGLE_OAUTH_CLIENT_ID)."
+        "Missing Google OAuth client_id. Set GEPHYR_OAUTH_CLIENT_ID (or GOOGLE_OAUTH_CLIENT_ID)."
             .to_string()
     })
 }
 
 fn client_secret_optional() -> Option<String> {
     env_first(&[
-        "GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET",
-        "ABV_GOOGLE_OAUTH_CLIENT_SECRET",
+        "GEPHYR_OAUTH_CLIENT_SECRET",
+        "GOOGLE_OAUTH_CLIENT_SECRET",
         "GOOGLE_OAUTH_CLIENT_SECRET",
     ])
 }
 
 fn oauth_user_agent() -> String {
-    env_first(&["ABV_OAUTH_USER_AGENT"])
+    env_first(&["OAUTH_USER_AGENT"])
         .unwrap_or_else(|| crate::constants::USER_AGENT.as_str().to_string())
 }
 
@@ -365,7 +365,10 @@ pub async fn refresh_access_token(
     refresh_access_token_at(refresh_token, account_id, TOKEN_URL).await
 }
 
-pub async fn revoke_refresh_token(refresh_token: &str, account_id: Option<&str>) -> Result<(), String> {
+pub async fn revoke_refresh_token(
+    refresh_token: &str,
+    account_id: Option<&str>,
+) -> Result<(), String> {
     revoke_refresh_token_at(refresh_token, account_id, REVOKE_URL).await
 }
 
@@ -714,7 +717,7 @@ mod tests {
     fn test_get_auth_url_contains_state() {
         let _guard = oauth_ua_test_guard();
         std::env::set_var(
-            "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "GEPHYR_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
         let redirect_uri = "http://localhost:8080/callback";
@@ -751,44 +754,44 @@ mod tests {
     #[test]
     fn oauth_user_agent_uses_default_when_override_missing() {
         let _guard = oauth_ua_test_guard();
-        let previous = std::env::var("ABV_OAUTH_USER_AGENT").ok();
-        std::env::remove_var("ABV_OAUTH_USER_AGENT");
+        let previous = std::env::var("OAUTH_USER_AGENT").ok();
+        std::env::remove_var("OAUTH_USER_AGENT");
 
         let ua = oauth_user_agent();
         assert_eq!(ua, crate::constants::USER_AGENT.as_str());
 
         match previous {
-            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("OAUTH_USER_AGENT"),
         }
     }
 
     #[test]
     fn oauth_user_agent_uses_override_when_set() {
         let _guard = oauth_ua_test_guard();
-        let previous = std::env::var("ABV_OAUTH_USER_AGENT").ok();
-        std::env::set_var("ABV_OAUTH_USER_AGENT", "vscode/1.95.0 gephyr-test");
+        let previous = std::env::var("OAUTH_USER_AGENT").ok();
+        std::env::set_var("OAUTH_USER_AGENT", "vscode/1.95.0 gephyr-test");
 
         let ua = oauth_user_agent();
         assert_eq!(ua, "vscode/1.95.0 gephyr-test");
 
         match previous {
-            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("OAUTH_USER_AGENT"),
         }
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_access_token_sends_user_agent_header() {
         let _guard = oauth_ua_test_guard();
-        let _ua = ScopedEnvVar::set("ABV_OAUTH_USER_AGENT", "ua-integration-test");
+        let _ua = ScopedEnvVar::set("OAUTH_USER_AGENT", "ua-integration-test");
         // Set both keys to avoid cross-test env races (other tests may remove only one).
         let _cid_primary = ScopedEnvVar::set(
-            "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "GEPHYR_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
         let _cid_fallback = ScopedEnvVar::set(
-            "ABV_GOOGLE_OAUTH_CLIENT_ID",
+            "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
 
@@ -811,8 +814,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn get_user_info_sends_user_agent_header() {
         let _guard = oauth_ua_test_guard();
-        let previous_ua = std::env::var("ABV_OAUTH_USER_AGENT").ok();
-        std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-userinfo-test");
+        let previous_ua = std::env::var("OAUTH_USER_AGENT").ok();
+        std::env::set_var("OAUTH_USER_AGENT", "ua-userinfo-test");
 
         let (base_url, state, server) = start_mock_oauth_server().await;
         let userinfo_url = format!("{}/userinfo", base_url);
@@ -830,8 +833,8 @@ mod tests {
         );
 
         match previous_ua {
-            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("OAUTH_USER_AGENT"),
         }
     }
 
@@ -842,11 +845,11 @@ mod tests {
 
         // Set both keys to avoid cross-test env races (other tests may remove only one).
         let _cid_primary = ScopedEnvVar::set(
-            "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "GEPHYR_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
         let _cid_fallback = ScopedEnvVar::set(
-            "ABV_GOOGLE_OAUTH_CLIENT_ID",
+            "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
 
@@ -887,9 +890,9 @@ mod tests {
     async fn verify_identity_fallback_rejects_unverified_email() {
         let (_guard, previous_ua) = (
             oauth_ua_test_guard(),
-            std::env::var("ABV_OAUTH_USER_AGENT").ok(),
+            std::env::var("OAUTH_USER_AGENT").ok(),
         );
-        std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-verify-unverified");
+        std::env::set_var("OAUTH_USER_AGENT", "ua-verify-unverified");
 
         let (base_url, _state, server) = start_mock_oauth_server_with_userinfo(json!({
             "email": "unverified@example.com",
@@ -907,8 +910,8 @@ mod tests {
         assert!(err.contains("email is not verified"));
 
         match previous_ua {
-            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("OAUTH_USER_AGENT"),
         }
     }
 
@@ -916,9 +919,9 @@ mod tests {
     async fn verify_identity_fallback_rejects_missing_subject_identifier() {
         let (_guard, previous_ua) = (
             oauth_ua_test_guard(),
-            std::env::var("ABV_OAUTH_USER_AGENT").ok(),
+            std::env::var("OAUTH_USER_AGENT").ok(),
         );
-        std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-verify-missing-sub");
+        std::env::set_var("OAUTH_USER_AGENT", "ua-verify-missing-sub");
 
         let (base_url, _state, server) = start_mock_oauth_server_with_userinfo(json!({
             "email": "nosub@example.com",
@@ -936,17 +939,17 @@ mod tests {
         assert!(err.contains("missing subject identifier"));
 
         match previous_ua {
-            Some(value) => std::env::set_var("ABV_OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("ABV_OAUTH_USER_AGENT"),
+            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
+            None => std::env::remove_var("OAUTH_USER_AGENT"),
         }
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_and_verify_identity_rejects_missing_subject_identifier() {
         let _guard = oauth_ua_test_guard();
-        let previous_client_id = std::env::var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID").ok();
+        let previous_client_id = std::env::var("GEPHYR_OAUTH_CLIENT_ID").ok();
         std::env::set_var(
-            "GEPHYR_GOOGLE_OAUTH_CLIENT_ID",
+            "GEPHYR_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
 
@@ -969,8 +972,8 @@ mod tests {
         assert!(err.contains("missing subject identifier"));
 
         match previous_client_id {
-            Some(value) => std::env::set_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID", value),
-            None => std::env::remove_var("GEPHYR_GOOGLE_OAUTH_CLIENT_ID"),
+            Some(value) => std::env::set_var("GEPHYR_OAUTH_CLIENT_ID", value),
+            None => std::env::remove_var("GEPHYR_OAUTH_CLIENT_ID"),
         }
     }
 }

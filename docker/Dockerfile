@@ -60,7 +60,7 @@ RUN useradd -m -u 10001 gephyr && \
 
 ENV RUST_LOG=info
 ENV PORT=8045
-ENV ABV_DATA_DIR=/home/gephyr/.gephyr
+ENV DATA_DIR=/home/gephyr/.gephyr
 
 USER gephyr
 

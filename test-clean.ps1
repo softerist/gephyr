@@ -210,7 +210,7 @@ function Wait-OAuthAccountLink {
                     return $false
                 }
                 if ($statusCode -eq 404) {
-                    Write-Warning "OAuth wait aborted [E-OAUTH-ACCOUNTS-404]: /api/accounts returned 404. Ensure admin API is enabled (ABV_ENABLE_ADMIN_API=true)."
+                    Write-Warning "OAuth wait aborted [E-OAUTH-ACCOUNTS-404]: /api/accounts returned 404. Ensure admin API is enabled (ENABLE_ADMIN_API=true)."
                     return $false
                 }
             }
@@ -227,7 +227,7 @@ function Wait-OAuthAccountLink {
             try {
                 $recentLogs = docker logs --tail 160 gephyr 2>&1
                 if ($recentLogs -match "encryption_key_unavailable|Failed to save account in background OAuth") {
-                    Write-Warning "OAuth callback succeeded but account persistence failed [E-CRYPTO-KEY-UNAVAILABLE] (missing/invalid ABV_ENCRYPTION_KEY; in Docker/container environments machine UID may be unavailable). Remediation: set ABV_ENCRYPTION_KEY in .env.local, restart container, then rerun login."
+                    Write-Warning "OAuth callback succeeded but account persistence failed [E-CRYPTO-KEY-UNAVAILABLE] (missing/invalid ENCRYPTION_KEY; in Docker/container environments machine UID may be unavailable). Remediation: set ENCRYPTION_KEY in .env.local, restart container, then rerun login."
                     return $false
                 }
                 if ($recentLogs -match "OAuth callback state mismatch") {
@@ -282,13 +282,13 @@ Invoke-Step -Name "Health check" -Action {
 }
 
 if (-not $SkipLogin) {
-    if (-not $env:ABV_ENCRYPTION_KEY) {
+    if (-not $env:ENCRYPTION_KEY) {
         $envPath = Join-Path $scriptDir ".env.local"
         $hasEncryptionKey = $false
         if (Test-Path $envPath) {
             foreach ($raw in Get-Content $envPath) {
                 $line = $raw.Trim()
-                if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("ABV_ENCRYPTION_KEY=")) {
+                if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("ENCRYPTION_KEY=")) {
                     $value = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
                     if ($value) {
                         $hasEncryptionKey = $true
@@ -298,7 +298,7 @@ if (-not $SkipLogin) {
             }
         }
         if (-not $hasEncryptionKey) {
-            Write-Warning "[W-CRYPTO-KEY-MISSING] ABV_ENCRYPTION_KEY is not set. In Docker/container environments machine UID may be unavailable, so OAuth callback may succeed in browser while account save fails. Remediation: set ABV_ENCRYPTION_KEY, restart container, then rerun login."
+            Write-Warning "[W-CRYPTO-KEY-MISSING] ENCRYPTION_KEY is not set. In Docker/container environments machine UID may be unavailable, so OAuth callback may succeed in browser while account save fails. Remediation: set ENCRYPTION_KEY, restart container, then rerun login."
         }
     }
 

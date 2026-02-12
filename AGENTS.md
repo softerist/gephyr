@@ -35,5 +35,5 @@ This agent guide is derived from `src/` code analysis, not from markdown docs as
 ## Operational Facts
 
 - Runtime is headless-only in current boot path: `src/lib.rs`
-- Admin API is disabled unless `ABV_ENABLE_ADMIN_API=true`: `src/proxy/server.rs`
-- `ABV_MAX_BODY_SIZE` controls body cap; default is 100MB: `src/proxy/server.rs`
+- Admin API is disabled unless `ENABLE_ADMIN_API=true`: `src/proxy/server.rs`
+- `MAX_BODY_SIZE` controls body cap; default is 100MB: `src/proxy/server.rs`

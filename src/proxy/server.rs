@@ -11,7 +11,7 @@ static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = O
 static PENDING_DELETE_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
 static GLOBAL_SHUTDOWN_TX: OnceLock<std::sync::RwLock<Option<tokio::sync::watch::Sender<bool>>>> =
     OnceLock::new();
-const SHUTDOWN_DRAIN_TIMEOUT_ENV: &str = "ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS";
+const SHUTDOWN_DRAIN_TIMEOUT_ENV: &str = "SHUTDOWN_DRAIN_TIMEOUT_SECS";
 const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 10;
 const MIN_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 1;
 const MAX_SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 600;
@@ -262,7 +262,7 @@ impl AxumServer {
         use crate::proxy::middleware::{cors_layer, service_status_middleware};
         let proxy_routes = crate::proxy::routes::build_proxy_routes(state.clone());
         let admin_routes = crate::proxy::routes::build_admin_routes(state.clone());
-        let max_body_size: usize = std::env::var("ABV_MAX_BODY_SIZE")
+        let max_body_size: usize = std::env::var("MAX_BODY_SIZE")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(100 * 1024 * 1024);
@@ -271,7 +271,7 @@ impl AxumServer {
             max_body_size / 1024 / 1024
         );
 
-        let enable_admin_api = std::env::var("ABV_ENABLE_ADMIN_API")
+        let enable_admin_api = std::env::var("ENABLE_ADMIN_API")
             .ok()
             .map(|v| {
                 matches!(
@@ -291,7 +291,7 @@ impl AxumServer {
                 )
             } else {
                 tracing::info!(
-                    "Admin API disabled (set ABV_ENABLE_ADMIN_API=true to expose /api routes)"
+                    "Admin API disabled (set ENABLE_ADMIN_API=true to expose /api routes)"
                 );
                 base
             };

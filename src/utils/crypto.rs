@@ -46,11 +46,11 @@ fn resolve_encryption_key_from_sources(
 }
 
 fn get_encryption_key() -> Result<[u8; 32], String> {
-    let env_key = std::env::var("ABV_ENCRYPTION_KEY").ok();
+    let env_key = std::env::var("ENCRYPTION_KEY").ok();
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     resolve_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
-            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
             e
         )
     })
@@ -64,11 +64,11 @@ fn validate_encryption_key_from_sources(
 }
 
 pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
-    let env_key = std::env::var("ABV_ENCRYPTION_KEY").ok();
+    let env_key = std::env::var("ENCRYPTION_KEY").ok();
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     validate_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
-            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
             e
         )
     })
@@ -280,7 +280,7 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .expect("crypto env lock");
-        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-migration-key");
+        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-migration-key");
 
         let encrypted = encrypt_string("persisted-secret").expect("encrypt");
         let decrypted = decrypt_secret_or_plaintext(&encrypted).expect("decrypt");
@@ -294,7 +294,7 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .expect("crypto env lock");
-        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-v2-prefix-key");
+        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-v2-prefix-key");
 
         let encrypted = encrypt_string("secret").expect("encrypt");
         assert!(
@@ -309,7 +309,7 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .expect("crypto env lock");
-        let _key = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-legacy-key");
+        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-legacy-key");
 
         let v2_encrypted = encrypt_string("legacy-plaintext").expect("encrypt");
         let legacy_unversioned = v2_encrypted

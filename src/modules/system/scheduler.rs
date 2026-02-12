@@ -7,11 +7,11 @@ use std::time::Instant;
 use tokio::time::{self, Duration};
 
 fn scheduler_refresh_jitter_bounds() -> (u64, u64) {
-    let min = std::env::var("ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS")
+    let min = std::env::var("SCHEDULER_REFRESH_JITTER_MIN_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(30);
-    let max = std::env::var("ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS")
+    let max = std::env::var("SCHEDULER_REFRESH_JITTER_MAX_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(120);

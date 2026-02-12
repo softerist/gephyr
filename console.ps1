@@ -88,19 +88,19 @@ Troubleshooting:
 
 OAuth Login:
   The `login` command requires Google OAuth credentials to be provided via env vars passed into the container:
-    GEPHYR_GOOGLE_OAUTH_CLIENT_ID
-    (optional) GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET
+    GEPHYR_OAUTH_CLIENT_ID
+    (optional) GEPHYR_OAUTH_CLIENT_SECRET
   Optional identity/scheduler hardening envs are also passed through when set:
-    ABV_OAUTH_USER_AGENT
-    ABV_ALLOWED_GOOGLE_DOMAINS
-    ABV_TLS_BACKEND
-    ABV_TLS_CANARY_URL
-    ABV_TLS_CANARY_TIMEOUT_SECS
-    ABV_TLS_CANARY_REQUIRED
-    ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
-    ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
-    ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS
-    ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS
+    OAUTH_USER_AGENT
+    ALLOWED_GOOGLE_DOMAINS
+    TLS_BACKEND
+    TLS_CANARY_URL
+    TLS_CANARY_TIMEOUT_SECS
+    TLS_CANARY_REQUIRED
+    SCHEDULER_REFRESH_JITTER_MIN_SECONDS
+    SCHEDULER_REFRESH_JITTER_MAX_SECONDS
+    STARTUP_HEALTH_DELAY_MIN_SECONDS
+    STARTUP_HEALTH_DELAY_MAX_SECONDS
 "@ | Write-Host
 }
 
@@ -191,70 +191,70 @@ function Start-Container {
     $adminApi = if ($AdminApiEnabled) { "true" } else { "false" }
 
     $oauthArgs = @()
-    if ($env:GEPHYR_GOOGLE_OAUTH_CLIENT_ID) {
-        $oauthArgs += @("-e", "GEPHYR_GOOGLE_OAUTH_CLIENT_ID=$($env:GEPHYR_GOOGLE_OAUTH_CLIENT_ID)")
+    if ($env:GEPHYR_OAUTH_CLIENT_ID) {
+        $oauthArgs += @("-e", "GEPHYR_OAUTH_CLIENT_ID=$($env:GEPHYR_OAUTH_CLIENT_ID)")
     }
-    if ($env:GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET) {
-        $oauthArgs += @("-e", "GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET=$($env:GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET)")
+    if ($env:GEPHYR_OAUTH_CLIENT_SECRET) {
+        $oauthArgs += @("-e", "GEPHYR_OAUTH_CLIENT_SECRET=$($env:GEPHYR_OAUTH_CLIENT_SECRET)")
     }
     $runtimeArgs = @()
-    if ($env:ABV_ENCRYPTION_KEY) {
-        $runtimeArgs += @("-e", "ABV_ENCRYPTION_KEY=$($env:ABV_ENCRYPTION_KEY)")
-    }
-    if ($env:ABV_WEB_PASSWORD) {
-        $runtimeArgs += @("-e", "ABV_WEB_PASSWORD=$($env:ABV_WEB_PASSWORD)")
+    if ($env:ENCRYPTION_KEY) {
+        $runtimeArgs += @("-e", "ENCRYPTION_KEY=$($env:ENCRYPTION_KEY)")
     }
     if ($env:WEB_PASSWORD) {
         $runtimeArgs += @("-e", "WEB_PASSWORD=$($env:WEB_PASSWORD)")
     }
-    if ($env:ABV_PUBLIC_URL) {
-        $runtimeArgs += @("-e", "ABV_PUBLIC_URL=$($env:ABV_PUBLIC_URL)")
+    if ($env:WEB_PASSWORD) {
+        $runtimeArgs += @("-e", "WEB_PASSWORD=$($env:WEB_PASSWORD)")
     }
-    if ($env:ABV_MAX_BODY_SIZE) {
-        $runtimeArgs += @("-e", "ABV_MAX_BODY_SIZE=$($env:ABV_MAX_BODY_SIZE)")
+    if ($env:PUBLIC_URL) {
+        $runtimeArgs += @("-e", "PUBLIC_URL=$($env:PUBLIC_URL)")
     }
-    if ($env:ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS) {
-        $runtimeArgs += @("-e", "ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS=$($env:ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS)")
+    if ($env:MAX_BODY_SIZE) {
+        $runtimeArgs += @("-e", "MAX_BODY_SIZE=$($env:MAX_BODY_SIZE)")
     }
-    if ($env:ABV_ADMIN_STOP_SHUTDOWN) {
-        $runtimeArgs += @("-e", "ABV_ADMIN_STOP_SHUTDOWN=$($env:ABV_ADMIN_STOP_SHUTDOWN)")
+    if ($env:SHUTDOWN_DRAIN_TIMEOUT_SECS) {
+        $runtimeArgs += @("-e", "SHUTDOWN_DRAIN_TIMEOUT_SECS=$($env:SHUTDOWN_DRAIN_TIMEOUT_SECS)")
     }
-    if ($env:ABV_OAUTH_USER_AGENT) {
-        $runtimeArgs += @("-e", "ABV_OAUTH_USER_AGENT=$($env:ABV_OAUTH_USER_AGENT)")
+    if ($env:ADMIN_STOP_SHUTDOWN) {
+        $runtimeArgs += @("-e", "ADMIN_STOP_SHUTDOWN=$($env:ADMIN_STOP_SHUTDOWN)")
     }
-    if ($env:ABV_ALLOWED_GOOGLE_DOMAINS) {
-        $runtimeArgs += @("-e", "ABV_ALLOWED_GOOGLE_DOMAINS=$($env:ABV_ALLOWED_GOOGLE_DOMAINS)")
+    if ($env:OAUTH_USER_AGENT) {
+        $runtimeArgs += @("-e", "OAUTH_USER_AGENT=$($env:OAUTH_USER_AGENT)")
     }
-    if ($env:ABV_TLS_BACKEND) {
-        $runtimeArgs += @("-e", "ABV_TLS_BACKEND=$($env:ABV_TLS_BACKEND)")
+    if ($env:ALLOWED_GOOGLE_DOMAINS) {
+        $runtimeArgs += @("-e", "ALLOWED_GOOGLE_DOMAINS=$($env:ALLOWED_GOOGLE_DOMAINS)")
     }
-    if ($env:ABV_TLS_CANARY_URL) {
-        $runtimeArgs += @("-e", "ABV_TLS_CANARY_URL=$($env:ABV_TLS_CANARY_URL)")
+    if ($env:TLS_BACKEND) {
+        $runtimeArgs += @("-e", "TLS_BACKEND=$($env:TLS_BACKEND)")
     }
-    if ($env:ABV_TLS_CANARY_TIMEOUT_SECS) {
-        $runtimeArgs += @("-e", "ABV_TLS_CANARY_TIMEOUT_SECS=$($env:ABV_TLS_CANARY_TIMEOUT_SECS)")
+    if ($env:TLS_CANARY_URL) {
+        $runtimeArgs += @("-e", "TLS_CANARY_URL=$($env:TLS_CANARY_URL)")
     }
-    if ($env:ABV_TLS_CANARY_REQUIRED) {
-        $runtimeArgs += @("-e", "ABV_TLS_CANARY_REQUIRED=$($env:ABV_TLS_CANARY_REQUIRED)")
+    if ($env:TLS_CANARY_TIMEOUT_SECS) {
+        $runtimeArgs += @("-e", "TLS_CANARY_TIMEOUT_SECS=$($env:TLS_CANARY_TIMEOUT_SECS)")
     }
-    if ($env:ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS) {
-        $runtimeArgs += @("-e", "ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS=$($env:ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS)")
+    if ($env:TLS_CANARY_REQUIRED) {
+        $runtimeArgs += @("-e", "TLS_CANARY_REQUIRED=$($env:TLS_CANARY_REQUIRED)")
     }
-    if ($env:ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS) {
-        $runtimeArgs += @("-e", "ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=$($env:ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS)")
+    if ($env:SCHEDULER_REFRESH_JITTER_MIN_SECONDS) {
+        $runtimeArgs += @("-e", "SCHEDULER_REFRESH_JITTER_MIN_SECONDS=$($env:SCHEDULER_REFRESH_JITTER_MIN_SECONDS)")
     }
-    if ($env:ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS) {
-        $runtimeArgs += @("-e", "ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS=$($env:ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS)")
+    if ($env:SCHEDULER_REFRESH_JITTER_MAX_SECONDS) {
+        $runtimeArgs += @("-e", "SCHEDULER_REFRESH_JITTER_MAX_SECONDS=$($env:SCHEDULER_REFRESH_JITTER_MAX_SECONDS)")
     }
-    if ($env:ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS) {
-        $runtimeArgs += @("-e", "ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS=$($env:ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS)")
+    if ($env:STARTUP_HEALTH_DELAY_MIN_SECONDS) {
+        $runtimeArgs += @("-e", "STARTUP_HEALTH_DELAY_MIN_SECONDS=$($env:STARTUP_HEALTH_DELAY_MIN_SECONDS)")
+    }
+    if ($env:STARTUP_HEALTH_DELAY_MAX_SECONDS) {
+        $runtimeArgs += @("-e", "STARTUP_HEALTH_DELAY_MAX_SECONDS=$($env:STARTUP_HEALTH_DELAY_MAX_SECONDS)")
     }
 
     $containerId = docker run --rm -d --name $ContainerName `
         -p "127.0.0.1:$Port`:8045" `
         -e API_KEY=$env:GEPHYR_API_KEY `
         -e AUTH_MODE=strict `
-        -e ABV_ENABLE_ADMIN_API=$adminApi `
+        -e ENABLE_ADMIN_API=$adminApi `
         -e ALLOW_LAN_ACCESS=true `
         @oauthArgs `
         @runtimeArgs `
@@ -808,8 +808,8 @@ function Start-OAuthFlow {
         throw "Service did not become ready on http://127.0.0.1:$Port."
     }
 
-    if (-not $env:ABV_ENCRYPTION_KEY) {
-        Write-Warning "[W-CRYPTO-KEY-MISSING] ABV_ENCRYPTION_KEY is not set in your shell/.env.local. In Docker/container environments machine UID may be unavailable. Remediation: set ABV_ENCRYPTION_KEY, restart container, then rerun login."
+    if (-not $env:ENCRYPTION_KEY) {
+        Write-Warning "[W-CRYPTO-KEY-MISSING] ENCRYPTION_KEY is not set in your shell/.env.local. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY, restart container, then rerun login."
     }
 
     $headers = Get-AuthHeaders

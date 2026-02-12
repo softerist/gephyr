@@ -50,8 +50,8 @@ This backlog tracks Google identity hardening and one-IP risk controls.
 - Delivered:
   - Unified refresh decision helper (`should_refresh_token`) with per-account window jitter reused by runtime managers.
   - Added deterministic per-account stagger for batch refresh tasks:
-    - `ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS`
-    - `ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS`
+    - `ACCOUNT_REFRESH_STAGGER_MIN_MS`
+    - `ACCOUNT_REFRESH_STAGGER_MAX_MS`
   - Added tests for stagger determinism and bounds handling.
 - Files:
   - `src/modules/auth/oauth.rs`
@@ -62,7 +62,7 @@ This backlog tracks Google identity hardening and one-IP risk controls.
 ### PR-10: TLS Strategy Toggle Completion
 - Status: Implemented
 - Delivered:
-  - Runtime TLS backend override: `ABV_TLS_BACKEND` (`native-tls` or `rustls`) when compiled support exists.
+  - Runtime TLS backend override: `TLS_BACKEND` (`native-tls` or `rustls`) when compiled support exists.
   - TLS backend selection applied consistently across shared/proxy/upstream/zai/update-checker clients.
   - Runtime metric now reports effective backend through existing metrics path.
 - Files:
@@ -123,9 +123,9 @@ This backlog tracks Google identity hardening and one-IP risk controls.
     - compiled backend support list
     - effective backend in use
   - Added optional startup TLS canary probe with explicit status/error surfaces:
-    - `ABV_TLS_CANARY_URL`
-    - `ABV_TLS_CANARY_TIMEOUT_SECS` (clamped 1..60)
-    - `ABV_TLS_CANARY_REQUIRED` (fail startup when probe fails)
+    - `TLS_CANARY_URL`
+    - `TLS_CANARY_TIMEOUT_SECS` (clamped 1..60)
+    - `TLS_CANARY_REQUIRED` (fail startup when probe fails)
   - Added runtime metrics exposure for TLS diagnostics/canary snapshot:
     - `runtime.tls_requested_backend`
     - `runtime.tls_compiled_backends`

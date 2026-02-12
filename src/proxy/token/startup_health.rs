@@ -26,11 +26,11 @@ enum HealthCheckOutcome {
 }
 
 fn startup_health_delay_bounds_seconds() -> (u64, u64) {
-    let min = std::env::var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS")
+    let min = std::env::var("STARTUP_HEALTH_DELAY_MIN_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(STARTUP_HEALTH_DELAY_MIN_SECONDS_DEFAULT);
-    let max = std::env::var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS")
+    let max = std::env::var("STARTUP_HEALTH_DELAY_MAX_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(STARTUP_HEALTH_DELAY_MAX_SECONDS_DEFAULT);
@@ -143,7 +143,9 @@ pub(crate) async fn run_startup_health_check(
     let mut disabled = 0u32;
     let mut network_errors = 0u32;
 
-    for (index, (account_id, refresh_token, email, account_path)) in candidates.into_iter().enumerate() {
+    for (index, (account_id, refresh_token, email, account_path)) in
+        candidates.into_iter().enumerate()
+    {
         if index > 0 && delay_max_seconds > 0 {
             let delay_seconds = if delay_min_seconds == delay_max_seconds {
                 delay_min_seconds
@@ -362,23 +364,23 @@ mod tests {
     #[test]
     fn startup_health_delay_bounds_swap_when_reversed() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS", "10");
-        std::env::set_var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS", "2");
+        std::env::set_var("STARTUP_HEALTH_DELAY_MIN_SECONDS", "10");
+        std::env::set_var("STARTUP_HEALTH_DELAY_MAX_SECONDS", "2");
 
         let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
         assert_eq!(min_seconds, 2);
         assert_eq!(max_seconds, 10);
 
-        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS");
-        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS");
+        std::env::remove_var("STARTUP_HEALTH_DELAY_MIN_SECONDS");
+        std::env::remove_var("STARTUP_HEALTH_DELAY_MAX_SECONDS");
     }
 
     #[test]
     fn startup_health_delay_bounds_have_defaults() {
         let _guard = env_lock().lock().expect("env lock");
 
-        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS");
-        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS");
+        std::env::remove_var("STARTUP_HEALTH_DELAY_MIN_SECONDS");
+        std::env::remove_var("STARTUP_HEALTH_DELAY_MAX_SECONDS");
 
         let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
         assert_eq!(min_seconds, 1);

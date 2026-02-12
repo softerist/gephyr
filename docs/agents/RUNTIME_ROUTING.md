@@ -16,22 +16,22 @@
 
 From `src/lib.rs` and `src/proxy/server.rs`:
 
-- `ABV_API_KEY` / `API_KEY`
-- `ABV_WEB_PASSWORD` / `WEB_PASSWORD`
-- `ABV_AUTH_MODE` / `AUTH_MODE`
-- `ABV_ALLOW_LAN_ACCESS` / `ALLOW_LAN_ACCESS`
-- `ABV_MAX_BODY_SIZE`
-- `ABV_ENABLE_ADMIN_API`
-- `ABV_PUBLIC_URL`
-- `ABV_DATA_DIR`
-- `ABV_ALLOWED_GOOGLE_DOMAINS`
-- `ABV_OAUTH_USER_AGENT`
-- `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
-- `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
-- `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`
-- `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`
-- `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS`
-- `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS`
+- `API_KEY` / `API_KEY`
+- `WEB_PASSWORD` / `WEB_PASSWORD`
+- `AUTH_MODE` / `AUTH_MODE`
+- `ALLOW_LAN_ACCESS` / `ALLOW_LAN_ACCESS`
+- `MAX_BODY_SIZE`
+- `ENABLE_ADMIN_API`
+- `PUBLIC_URL`
+- `DATA_DIR`
+- `ALLOWED_GOOGLE_DOMAINS`
+- `OAUTH_USER_AGENT`
+- `SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
+- `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
+- `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`
+- `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`
+- `STARTUP_HEALTH_DELAY_MIN_SECONDS`
+- `STARTUP_HEALTH_DELAY_MAX_SECONDS`
 
 TLS backend note:
 - TLS backend selection is compile-time (`tls-native` default, `tls-rustls` alternate) and is surfaced at runtime via `GET /api/proxy/metrics` -> `runtime.tls_backend`: `Cargo.toml`, `src/utils/http.rs`, `src/proxy/admin/runtime/service_control.rs`
@@ -100,12 +100,12 @@ From `src/proxy/token/*`:
 - risky statuses (`401`,`403`,`429`,`500`,`503`,`529`) place the selected account in temporary cooldown
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
-- startup health token refresh now runs sequentially (one account at a time), with randomized delay between accounts to avoid simultaneous Google refresh spikes (defaults `1..10s`, configurable via `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS` / `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS`): `src/proxy/token/startup_health.rs`
+- startup health token refresh now runs sequentially (one account at a time), with randomized delay between accounts to avoid simultaneous Google refresh spikes (defaults `1..10s`, configurable via `STARTUP_HEALTH_DELAY_MIN_SECONDS` / `STARTUP_HEALTH_DELAY_MAX_SECONDS`): `src/proxy/token/startup_health.rs`
 
 From scheduler path (`src/modules/system/scheduler.rs`, `src/commands/mod.rs`, `src/modules/auth/account.rs`):
 
-- periodic quota refresh still runs every 10 minutes when `auto_refresh=true`, with pre-run scheduler jitter (`ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
-- per-run account processing is now sequential with randomized per-account delay (defaults `1..10s`, configurable via `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`)
+- periodic quota refresh still runs every 10 minutes when `auto_refresh=true`, with pre-run scheduler jitter (`SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
+- per-run account processing is now sequential with randomized per-account delay (defaults `1..10s`, configurable via `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`)
 
 ## Upstream and Proxy Pool Routing
 

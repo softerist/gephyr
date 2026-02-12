@@ -21,7 +21,7 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
         }
         Ok(())
     }
-    if let Ok(env_path) = std::env::var("ABV_DATA_DIR") {
+    if let Ok(env_path) = std::env::var("DATA_DIR") {
         if !env_path.trim().is_empty() {
             let data_dir = PathBuf::from(env_path);
             ensure_dir(&data_dir)?;
@@ -126,8 +126,7 @@ pub async fn logout_account(account_id: &str, revoke_remote: bool) -> Result<(),
     if revoke_remote && !refresh_token_is_empty {
         // Ensure encryption prerequisites are satisfied (required when tokens are persisted as v2:*).
         crate::utils::crypto::validate_encryption_key_prerequisites()?;
-        let refresh_token =
-            crate::utils::crypto::decrypt_secret_or_plaintext(&refresh_token_raw)?;
+        let refresh_token = crate::utils::crypto::decrypt_secret_or_plaintext(&refresh_token_raw)?;
         crate::modules::auth::oauth::revoke_refresh_token(&refresh_token, Some(account_id)).await?;
     }
 
@@ -919,11 +918,11 @@ pub struct RefreshStats {
 }
 
 fn refresh_task_stagger_bounds_ms() -> (u64, u64) {
-    let min = std::env::var("ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS")
+    let min = std::env::var("ACCOUNT_REFRESH_STAGGER_MIN_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(250);
-    let max = std::env::var("ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS")
+    let max = std::env::var("ACCOUNT_REFRESH_STAGGER_MAX_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(1500);
@@ -1266,7 +1265,7 @@ mod tests {
             .expect("account env lock");
 
         let data_dir = make_temp_data_dir();
-        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
 
         write_account_fixture(
             &data_dir,
@@ -1292,7 +1291,7 @@ mod tests {
             .expect("account env lock");
 
         let data_dir = make_temp_data_dir();
-        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
 
         write_account_fixture(
             &data_dir,
@@ -1341,8 +1340,8 @@ mod tests {
             .expect("account env lock");
 
         let data_dir = make_temp_data_dir();
-        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
-        let _enc_key_env = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-encryption-key");
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
+        let _enc_key_env = ScopedEnvVar::set("ENCRYPTION_KEY", "test-encryption-key");
 
         let first = upsert_account(
             "old@example.com".to_string(),
@@ -1388,8 +1387,8 @@ mod tests {
             .expect("account env lock");
 
         let data_dir = make_temp_data_dir();
-        let _data_dir_env = ScopedEnvVar::set("ABV_DATA_DIR", data_dir.to_string_lossy().as_ref());
-        let _enc_key_env = ScopedEnvVar::set("ABV_ENCRYPTION_KEY", "test-encryption-key");
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
+        let _enc_key_env = ScopedEnvVar::set("ENCRYPTION_KEY", "test-encryption-key");
 
         let first = upsert_account(
             "backfill@example.com".to_string(),
@@ -1444,14 +1443,14 @@ mod tests {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .expect("account env lock");
-        std::env::set_var("ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS", "1900");
-        std::env::set_var("ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS", "300");
+        std::env::set_var("ACCOUNT_REFRESH_STAGGER_MIN_MS", "1900");
+        std::env::set_var("ACCOUNT_REFRESH_STAGGER_MAX_MS", "300");
 
         let (min_ms, max_ms) = refresh_task_stagger_bounds_ms();
         assert_eq!(min_ms, 300);
         assert_eq!(max_ms, 1900);
 
-        std::env::remove_var("ABV_ACCOUNT_REFRESH_STAGGER_MIN_MS");
-        std::env::remove_var("ABV_ACCOUNT_REFRESH_STAGGER_MAX_MS");
+        std::env::remove_var("ACCOUNT_REFRESH_STAGGER_MIN_MS");
+        std::env::remove_var("ACCOUNT_REFRESH_STAGGER_MAX_MS");
     }
 }

@@ -7,11 +7,11 @@ use crate::modules;
 pub use modules::auth::account::RefreshStats;
 
 fn scheduler_refresh_account_delay_bounds_seconds() -> (u64, u64) {
-    let min = std::env::var("ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS")
+    let min = std::env::var("SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(1);
-    let max = std::env::var("ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS")
+    let max = std::env::var("SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(10);
