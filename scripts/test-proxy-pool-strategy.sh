@@ -9,7 +9,7 @@ CONSOLE_SCRIPT="$REPO_ROOT/console.sh"
 ENV_FILE="$REPO_ROOT/.env.local"
 
 PORT="${PORT:-8045}"; CONTAINER_NAME="${CONTAINER_NAME:-gephyr}"
-IMAGE="${IMAGE:-gephyr:latest}"; DATA_DIR="${GEPHYR_DATA_DIR:-$HOME/.gephyr}"
+IMAGE="${IMAGE:-gephyr:latest}"; DATA_DIR="${DATA_DIR:-$HOME/.gephyr}"
 TARGET_STRATEGY="round_robin"; SKIP_START="false"; KEEP_CHANGE="false"
 ALLOWED_STRATEGIES=("round_robin" "random" "priority" "least_connections" "weighted_round_robin")
 
@@ -81,19 +81,19 @@ load_env_local() {
   done < "$ENV_FILE"
 }
 
-ensure_api_key() { [[ -n "${GEPHYR_API_KEY:-}" ]] || die "Missing GEPHYR_API_KEY. Set env var or add it to .env.local."; }
+ensure_api_key() { [[ -n "${API_KEY:-}" ]] || die "Missing API_KEY. Set env var or add it to .env.local."; }
 
 wait_service_ready() {
   local attempts="${1:-50}" delay="${2:-0.5}"; ensure_api_key
   for _ in $(seq 1 "$attempts"); do
-    local code; code="$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${GEPHYR_API_KEY}" "${BASE_URL}/healthz" 2>/dev/null || true)"
+    local code; code="$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${API_KEY}" "${BASE_URL}/healthz" 2>/dev/null || true)"
     [[ "$code" == "200" ]] && return 0; sleep "$delay"
   done; return 1
 }
 
 start_server() { bash "$CONSOLE_SCRIPT" start --admin-api --port "$PORT" --container "$CONTAINER_NAME" --image "$IMAGE" --data-dir "$DATA_DIR"; }
-api_get() { ensure_api_key; curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" --max-time 30 "${BASE_URL}$1"; }
-api_post_json() { ensure_api_key; curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" -H "Content-Type: application/json" -X POST --max-time 30 -d "$2" "${BASE_URL}$1"; }
+api_get() { ensure_api_key; curl -sS -H "Authorization: Bearer ${API_KEY}" --max-time 30 "${BASE_URL}$1"; }
+api_post_json() { ensure_api_key; curl -sS -H "Authorization: Bearer ${API_KEY}" -H "Content-Type: application/json" -X POST --max-time 30 -d "$2" "${BASE_URL}$1"; }
 
 is_allowed_strategy() {
   local s="$1"

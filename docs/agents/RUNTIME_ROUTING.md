@@ -16,10 +16,10 @@
 
 From `src/lib.rs` and `src/proxy/server.rs`:
 
-- `API_KEY` / `API_KEY`
-- `WEB_PASSWORD` / `WEB_PASSWORD`
-- `AUTH_MODE` / `AUTH_MODE`
-- `ALLOW_LAN_ACCESS` / `ALLOW_LAN_ACCESS`
+- `API_KEY`
+- `WEB_PASSWORD`
+- `AUTH_MODE`
+- `ALLOW_LAN_ACCESS`
 - `MAX_BODY_SIZE`
 - `ENABLE_ADMIN_API`
 - `PUBLIC_URL`

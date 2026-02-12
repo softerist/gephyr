@@ -33,23 +33,12 @@ fn env_first(keys: &[&str]) -> Option<String> {
 }
 
 pub(crate) fn client_id() -> Result<String, String> {
-    env_first(&[
-        "GEPHYR_OAUTH_CLIENT_ID",
-        "GOOGLE_OAUTH_CLIENT_ID",
-        "GOOGLE_OAUTH_CLIENT_ID",
-    ])
-    .ok_or_else(|| {
-        "Missing Google OAuth client_id. Set GEPHYR_OAUTH_CLIENT_ID (or GOOGLE_OAUTH_CLIENT_ID)."
-            .to_string()
-    })
+    env_first(&["GOOGLE_OAUTH_CLIENT_ID"])
+        .ok_or_else(|| "Missing Google OAuth client_id. Set GOOGLE_OAUTH_CLIENT_ID.".to_string())
 }
 
 fn client_secret_optional() -> Option<String> {
-    env_first(&[
-        "GEPHYR_OAUTH_CLIENT_SECRET",
-        "GOOGLE_OAUTH_CLIENT_SECRET",
-        "GOOGLE_OAUTH_CLIENT_SECRET",
-    ])
+    env_first(&["GOOGLE_OAUTH_CLIENT_SECRET"])
 }
 
 fn oauth_user_agent() -> String {
@@ -613,19 +602,11 @@ mod tests {
     };
     use serde_json::json;
     use std::sync::Arc;
-    use std::sync::{Mutex, OnceLock};
     use tokio::net::TcpListener;
     use tokio::sync::Mutex as AsyncMutex;
 
-    fn oauth_ua_test_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
-
     fn oauth_ua_test_guard() -> std::sync::MutexGuard<'static, ()> {
-        oauth_ua_test_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::test_utils::lock_env()
     }
 
     #[derive(Clone)]
@@ -717,7 +698,7 @@ mod tests {
     fn test_get_auth_url_contains_state() {
         let _guard = oauth_ua_test_guard();
         std::env::set_var(
-            "GEPHYR_OAUTH_CLIENT_ID",
+            "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
         let redirect_uri = "http://localhost:8080/callback";
@@ -785,12 +766,8 @@ mod tests {
     async fn refresh_access_token_sends_user_agent_header() {
         let _guard = oauth_ua_test_guard();
         let _ua = ScopedEnvVar::set("OAUTH_USER_AGENT", "ua-integration-test");
-        // Set both keys to avoid cross-test env races (other tests may remove only one).
-        let _cid_primary = ScopedEnvVar::set(
-            "GEPHYR_OAUTH_CLIENT_ID",
-            "test-client.apps.googleusercontent.com",
-        );
-        let _cid_fallback = ScopedEnvVar::set(
+        // Set client ID env var for test isolation.
+        let _cid = ScopedEnvVar::set(
             "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
@@ -843,12 +820,8 @@ mod tests {
         let _guard = oauth_ua_test_guard();
         clear_refresh_observability_for_tests();
 
-        // Set both keys to avoid cross-test env races (other tests may remove only one).
-        let _cid_primary = ScopedEnvVar::set(
-            "GEPHYR_OAUTH_CLIENT_ID",
-            "test-client.apps.googleusercontent.com",
-        );
-        let _cid_fallback = ScopedEnvVar::set(
+        // Set client ID env var for test isolation.
+        let _cid = ScopedEnvVar::set(
             "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
@@ -947,9 +920,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_and_verify_identity_rejects_missing_subject_identifier() {
         let _guard = oauth_ua_test_guard();
-        let previous_client_id = std::env::var("GEPHYR_OAUTH_CLIENT_ID").ok();
-        std::env::set_var(
-            "GEPHYR_OAUTH_CLIENT_ID",
+        let _cid = ScopedEnvVar::set(
+            "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
         );
 
@@ -970,10 +942,5 @@ mod tests {
 
         server.abort();
         assert!(err.contains("missing subject identifier"));
-
-        match previous_client_id {
-            Some(value) => std::env::set_var("GEPHYR_OAUTH_CLIENT_ID", value),
-            None => std::env::remove_var("GEPHYR_OAUTH_CLIENT_ID"),
-        }
     }
 }

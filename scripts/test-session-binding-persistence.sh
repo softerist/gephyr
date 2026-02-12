@@ -34,7 +34,7 @@ ENV_FILE="$REPO_ROOT/.env.local"
 PORT="${PORT:-8045}"
 CONTAINER_NAME="${CONTAINER_NAME:-gephyr}"
 IMAGE="${IMAGE:-gephyr:latest}"
-DATA_DIR="${GEPHYR_DATA_DIR:-$HOME/.gephyr}"
+DATA_DIR="${DATA_DIR:-$HOME/.gephyr}"
 MODEL="gpt-5.3-codex"
 FALLBACK_MODELS="gemini-3-flash,gemini-3.0-flash,claude-sonnet-4-5"
 PROMPT="Persistent session binding validation prompt for restart testing."
@@ -133,8 +133,8 @@ load_env_local() {
 }
 
 ensure_api_key() {
-  if [[ -z "${GEPHYR_API_KEY:-}" ]]; then
-    die "Missing GEPHYR_API_KEY. Set env var or add it to .env.local."
+  if [[ -z "${API_KEY:-}" ]]; then
+    die "Missing API_KEY. Set env var or add it to .env.local."
   fi
 }
 
@@ -149,7 +149,7 @@ wait_service_ready() {
   for _ in $(seq 1 "$attempts"); do
     local code
     code="$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      -H "Authorization: Bearer ${API_KEY}" \
       "${BASE_URL}/healthz" 2>/dev/null || true)"
     [[ "$code" == "200" ]] && return 0
     sleep "$delay"
@@ -171,13 +171,13 @@ start_login_flow() {
 
 api_get() {
   ensure_api_key
-  curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+  curl -sS -H "Authorization: Bearer ${API_KEY}" \
     --max-time 30 "${BASE_URL}$1"
 }
 
 api_post_json() {
   ensure_api_key
-  curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+  curl -sS -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -X POST --max-time 60 -d "$2" "${BASE_URL}$1"
 }
@@ -220,7 +220,7 @@ invoke_test_request() {
   tmpfile="$(mktemp)"
   local http_code
   http_code="$(curl -s -o "$tmpfile" -w "%{http_code}" \
-    -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -X POST --max-time 120 \
     -D - \
@@ -234,7 +234,7 @@ invoke_test_request() {
   body_file="$(mktemp)"
 
   http_code="$(curl -s -o "$body_file" -D "$header_file" -w "%{http_code}" \
-    -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -X POST --max-time 120 \
     -d "$body" "${BASE_URL}/v1/chat/completions" 2>/dev/null || echo "000")"

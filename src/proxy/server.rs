@@ -544,6 +544,17 @@ Content-Length: 4096\r\n\
         let _guard = SERVER_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
         let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "2");
 
+        // This is a local throughput benchmark and is inherently sensitive to machine/CI load.
+        // Keep it opt-in so normal `cargo test` runs are stable.
+        let run = std::env::var("RUN_BENCHMARK_TESTS")
+            .ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+        if !run {
+            eprintln!("skipping HTTP/1.1 benchmark (set RUN_BENCHMARK_TESTS=1 to enable)");
+            return;
+        }
+
         let port = reserve_local_port();
         let start_config = test_start_config(port);
         let (server, mut handle) = AxumServer::start(start_config)

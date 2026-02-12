@@ -91,14 +91,14 @@ wait_oauth_account_link() {
   local poll_sec="${2:-2}"
   local elapsed=0
   local next_progress=10
-  local api_key="${GEPHYR_API_KEY:-}"
+  local api_key="${API_KEY:-}"
 
   if [[ -z "$api_key" && -f "$SCRIPT_DIR/.env.local" ]]; then
-    api_key="$(grep -E '^GEPHYR_API_KEY=' "$SCRIPT_DIR/.env.local" | tail -n 1 | cut -d '=' -f2- | tr -d '\r' | sed -E "s/^['\"]|['\"]$//g")"
+    api_key="$(grep -E '^API_KEY=' "$SCRIPT_DIR/.env.local" | tail -n 1 | cut -d '=' -f2- | tr -d '\r' | sed -E "s/^['\"]|['\"]$//g")"
   fi
 
   if [[ -z "$api_key" ]]; then
-    echo "Warning: skipping OAuth wait because GEPHYR_API_KEY is missing (env and .env.local)."
+    echo "Warning: skipping OAuth wait because API_KEY is missing (env and .env.local)."
     return 1
   fi
 

@@ -147,10 +147,10 @@ function Load-EnvLocal {
 }
 
 function Get-AuthHeaders {
-    if (-not $env:GEPHYR_API_KEY) {
-        throw "Missing GEPHYR_API_KEY. Set env var or add it to .env.local."
+    if (-not $env:API_KEY) {
+        throw "Missing API_KEY. Set env var or add it to .env.local."
     }
-    return @{ Authorization = "Bearer $($env:GEPHYR_API_KEY)" }
+    return @{ Authorization = "Bearer $($env:API_KEY)" }
 }
 
 function Assert-DockerReady {
@@ -452,7 +452,7 @@ if ($StressMode.IsPresent) {
     $jobs = @()
     for ($i = 1; $i -le $RequestCount; $i++) {
         $prompt = "Compliance stress request $i run=$runId. Reply in one sentence."
-        $jobs += Start-Job -ArgumentList $BaseUrl, $env:GEPHYR_API_KEY, $selectedModel, $prompt, $i -ScriptBlock {
+        $jobs += Start-Job -ArgumentList $BaseUrl, $env:API_KEY, $selectedModel, $prompt, $i -ScriptBlock {
             param($baseUrl, $apiKey, $model, $prompt, $index)
             $headers = @{
                 Authorization = "Bearer $apiKey"

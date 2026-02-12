@@ -46,9 +46,7 @@ fn resolve_encryption_key_from_sources(
 }
 
 fn get_encryption_key() -> Result<[u8; 32], String> {
-    let env_key = std::env::var("ENCRYPTION_KEY")
-        .ok()
-        .or_else(|| std::env::var("ENCRYPTION_KEY").ok());
+    let env_key = std::env::var("ENCRYPTION_KEY").ok();
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     resolve_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
@@ -66,9 +64,7 @@ fn validate_encryption_key_from_sources(
 }
 
 pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
-    let env_key = std::env::var("ENCRYPTION_KEY")
-        .ok()
-        .or_else(|| std::env::var("ENCRYPTION_KEY").ok());
+    let env_key = std::env::var("ENCRYPTION_KEY").ok();
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     validate_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(

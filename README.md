@@ -36,9 +36,9 @@ cp .env.example .env.local
 Edit `.env.local` with your API key and OAuth credentials:
 
 ```env
-GEPHYR_API_KEY=gph_your_secure_api_key
-GEPHYR_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
-GEPHYR_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
+API_KEY=gph_your_secure_api_key
+GOOGLE_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
 
 # Optional: restrict accepted Google Workspace domains for identity verification
 ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
@@ -126,7 +126,7 @@ Authorization: Bearer YOUR_API_KEY
 
 ```bash
 curl http://127.0.0.1:8045/v1/chat/completions \
-  -H "Authorization: Bearer $GEPHYR_API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-5.3-codex",
@@ -142,13 +142,12 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GEPHYR_API_KEY` | ✅ (for scripts) | — | API key used by `console.ps1`; passed to container as `API_KEY` |
-| `API_KEY` / `API_KEY` | ✅ (runtime) | — | Runtime API authentication token |
-| `AUTH_MODE` / `AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
-| `ALLOW_LAN_ACCESS` / `ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
+| `API_KEY` | ✅ | — | API key for console scripts and runtime auth |
+| `AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
+| `ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
 | `ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
-| `GEPHYR_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
-| `GEPHYR_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
+| `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
 | `OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
 | `TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
 | `TLS_CANARY_URL` | — | — | Optional startup TLS canary probe URL |

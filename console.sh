@@ -8,7 +8,7 @@ COMMAND="start"
 PORT="${PORT:-8045}"
 CONTAINER_NAME="${CONTAINER_NAME:-gephyr}"
 IMAGE="${IMAGE:-gephyr:latest}"
-DATA_DIR="${GEPHYR_DATA_DIR:-$HOME/.gephyr}"
+DATA_DIR="${DATA_DIR:-$HOME/.gephyr}"
 LOG_LINES=120
 MODEL="gpt-5.3-codex"
 PROMPT="hello from gephyr"
@@ -77,15 +77,15 @@ Examples:
   ./console.sh logout-and-stop
 
 Troubleshooting:
-  If health returns 401, your local GEPHYR_API_KEY does not match the running container.
+  If health returns 401, your local API_KEY does not match the running container.
   Use:
     ./console.sh restart
   Or rotate via rotate-key and let it restart automatically.
 
 OAuth Login:
   The `login` command requires Google OAuth credentials available inside the container:
-    GEPHYR_OAUTH_CLIENT_ID
-    (optional) GEPHYR_OAUTH_CLIENT_SECRET
+    GOOGLE_OAUTH_CLIENT_ID
+    (optional) GOOGLE_OAUTH_CLIENT_SECRET
   Optional identity/scheduler hardening envs are also passed through when set:
     OAUTH_USER_AGENT
     ALLOWED_GOOGLE_DOMAINS
@@ -130,8 +130,13 @@ save_env_value() {
 }
 
 ensure_api_key() {
-  if [[ -z "${GEPHYR_API_KEY:-}" ]]; then
-    echo "Missing GEPHYR_API_KEY. Set env var or create .env.local with GEPHYR_API_KEY=..." >&2
+  # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
+  if [[ -z "${API_KEY:-}" && -n "${GEPHYR_API_KEY:-}" ]]; then
+    export API_KEY="$GEPHYR_API_KEY"
+  fi
+
+  if [[ -z "${API_KEY:-}" ]]; then
+    echo "Missing API_KEY. Set env var or create .env.local with API_KEY=..." >&2
     exit 1
   fi
 }
@@ -159,17 +164,24 @@ start_container() {
   mkdir -p "$DATA_DIR"
   remove_container_if_exists
 
-  local extra_env=()
-  if [[ -n "${GEPHYR_OAUTH_CLIENT_ID:-}" ]]; then
-    extra_env+=(-e "GEPHYR_OAUTH_CLIENT_ID=${GEPHYR_OAUTH_CLIENT_ID}")
+  # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
+  if [[ -z "${GOOGLE_OAUTH_CLIENT_ID:-}" && -n "${GEPHYR_OAUTH_CLIENT_ID:-}" ]]; then
+    export GOOGLE_OAUTH_CLIENT_ID="$GEPHYR_OAUTH_CLIENT_ID"
   fi
-  if [[ -n "${GEPHYR_OAUTH_CLIENT_SECRET:-}" ]]; then
-    extra_env+=(-e "GEPHYR_OAUTH_CLIENT_SECRET=${GEPHYR_OAUTH_CLIENT_SECRET}")
+  if [[ -z "${GOOGLE_OAUTH_CLIENT_SECRET:-}" && -n "${GEPHYR_OAUTH_CLIENT_SECRET:-}" ]]; then
+    export GOOGLE_OAUTH_CLIENT_SECRET="$GEPHYR_OAUTH_CLIENT_SECRET"
+  fi
+
+  local extra_env=()
+  if [[ -n "${GOOGLE_OAUTH_CLIENT_ID:-}" ]]; then
+    extra_env+=(-e "GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}")
+  fi
+  if [[ -n "${GOOGLE_OAUTH_CLIENT_SECRET:-}" ]]; then
+    extra_env+=(-e "GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}")
   fi
   local runtime_env=()
   local runtime_env_names=(
     ENCRYPTION_KEY
-    WEB_PASSWORD
     WEB_PASSWORD
     PUBLIC_URL
     MAX_BODY_SIZE
@@ -196,7 +208,7 @@ start_container() {
 
   docker run --rm -d --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${PORT}:8045" \
-    -e API_KEY="$GEPHYR_API_KEY" \
+    -e API_KEY="$API_KEY" \
     -e AUTH_MODE=strict \
     -e ENABLE_ADMIN_API="$admin_api" \
     -e ALLOW_LAN_ACCESS=true \
@@ -223,7 +235,7 @@ wait_service_ready() {
   ensure_api_key
   for _ in $(seq 1 40); do
     code="$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      -H "Authorization: Bearer ${API_KEY}" \
       "http://127.0.0.1:${PORT}/healthz" || true)"
     [[ "$code" == "200" ]] && return 0
     sleep 0.5
@@ -265,10 +277,10 @@ show_status() {
   # API Configuration
   echo -e "${G}┌─ API Configuration ────────────────────────────────────────────${W}"
   echo -e "  ${G}Base URL:   ${Y}http://127.0.0.1:${PORT}${W}"
-  if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
-    local klen=${#GEPHYR_API_KEY}
-    local head=${GEPHYR_API_KEY:0:8}
-    local tail=${GEPHYR_API_KEY:$((klen > 4 ? klen - 4 : 0))}
+  if [[ -n "${API_KEY:-}" ]]; then
+    local klen=${#API_KEY}
+    local head=${API_KEY:0:8}
+    local tail=${API_KEY:$((klen > 4 ? klen - 4 : 0))}
     echo -e "  ${G}API Key:    ${Y}${head}...${tail}${W}"
   else
     echo -e "  ${G}API Key:    ${R}(not set)${W}"
@@ -279,8 +291,8 @@ show_status() {
   if [[ "$is_up" == "true" ]]; then
     echo -e "${G}┌─ Service Health ───────────────────────────────────────────────${W}"
     local health_json="" health_ok="false"
-    if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
-      health_json="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    if [[ -n "${API_KEY:-}" ]]; then
+      health_json="$(curl -sS -H "Authorization: Bearer ${API_KEY}" \
         "http://127.0.0.1:${PORT}/healthz" 2>/dev/null || true)"
       if [[ -n "$health_json" ]] && echo "$health_json" | grep -q '"status"'; then
         health_ok="true"
@@ -302,9 +314,9 @@ show_status() {
     echo -e "${G}┌─ Linked Accounts ──────────────────────────────────────────────${W}"
     local accounts_fetched="false"
     local acct_http_code=""
-    if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
+    if [[ -n "${API_KEY:-}" ]]; then
       local acct_raw
-      acct_raw="$(curl -sS -w $'\n%{http_code}' -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      acct_raw="$(curl -sS -w $'\n%{http_code}' -H "Authorization: Bearer ${API_KEY}" \
         "http://127.0.0.1:${PORT}/api/accounts" 2>/dev/null || true)"
       acct_http_code="$(printf '%s' "$acct_raw" | tail -n 1)"
       local acct_json
@@ -483,7 +495,7 @@ show_logs() {
 show_health() {
   ensure_api_key
   local result
-  result="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/healthz")"
+  result="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/healthz")"
   if [[ "$JSON_OUTPUT" == "true" ]]; then
     echo "$result"
   else
@@ -497,7 +509,7 @@ show_account_health_check() {
   echo -e "  \033[36mRunning account health check...\033[0m"
   echo ""
   local payload
-  payload="$(curl -sS -X POST -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+  payload="$(curl -sS -X POST -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORT}/api/accounts/health-check" 2>/dev/null || true)"
 
   if [[ -z "$payload" ]]; then
@@ -577,7 +589,7 @@ show_tls_canary() {
   fi
 
   local payload
-  payload="$(curl -sS -X "$method" -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+  payload="$(curl -sS -X "$method" -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORT}${endpoint}" 2>/dev/null || true)"
 
   if [[ -z "$payload" ]]; then
@@ -645,7 +657,7 @@ CANARYEOF
 show_accounts() {
   ensure_api_key
   local payload
-  payload="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/accounts")"
+  payload="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/api/accounts")"
 
   if [[ "$JSON_OUTPUT" == "true" ]]; then
     echo "$payload"
@@ -698,7 +710,7 @@ wait_oauth_account_link() {
 
   while (( elapsed < timeout_sec )); do
     local payload
-    payload="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/accounts" || true)"
+    payload="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/api/accounts" || true)"
     local count="0"
 
     if command -v python3 >/dev/null 2>&1; then
@@ -736,7 +748,7 @@ logout_accounts() {
 
   local accounts_json http_code
   accounts_json="$(curl -sS -w $'\n%{http_code}' \
-    -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORT}/api/accounts")"
   http_code="$(printf '%s' "$accounts_json" | tail -n 1)"
   accounts_json="$(printf '%s' "$accounts_json" | sed '$d')"
@@ -751,7 +763,7 @@ logout_accounts() {
     fi
     # Retry after restart
     accounts_json="$(curl -sS -w $'\n%{http_code}' \
-      -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      -H "Authorization: Bearer ${API_KEY}" \
       "http://127.0.0.1:${PORT}/api/accounts")"
     http_code="$(printf '%s' "$accounts_json" | tail -n 1)"
     accounts_json="$(printf '%s' "$accounts_json" | sed '$d')"
@@ -792,7 +804,7 @@ for a in data.get("accounts", []):
   for id in "${ids[@]}"; do
     if curl -sS -o /dev/null -w "%{http_code}" \
       -X DELETE \
-      -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      -H "Authorization: Bearer ${API_KEY}" \
       "http://127.0.0.1:${PORT}/api/accounts/${id}" | grep -Eq '^2[0-9][0-9]$'; then
       echo "Removed account: $id"
       removed=$((removed + 1))
@@ -815,7 +827,7 @@ api_test() {
   local body
   body="$(printf '{"model":"%s","messages":[{"role":"user","content":"%s"}]}' "$MODEL" "$safe_prompt")"
   curl -sS \
-    -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+    -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d "$body" \
     "http://127.0.0.1:${PORT}/v1/chat/completions"
@@ -844,7 +856,7 @@ oauth_flow() {
   fi
 
   local oauth_json oauth_url
-  oauth_json="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" "http://127.0.0.1:${PORT}/api/auth/url")"
+  oauth_json="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/api/auth/url")"
   oauth_url="$(printf '%s' "$oauth_json" | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
   oauth_url="${oauth_url//\\\//\/}"
 
@@ -868,8 +880,8 @@ generate_key() {
 rotate_key() {
   local new_key
   new_key="$(generate_key)"
-  export GEPHYR_API_KEY="$new_key"
-  save_env_value "GEPHYR_API_KEY" "$new_key"
+  export API_KEY="$new_key"
+  save_env_value "API_KEY" "$new_key"
   echo "Generated new API key and saved it to .env.local"
 
   if [[ "$NO_RESTART_AFTER_ROTATE" == "true" ]]; then
@@ -966,10 +978,10 @@ update_gephyr() {
     if [[ -n "$row" && "$row" == *"Up"* ]]; then
       was_running="true"
       echo -e "\033[36mContainer is running. Checking health before update...\033[0m"
-      if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
+      if [[ -n "${API_KEY:-}" ]]; then
         local hcode
         hcode="$(curl -s -o /dev/null -w "%{http_code}" \
-          -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+          -H "Authorization: Bearer ${API_KEY}" \
           "http://127.0.0.1:${PORT}/healthz" || true)"
         if [[ "$hcode" == "200" ]]; then
           echo -e "  Health: \033[32mOK\033[0m"
@@ -979,7 +991,7 @@ update_gephyr() {
         # Check if admin API is enabled
         local acode
         acode="$(curl -s -o /dev/null -w "%{http_code}" \
-          -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+          -H "Authorization: Bearer ${API_KEY}" \
           "http://127.0.0.1:${PORT}/api/accounts" || true)"
         if [[ "$acode" == "200" ]]; then
           was_admin_enabled="true"

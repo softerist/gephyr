@@ -1,4 +1,24 @@
 #[cfg(test)]
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(test)]
+fn global_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Process-wide env-var lock for tests.
+///
+/// Rust tests run in parallel by default and environment variables are global state, so we
+/// must serialize test code that mutates env vars to avoid flaky cross-test interference.
+#[cfg(test)]
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    global_env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
 pub(crate) struct ScopedEnvVar {
     key: &'static str,
     original: Option<String>,

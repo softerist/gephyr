@@ -141,10 +141,10 @@ function Load-EnvLocal {
 }
 
 function Get-AuthHeaders {
-    if (-not $env:GEPHYR_API_KEY) {
-        throw "Missing GEPHYR_API_KEY. Set env var or add it to .env.local."
+    if (-not $env:API_KEY) {
+        throw "Missing API_KEY. Set env var or add it to .env.local."
     }
-    return @{ Authorization = "Bearer $($env:GEPHYR_API_KEY)" }
+    return @{ Authorization = "Bearer $($env:API_KEY)" }
 }
 
 function Assert-DockerReady {

@@ -10,9 +10,6 @@ services:
       - ../.env.local
     environment:
       - LOG_LEVEL=info
-      - API_KEY=${GEPHYR_API_KEY}
-      - GOOGLE_OAUTH_CLIENT_ID=${GEPHYR_OAUTH_CLIENT_ID}
-      - GOOGLE_OAUTH_CLIENT_SECRET=${GEPHYR_OAUTH_CLIENT_SECRET}
       - AUTH_MODE=strict
       - ALLOW_LAN_ACCESS=false
     restart: unless-stopped

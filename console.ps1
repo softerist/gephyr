@@ -81,15 +81,15 @@ Examples:
   .\console.ps1 -Command login
 
 Troubleshooting:
-  If health returns 401, your local GEPHYR_API_KEY does not match the running container.
+  If health returns 401, your local API_KEY does not match the running container.
   Use:
     .\console.ps1 -Command restart
   Or rotate via rotate-key and let it restart automatically.
 
 OAuth Login:
   The `login` command requires Google OAuth credentials to be provided via env vars passed into the container:
-    GEPHYR_OAUTH_CLIENT_ID
-    (optional) GEPHYR_OAUTH_CLIENT_SECRET
+    GOOGLE_OAUTH_CLIENT_ID
+    (optional) GOOGLE_OAUTH_CLIENT_SECRET
   Optional identity/scheduler hardening envs are also passed through when set:
     OAUTH_USER_AGENT
     ALLOWED_GOOGLE_DOMAINS
@@ -151,14 +151,19 @@ function Save-EnvValue {
 }
 
 function Ensure-ApiKey {
-    if (-not $env:GEPHYR_API_KEY) {
-        throw "Missing GEPHYR_API_KEY. Set env var or create .env.local with GEPHYR_API_KEY=..."
+    # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
+    if (-not $env:API_KEY -and $env:GEPHYR_API_KEY) {
+        $env:API_KEY = $env:GEPHYR_API_KEY
+    }
+
+    if (-not $env:API_KEY) {
+        throw "Missing API_KEY. Set env var or create .env.local with API_KEY=..."
     }
 }
 
 function Get-AuthHeaders {
     Ensure-ApiKey
-    return @{ Authorization = "Bearer $($env:GEPHYR_API_KEY)" }
+    return @{ Authorization = "Bearer $($env:API_KEY)" }
 }
 
 function Test-ContainerExists {
@@ -190,19 +195,24 @@ function Start-Container {
 
     $adminApi = if ($AdminApiEnabled) { "true" } else { "false" }
 
-    $oauthArgs = @()
-    if ($env:GEPHYR_OAUTH_CLIENT_ID) {
-        $oauthArgs += @("-e", "GEPHYR_OAUTH_CLIENT_ID=$($env:GEPHYR_OAUTH_CLIENT_ID)")
+    # Support legacy env var names from .env.local (GEPHYR_ prefix was removed).
+    if (-not $env:GOOGLE_OAUTH_CLIENT_ID -and $env:GEPHYR_OAUTH_CLIENT_ID) {
+        $env:GOOGLE_OAUTH_CLIENT_ID = $env:GEPHYR_OAUTH_CLIENT_ID
     }
-    if ($env:GEPHYR_OAUTH_CLIENT_SECRET) {
-        $oauthArgs += @("-e", "GEPHYR_OAUTH_CLIENT_SECRET=$($env:GEPHYR_OAUTH_CLIENT_SECRET)")
+    if (-not $env:GOOGLE_OAUTH_CLIENT_SECRET -and $env:GEPHYR_OAUTH_CLIENT_SECRET) {
+        $env:GOOGLE_OAUTH_CLIENT_SECRET = $env:GEPHYR_OAUTH_CLIENT_SECRET
+    }
+
+    $oauthArgs = @()
+    if ($env:GOOGLE_OAUTH_CLIENT_ID) {
+        $oauthArgs += @("-e", "GOOGLE_OAUTH_CLIENT_ID=$($env:GOOGLE_OAUTH_CLIENT_ID)")
+    }
+    if ($env:GOOGLE_OAUTH_CLIENT_SECRET) {
+        $oauthArgs += @("-e", "GOOGLE_OAUTH_CLIENT_SECRET=$($env:GOOGLE_OAUTH_CLIENT_SECRET)")
     }
     $runtimeArgs = @()
     if ($env:ENCRYPTION_KEY) {
         $runtimeArgs += @("-e", "ENCRYPTION_KEY=$($env:ENCRYPTION_KEY)")
-    }
-    if ($env:WEB_PASSWORD) {
-        $runtimeArgs += @("-e", "WEB_PASSWORD=$($env:WEB_PASSWORD)")
     }
     if ($env:WEB_PASSWORD) {
         $runtimeArgs += @("-e", "WEB_PASSWORD=$($env:WEB_PASSWORD)")
@@ -252,7 +262,7 @@ function Start-Container {
 
     $containerId = docker run --rm -d --name $ContainerName `
         -p "127.0.0.1:$Port`:8045" `
-        -e API_KEY=$env:GEPHYR_API_KEY `
+        -e API_KEY=$env:API_KEY `
         -e AUTH_MODE=strict `
         -e ENABLE_ADMIN_API=$adminApi `
         -e ALLOW_LAN_ACCESS=true `
@@ -336,8 +346,8 @@ function Show-Status {
     Write-Host "  Base URL:   " -NoNewline -ForegroundColor Gray
     Write-Host "http://127.0.0.1:$Port" -ForegroundColor Yellow
 
-    if ($env:GEPHYR_API_KEY) {
-        $maskedKey = $env:GEPHYR_API_KEY.Substring(0, [Math]::Min(8, $env:GEPHYR_API_KEY.Length)) + "..." + $env:GEPHYR_API_KEY.Substring([Math]::Max(0, $env:GEPHYR_API_KEY.Length - 4))
+    if ($env:API_KEY) {
+        $maskedKey = $env:API_KEY.Substring(0, [Math]::Min(8, $env:API_KEY.Length)) + "..." + $env:API_KEY.Substring([Math]::Max(0, $env:API_KEY.Length - 4))
         Write-Host "  API Key:    " -NoNewline -ForegroundColor Gray
         Write-Host $maskedKey -ForegroundColor Yellow
     } else {
@@ -562,7 +572,7 @@ function Show-Health {
         if ($AsJson) {
             @{ error = "Health check failed" } | ConvertTo-Json
         } else {
-            throw "Health check failed. If status is 401, your local GEPHYR_API_KEY does not match the running container; run restart or rotate-key."
+            throw "Health check failed. If status is 401, your local API_KEY does not match the running container; run restart or rotate-key."
         }
     }
 }
@@ -839,8 +849,8 @@ function New-GephyrApiKey {
 
 function Rotate-ApiKey {
     $newKey = New-GephyrApiKey
-    $env:GEPHYR_API_KEY = $newKey
-    Save-EnvValue -Name "GEPHYR_API_KEY" -Value $newKey
+    $env:API_KEY = $newKey
+    Save-EnvValue -Name "API_KEY" -Value $newKey
     Write-Host "Generated new API key and saved it to .env.local"
 
     if ($NoRestartAfterRotate) {

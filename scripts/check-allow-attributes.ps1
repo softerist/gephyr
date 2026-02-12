@@ -82,16 +82,16 @@ function Search-Pattern {
 $fail = $false
 Write-Host "[allow-guard] scanning src/ for forbidden allow attributes..."
 
-$deadHits = Search-Pattern -Pattern '#\[allow\(dead_code\)\]' -Path "src"
-if ($deadHits -and $deadHits.Count -gt 0) {
+$deadHits = @(Search-Pattern -Pattern '#\[allow\(dead_code\)\]' -Path "src")
+if ($deadHits.Count -gt 0) {
   Write-Host ""
   Write-Host "[allow-guard] ERROR: runtime dead_code allow(s) detected in src/."
   $deadHits | ForEach-Object { Write-Host $_ }
   $fail = $true
 }
 
-$clippyHits = Search-Pattern -Pattern '#\[allow\([^)]*clippy::[^)]*\)\]' -Path "src"
-if ($clippyHits -and $clippyHits.Count -gt 0) {
+$clippyHits = @(Search-Pattern -Pattern '#\[allow\([^)]*clippy::[^)]*\)\]' -Path "src")
+if ($clippyHits.Count -gt 0) {
   $disallowed = @()
   foreach ($line in $clippyHits) {
     $path = ($line -split ":", 2)[0]

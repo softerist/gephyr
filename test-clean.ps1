@@ -104,13 +104,13 @@ function Wait-OAuthAccountLink {
         [int]$PollSec = 2
     )
 
-    $apiKey = $env:GEPHYR_API_KEY
+    $apiKey = $env:API_KEY
     if (-not $apiKey) {
         $envPath = Join-Path $scriptDir ".env.local"
         if (Test-Path $envPath) {
             foreach ($raw in Get-Content $envPath) {
                 $line = $raw.Trim()
-                if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("GEPHYR_API_KEY=")) {
+                if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("API_KEY=")) {
                     $apiKey = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
                     break
                 }
@@ -119,7 +119,7 @@ function Wait-OAuthAccountLink {
     }
 
     if (-not $apiKey) {
-        Write-Warning "[W-OAUTH-MISSING-API-KEY] Skipping OAuth wait: GEPHYR_API_KEY is missing (env and .env.local)."
+        Write-Warning "[W-OAUTH-MISSING-API-KEY] Skipping OAuth wait: API_KEY is missing (env and .env.local)."
         return $false
     }
 
@@ -174,7 +174,7 @@ function Wait-OAuthAccountLink {
                 }
 
                 if ($statusCode -eq 401) {
-                    Write-Warning "OAuth wait aborted [E-OAUTH-STATUS-401]: /api/auth/status returned 401 Unauthorized. Verify GEPHYR_API_KEY in shell/.env.local and restart container."
+                    Write-Warning "OAuth wait aborted [E-OAUTH-STATUS-401]: /api/auth/status returned 401 Unauthorized. Verify API_KEY in shell/.env.local and restart container."
                     return $false
                 }
                 if ($statusCode -eq 404) {
@@ -206,7 +206,7 @@ function Wait-OAuthAccountLink {
                 }
 
                 if ($statusCode -eq 401) {
-                    Write-Warning "OAuth wait aborted [E-OAUTH-ACCOUNTS-401]: /api/accounts returned 401 Unauthorized. Verify GEPHYR_API_KEY in shell/.env.local and restart container."
+                    Write-Warning "OAuth wait aborted [E-OAUTH-ACCOUNTS-401]: /api/accounts returned 401 Unauthorized. Verify API_KEY in shell/.env.local and restart container."
                     return $false
                 }
                 if ($statusCode -eq 404) {

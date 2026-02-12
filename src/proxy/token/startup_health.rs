@@ -17,9 +17,7 @@ const REFRESH_WINDOW_SECS: i64 = 300;
 const REFRESH_TIMEOUT_SECS: u64 = 10;
 
 /// Result of a single account health check.
-#[allow(dead_code)]
 enum HealthCheckOutcome {
-    Skipped,
     Refreshed,
     Disabled,
     NetworkError,
@@ -209,14 +207,6 @@ pub(crate) async fn run_startup_health_check(
                     detail,
                 });
             }
-            HealthCheckOutcome::Skipped => {
-                account_results.push(AccountHealthResult {
-                    account_id,
-                    email,
-                    status: "ok".to_string(),
-                    detail,
-                });
-            }
         }
     }
 
@@ -354,33 +344,24 @@ async fn check_single_account(
 #[cfg(test)]
 mod tests {
     use super::startup_health_delay_bounds_seconds;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use crate::test_utils::{lock_env, ScopedEnvVar};
 
     #[test]
     fn startup_health_delay_bounds_swap_when_reversed() {
-        let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var("STARTUP_HEALTH_DELAY_MIN_SECONDS", "10");
-        std::env::set_var("STARTUP_HEALTH_DELAY_MAX_SECONDS", "2");
+        let _guard = lock_env();
+        let _min = ScopedEnvVar::set("STARTUP_HEALTH_DELAY_MIN_SECONDS", "10");
+        let _max = ScopedEnvVar::set("STARTUP_HEALTH_DELAY_MAX_SECONDS", "2");
 
         let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
         assert_eq!(min_seconds, 2);
         assert_eq!(max_seconds, 10);
-
-        std::env::remove_var("STARTUP_HEALTH_DELAY_MIN_SECONDS");
-        std::env::remove_var("STARTUP_HEALTH_DELAY_MAX_SECONDS");
     }
 
     #[test]
     fn startup_health_delay_bounds_have_defaults() {
-        let _guard = env_lock().lock().expect("env lock");
-
-        std::env::remove_var("STARTUP_HEALTH_DELAY_MIN_SECONDS");
-        std::env::remove_var("STARTUP_HEALTH_DELAY_MAX_SECONDS");
+        let _guard = lock_env();
+        let _min = ScopedEnvVar::unset("STARTUP_HEALTH_DELAY_MIN_SECONDS");
+        let _max = ScopedEnvVar::unset("STARTUP_HEALTH_DELAY_MAX_SECONDS");
 
         let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
         assert_eq!(min_seconds, 1);

@@ -51,12 +51,12 @@ Gephyr runs as a local/headless proxy and uses OAuth Authorization Code + PKCE.
 6. Put credentials in `.env.local`:
 
 ```env
-GEPHYR_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GEPHYR_OAUTH_CLIENT_SECRET=your-client-secret
+GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
 ```
 
 Notes:
-- `GEPHYR_OAUTH_CLIENT_SECRET` is optional in Gephyr code path, but some client types/policies may require it for exchange/refresh.
+- `GOOGLE_OAUTH_CLIENT_SECRET` is optional in Gephyr code path, but some client types/policies may require it for exchange/refresh.
 - OAuth scopes are fixed in code (no runtime scope override env var).
 - If you use a public hosted callback flow, set:
   - `PUBLIC_URL=https://proxy.example.com`

@@ -283,11 +283,9 @@ fn clear_jwks_cache_for_tests() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::ScopedEnvVar;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde::Serialize;
-    use std::sync::{Mutex, OnceLock};
-
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     const TEST_KID: &str = "test-kid-1";
     const TEST_CLIENT_ID: &str = "test-client.apps.googleusercontent.com";
@@ -342,19 +340,18 @@ BQIDAQAB
         name: Option<&'a str>,
     }
 
-    fn setup_test_env() {
+    fn setup_test_env() -> (ScopedEnvVar, ScopedEnvVar) {
         let decoding =
             DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY_PEM.as_bytes()).expect("test decoding key");
         let mut keys = HashMap::new();
         keys.insert(TEST_KID.to_string(), Arc::new(decoding));
         set_jwks_cache_for_tests(keys);
-        std::env::set_var("GEPHYR_OAUTH_CLIENT_ID", TEST_CLIENT_ID);
-        std::env::remove_var("ALLOWED_GOOGLE_DOMAINS");
+        let client_id = ScopedEnvVar::set("GOOGLE_OAUTH_CLIENT_ID", TEST_CLIENT_ID);
+        let allow_domains = ScopedEnvVar::unset("ALLOWED_GOOGLE_DOMAINS");
+        (client_id, allow_domains)
     }
 
     fn teardown_test_env() {
-        std::env::remove_var("GEPHYR_OAUTH_CLIENT_ID");
-        std::env::remove_var("ALLOWED_GOOGLE_DOMAINS");
         clear_jwks_cache_for_tests();
     }
 
@@ -368,11 +365,8 @@ BQIDAQAB
 
     #[tokio::test]
     async fn test_validate_valid_id_token() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        setup_test_env();
+        let _guard = crate::test_utils::lock_env();
+        let (_client_id, _allow_domains) = setup_test_env();
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: TEST_ISSUER,
@@ -394,11 +388,8 @@ BQIDAQAB
 
     #[tokio::test]
     async fn test_reject_expired_token() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        setup_test_env();
+        let _guard = crate::test_utils::lock_env();
+        let (_client_id, _allow_domains) = setup_test_env();
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: TEST_ISSUER,
@@ -420,11 +411,8 @@ BQIDAQAB
 
     #[tokio::test]
     async fn test_reject_wrong_audience() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        setup_test_env();
+        let _guard = crate::test_utils::lock_env();
+        let (_client_id, _allow_domains) = setup_test_env();
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: TEST_ISSUER,
@@ -446,11 +434,8 @@ BQIDAQAB
 
     #[tokio::test]
     async fn test_reject_wrong_issuer() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        setup_test_env();
+        let _guard = crate::test_utils::lock_env();
+        let (_client_id, _allow_domains) = setup_test_env();
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: "https://malicious.example",
@@ -472,11 +457,8 @@ BQIDAQAB
 
     #[tokio::test]
     async fn test_reject_unverified_email() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        setup_test_env();
+        let _guard = crate::test_utils::lock_env();
+        let (_client_id, _allow_domains) = setup_test_env();
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: TEST_ISSUER,
@@ -498,12 +480,9 @@ BQIDAQAB
 
     #[tokio::test]
     async fn test_domain_allowlist_rejects_unknown_domain() {
-        let _guard = TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        setup_test_env();
-        std::env::set_var("ALLOWED_GOOGLE_DOMAINS", "corp.example.com");
+        let _guard = crate::test_utils::lock_env();
+        let (_client_id, _allow_domains) = setup_test_env();
+        let _allowed_domains = ScopedEnvVar::set("ALLOWED_GOOGLE_DOMAINS", "corp.example.com");
         let now = now_unix();
         let token = sign_test_jwt(&TestClaims {
             iss: TEST_ISSUER,
