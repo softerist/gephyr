@@ -496,6 +496,31 @@ fn default_logout_revoke_remote() -> bool {
     true
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LogoutAllAccountsRequest {
+    #[serde(default = "default_logout_revoke_remote")]
+    revoke_remote: bool,
+    #[serde(default)]
+    delete_local: bool,
+}
+
+#[derive(Serialize)]
+pub(crate) struct LogoutAllAccountsResponse {
+    success: bool,
+    total: usize,
+    logged_out: usize,
+    deleted: usize,
+    failed: Vec<LogoutAllAccountFailure>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct LogoutAllAccountFailure {
+    account_id: String,
+    email: String,
+    error: String,
+}
+
 pub(crate) async fn admin_logout_account(
     State(state): State<AdminState>,
     headers: HeaderMap,
@@ -534,6 +559,90 @@ pub(crate) async fn admin_logout_account(
         "local_cleared": true,
         "disabled": true,
     })))
+}
+
+pub(crate) async fn admin_logout_all_accounts(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(payload): Json<LogoutAllAccountsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+
+    let accounts = state.core.account_service.list_accounts().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    let total = accounts.len();
+    let mut logged_out = 0usize;
+    let mut deleted = 0usize;
+    let mut failed: Vec<LogoutAllAccountFailure> = Vec::new();
+
+    for acc in accounts {
+        let account_id = acc.id.clone();
+        let email = acc.email.clone();
+
+        match state
+            .core
+            .account_service
+            .logout_account(&account_id, payload.revoke_remote)
+            .await
+        {
+            Ok(()) => {
+                logged_out += 1;
+            }
+            Err(e) => {
+                failed.push(LogoutAllAccountFailure {
+                    account_id,
+                    email,
+                    error: e,
+                });
+                continue;
+            }
+        }
+
+        if payload.delete_local {
+            if let Err(e) = state.core.account_service.delete_account(&account_id) {
+                failed.push(LogoutAllAccountFailure {
+                    account_id,
+                    email,
+                    error: e,
+                });
+                continue;
+            }
+            deleted += 1;
+        }
+    }
+
+    if let Err(e) = state.core.token_manager.load_accounts().await {
+        logger::log_error(&format!(
+            "[API] Failed to reload accounts after logout-all: {}",
+            e
+        ));
+    }
+
+    audit::log_admin_audit(
+        "logout_all_accounts",
+        &actor,
+        serde_json::json!({
+            "revoke_remote": payload.revoke_remote,
+            "delete_local": payload.delete_local,
+            "total": total,
+            "logged_out": logged_out,
+            "deleted": deleted,
+            "failed_count": failed.len()
+        }),
+    );
+
+    Ok(Json(LogoutAllAccountsResponse {
+        success: failed.is_empty(),
+        total,
+        logged_out,
+        deleted,
+        failed,
+    }))
 }
 
 pub(crate) async fn admin_run_health_check(

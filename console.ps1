@@ -49,6 +49,7 @@ Commands:
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
   logout       Remove linked account(s) via admin API
+  logout-all   Logout all accounts (revoke + local token clear/disable)
   logout-and-stop  Logout accounts, then stop container
 
 Options:
@@ -77,6 +78,7 @@ Examples:
   .\console.ps1 docker-repair
   .\console.ps1 docker-repair -Aggressive
   .\console.ps1 logout
+  .\console.ps1 logout-all
   .\console.ps1 logout-and-stop
   .\console.ps1 -Command login
 
@@ -165,9 +167,24 @@ function Ensure-ApiKey {
     }
 }
 
+function Get-ConsoleCorrelationId {
+    if (-not $script:ConsoleCorrelationId) {
+        $script:ConsoleCorrelationId = "console.ps1-" + ([guid]::NewGuid().ToString())
+        $script:ConsoleRequestSeq = 0
+    }
+    return $script:ConsoleCorrelationId
+}
+
 function Get-AuthHeaders {
     Ensure-ApiKey
-    return @{ Authorization = "Bearer $($env:API_KEY)" }
+    $cid = Get-ConsoleCorrelationId
+    $script:ConsoleRequestSeq++
+    $rid = "$cid:$($script:ConsoleRequestSeq)"
+    return @{
+        Authorization      = "Bearer $($env:API_KEY)"
+        "x-correlation-id" = $cid
+        "x-request-id"     = $rid
+    }
 }
 
 function Test-ContainerExists {
@@ -779,6 +796,43 @@ function Logout-AndStop {
     Stop-Container
 }
 
+function Logout-AllAccounts {
+    $headers = Get-AuthHeaders
+    $headers["Content-Type"] = "application/json"
+    $body = @{ revokeRemote = $true; deleteLocal = $false } | ConvertTo-Json
+
+    try {
+        $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/logout-all" -Headers $headers -Method Post -Body $body -TimeoutSec 60
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "404|Not Found") {
+            Write-Host "Admin API not enabled. Restarting container with admin API..." -ForegroundColor Yellow
+            Stop-Container
+            Start-Container -AdminApiEnabled $true
+            if (-not (Wait-ServiceReady)) {
+                throw "Service did not become ready after restart."
+            }
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/logout-all" -Headers $headers -Method Post -Body $body -TimeoutSec 60
+        } elseif ($msg -match "401|Unauthorized") {
+            throw "Logout-all failed with 401. API key mismatch. Run restart or rotate-key."
+        } else {
+            throw "Logout-all failed: $msg"
+        }
+    }
+
+    $total = if ($resp.total) { [int]$resp.total } else { 0 }
+    $loggedOut = if ($resp.logged_out) { [int]$resp.logged_out } else { 0 }
+    $failed = @()
+    if ($resp.failed) { $failed = @($resp.failed) }
+
+    Write-Host "Logout-all completed. total=$total logged_out=$loggedOut failed=$($failed.Count)"
+    if ($failed.Count -gt 0) {
+        foreach ($f in $failed) {
+            Write-Warning "[W-LOGOUT-ALL-FAILED] $($f.account_id) $($f.email) : $($f.error)"
+        }
+    }
+}
+
 function Run-ApiTest {
     $headers = Get-AuthHeaders
     $headers["Content-Type"] = "application/json"
@@ -1071,7 +1125,7 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "canary", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-and-stop")
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "canary", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-all", "logout-and-stop")
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -1114,6 +1168,7 @@ switch ($Command) {
     "update" { Update-Gephyr }
     "version" { Show-Version }
     "logout" { Logout-Accounts }
+    "logout-all" { Logout-AllAccounts }
     "logout-and-stop" { Logout-AndStop }
     default { Write-Usage }
 }

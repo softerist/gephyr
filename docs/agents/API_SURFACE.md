@@ -34,6 +34,8 @@ Primary groups:
 - fetch quota, toggle proxy status
 - `POST /api/accounts/:accountId/logout` revokes the refresh token (default) and clears local tokens, disabling the account.
 - request body: `{ "revokeRemote": true|false }` (default: `true`)
+- `POST /api/accounts/logout-all` logs out all accounts (revoke + local token clear/disable).
+- request body: `{ "revokeRemote": true|false, "deleteLocal": true|false }` (defaults: `true`, `false`)
 - `DELETE /api/accounts/:accountId/device-profile` clears the bound device profile (does not delete history).
 - `POST /api/accounts/refresh` now requires explicit confirmation header:
 - `x-gephyr-confirm-bulk-refresh: true` (accepted truthy values: `1|true|yes|confirm`)

@@ -266,6 +266,28 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn logout_all_route_exists_and_requires_auth() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+
+        seed_runtime_config_api_key(api_key);
+        let state = build_test_state(api_key);
+        let router = build_admin_routes(state.clone()).with_state(state);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/accounts/logout-all")
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"revokeRemote":true,"deleteLocal":false}"#))
+            .expect("request");
+
+        let (status, _body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn admin_oauth_status_returns_shape() {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()

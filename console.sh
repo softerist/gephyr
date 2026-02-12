@@ -45,6 +45,7 @@ Commands:
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
   logout       Remove linked account(s) via admin API
+  logout-all   Logout all accounts (revoke + local token clear/disable)
   logout-and-stop  Logout accounts, then stop container
 
 Options:
@@ -74,6 +75,7 @@ Examples:
   ./console.sh docker-repair
   ./console.sh docker-repair --aggressive
   ./console.sh logout
+  ./console.sh logout-all
   ./console.sh logout-and-stop
 
 Troubleshooting:
@@ -142,6 +144,23 @@ ensure_api_key() {
     echo "Missing API_KEY. Set env var or create .env.local with API_KEY=..." >&2
     exit 1
   fi
+}
+
+ensure_request_ids() {
+  if [[ -z "${CONSOLE_CORRELATION_ID:-}" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      CONSOLE_CORRELATION_ID="console.sh-$(python3 -c 'import uuid; print(uuid.uuid4())')"
+    else
+      CONSOLE_CORRELATION_ID="console.sh-$(date +%s)"
+    fi
+    export CONSOLE_CORRELATION_ID
+    CONSOLE_REQUEST_SEQ=0
+    export CONSOLE_REQUEST_SEQ
+  fi
+  CONSOLE_REQUEST_SEQ=$((CONSOLE_REQUEST_SEQ + 1))
+  export CONSOLE_REQUEST_SEQ
+  CONSOLE_REQUEST_ID="${CONSOLE_CORRELATION_ID}:${CONSOLE_REQUEST_SEQ}"
+  export CONSOLE_REQUEST_ID
 }
 
 container_exists() {
@@ -755,10 +774,13 @@ PY
 
 logout_accounts() {
   ensure_api_key
+  ensure_request_ids
 
   local accounts_json http_code
   accounts_json="$(curl -sS -w $'\n%{http_code}' \
     -H "Authorization: Bearer ${API_KEY}" \
+    -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+    -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
     "http://127.0.0.1:${PORT}/api/accounts")"
   http_code="$(printf '%s' "$accounts_json" | tail -n 1)"
   accounts_json="$(printf '%s' "$accounts_json" | sed '$d')"
@@ -774,6 +796,8 @@ logout_accounts() {
     # Retry after restart
     accounts_json="$(curl -sS -w $'\n%{http_code}' \
       -H "Authorization: Bearer ${API_KEY}" \
+      -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+      -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
       "http://127.0.0.1:${PORT}/api/accounts")"
     http_code="$(printf '%s' "$accounts_json" | tail -n 1)"
     accounts_json="$(printf '%s' "$accounts_json" | sed '$d')"
@@ -815,6 +839,8 @@ for a in data.get("accounts", []):
     if curl -sS -o /dev/null -w "%{http_code}" \
       -X DELETE \
       -H "Authorization: Bearer ${API_KEY}" \
+      -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+      -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
       "http://127.0.0.1:${PORT}/api/accounts/${id}" | grep -Eq '^2[0-9][0-9]$'; then
       echo "Removed account: $id"
       removed=$((removed + 1))
@@ -824,6 +850,54 @@ for a in data.get("accounts", []):
   done
 
   echo "Logout completed. Removed ${removed} account(s)."
+}
+
+logout_all_accounts() {
+  ensure_api_key
+  ensure_request_ids
+
+  local body payload http_code
+  body='{"revokeRemote":true,"deleteLocal":false}'
+  payload="$(curl -sS -w $'\n%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+    -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+    -H "Content-Type: application/json" \
+    -d "$body" \
+    "http://127.0.0.1:${PORT}/api/accounts/logout-all")"
+  http_code="$(printf '%s' "$payload" | tail -n 1)"
+  payload="$(printf '%s' "$payload" | sed '$d')"
+
+  if [[ "$http_code" == "404" ]]; then
+    echo "Admin API not enabled. Restarting container with admin API..." >&2
+    stop_container
+    start_container "true"
+    if ! wait_service_ready; then
+      echo "Service did not become ready after restart." >&2
+      exit 1
+    fi
+    payload="$(curl -sS -w $'\n%{http_code}' \
+      -X POST \
+      -H "Authorization: Bearer ${API_KEY}" \
+      -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+      -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+      -H "Content-Type: application/json" \
+      -d "$body" \
+      "http://127.0.0.1:${PORT}/api/accounts/logout-all")"
+    http_code="$(printf '%s' "$payload" | tail -n 1)"
+    payload="$(printf '%s' "$payload" | sed '$d')"
+  fi
+
+  if [[ "$http_code" == "401" ]]; then
+    echo "Logout-all failed with 401. API key mismatch. Run restart or rotate-key." >&2
+    exit 1
+  elif [[ "$http_code" -ge 400 ]]; then
+    echo "Logout-all failed. HTTP $http_code" >&2
+    exit 1
+  fi
+
+  echo "$payload"
 }
 
 logout_and_stop() {
@@ -1134,7 +1208,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update logout logout-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update logout logout-all logout-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -1167,6 +1241,7 @@ case "$COMMAND" in
   update) update_gephyr ;;
   version) show_version ;;
   logout) logout_accounts ;;
+  logout-all) logout_all_accounts ;;
   logout-and-stop) logout_and_stop ;;
   *)
     echo "Unknown command: $COMMAND" >&2
