@@ -46,7 +46,9 @@ fn resolve_encryption_key_from_sources(
 }
 
 fn get_encryption_key() -> Result<[u8; 32], String> {
-    let env_key = std::env::var("ENCRYPTION_KEY").ok();
+    let env_key = std::env::var("ENCRYPTION_KEY")
+        .ok()
+        .or_else(|| std::env::var("ENCRYPTION_KEY").ok());
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     resolve_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
@@ -64,7 +66,9 @@ fn validate_encryption_key_from_sources(
 }
 
 pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
-    let env_key = std::env::var("ENCRYPTION_KEY").ok();
+    let env_key = std::env::var("ENCRYPTION_KEY")
+        .ok()
+        .or_else(|| std::env::var("ENCRYPTION_KEY").ok());
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
     validate_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
@@ -72,6 +76,18 @@ pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
             e
         )
     })
+}
+
+pub fn is_probably_encrypted_secret(raw: &str) -> bool {
+    raw.starts_with(CIPHERTEXT_V2_PREFIX) || looks_like_encrypted_payload(raw)
+}
+
+pub fn preflight_verify_decryptable_secret(raw: &str) -> Result<(), String> {
+    if !is_probably_encrypted_secret(raw) {
+        return Ok(());
+    }
+    // Fail closed for encrypted payloads: if we can't decrypt now, runtime will be broken.
+    decrypt_secret_or_plaintext(raw).map(|_| ())
 }
 
 fn looks_like_encrypted_payload(raw: &str) -> bool {

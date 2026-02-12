@@ -241,6 +241,31 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn admin_routes_require_auth_even_when_auth_mode_off() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+
+        seed_runtime_config_api_key(api_key);
+        let state = build_test_state(api_key);
+        // Simulate proxy auth mode off. Admin routes should still require auth.
+        {
+            let mut security = state.config.security.write().await;
+            security.auth_mode = ProxyAuthMode::Off;
+        }
+        let router = build_admin_routes(state.clone()).with_state(state);
+
+        let request = Request::builder()
+            .uri("/version/routes")
+            .body(Body::empty())
+            .expect("request");
+
+        let (status, _) = send(&router, request).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn admin_oauth_status_returns_shape() {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()

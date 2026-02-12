@@ -117,10 +117,16 @@ async fn start_headless_runtime() -> Result<commands::proxy::ProxyServiceState, 
     let proxy_state = commands::proxy::ProxyServiceState::new();
     crate::utils::crypto::validate_encryption_key_prerequisites().map_err(|e| {
         format!(
-            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] startup_encryption_preflight_failed: {} Refusing to start because encrypted token/config operations would fail at runtime. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY (for example in .env.local/.env or container env), restart Gephyr, then rerun OAuth login.",
+            "ERROR [E-CRYPTO-KEY-UNAVAILABLE] startup_encryption_preflight_failed: {} Refusing to start because encrypted token/config operations would fail at runtime. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY (or ENCRYPTION_KEY), restart Gephyr, then rerun OAuth login.",
             e
         )
     })?;
+    if let Err(e) = crate::modules::auth::account::startup_preflight_verify_persisted_tokens() {
+        return Err(format!(
+            "ERROR [E-CRYPTO-KEY-MISMATCH] startup_token_decryption_preflight_failed: {} Remediation: ensure ENCRYPTION_KEY/ENCRYPTION_KEY matches the key used when these tokens were stored, or run --reencrypt-secrets with the correct key.",
+            e
+        ));
+    }
     let mut config = modules::system::config::load_app_config()
         .map_err(|e| format!("failed_to_load_config_for_headless_mode: {}", e))?;
 

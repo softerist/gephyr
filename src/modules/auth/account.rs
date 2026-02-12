@@ -114,6 +114,66 @@ pub fn save_account(account: &Account) -> Result<(), String> {
     fs::write(&account_path, content).map_err(|e| format!("failed_to_save_account_data: {}", e))
 }
 
+pub fn startup_preflight_verify_persisted_tokens() -> Result<(), String> {
+    let data_dir = get_data_dir()?;
+    let accounts_dir = data_dir.join(ACCOUNTS_DIR);
+    if !accounts_dir.exists() {
+        return Ok(());
+    }
+
+    let entries = std::fs::read_dir(&accounts_dir)
+        .map_err(|e| format!("failed_to_read_accounts_dir: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("failed_to_read_accounts_dir_entry: {}", e))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| format!("read_failed {:?}: {}", path, e))?;
+        let value: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("parse_failed {:?}: {}", path, e))?;
+
+        let email = value
+            .get("email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown>");
+        let account_id = value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<unknown>");
+
+        let access_token = value
+            .get("token")
+            .and_then(|t| t.get("access_token"))
+            .and_then(|v| v.as_str());
+        let refresh_token = value
+            .get("token")
+            .and_then(|t| t.get("refresh_token"))
+            .and_then(|v| v.as_str());
+
+        if let Some(raw) = access_token {
+            if let Err(e) = crate::utils::crypto::preflight_verify_decryptable_secret(raw) {
+                return Err(format!(
+                    "account={} email={} access_token_decrypt_failed: {}",
+                    account_id, email, e
+                ));
+            }
+        }
+        if let Some(raw) = refresh_token {
+            if let Err(e) = crate::utils::crypto::preflight_verify_decryptable_secret(raw) {
+                return Err(format!(
+                    "account={} email={} refresh_token_decrypt_failed: {}",
+                    account_id, email, e
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn logout_account(account_id: &str, revoke_remote: bool) -> Result<(), String> {
     // Load the account first. We intentionally do not hold ACCOUNT_INDEX_LOCK across the network
     // request to Google's revoke endpoint.

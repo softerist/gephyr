@@ -146,12 +146,8 @@ async fn auth_middleware_internal(
             return Ok(next.run(request).await);
         }
     } else {
-        if matches!(effective_mode, ProxyAuthMode::Off) {
-            return Ok(next.run(request).await);
-        }
-        if is_health_check {
-            return Ok(next.run(request).await);
-        }
+        // Admin routes must never become unauthenticated due to proxy auth mode.
+        // Health checks for operators should use /healthz (non-admin) instead.
     }
     let api_key = request
         .headers()
@@ -185,46 +181,42 @@ async fn auth_middleware_internal(
     let authorized = is_authorized(&security, api_key, force_strict);
 
     if authorized {
-        Ok(next.run(request).await)
-    } else if !force_strict {
-        if let Some(token) = api_key {
-            let Some(client_ip) = crate::proxy::middleware::client_ip::extract_client_ip(&request)
-            else {
-                tracing::warn!(
-                    "Rejecting user token auth: missing socket client IP for token validation"
-                );
-                return Err(StatusCode::UNAUTHORIZED);
-            };
-            match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
-                Ok((true, _)) => {
-                    if let Ok(Some(user_token)) =
-                        crate::modules::persistence::user_token_db::get_token_by_value(token)
-                    {
-                        let identity = UserTokenIdentity {
-                            token_id: user_token.id,
-                            username: user_token.username,
-                        };
-                        let (mut parts, body) = request.into_parts();
-                        parts.extensions.insert(identity);
-                        let request = Request::from_parts(parts, body);
-                        let response = next.run(request).await;
+        return Ok(next.run(request).await);
+    }
 
-                        Ok(response)
-                    } else {
-                        Err(StatusCode::UNAUTHORIZED)
-                    }
+    // Allow user token auth fallback for both proxy and admin routes.
+    if let Some(token) = api_key {
+        let Some(client_ip) = crate::proxy::middleware::client_ip::extract_client_ip(&request)
+        else {
+            tracing::warn!(
+                "Rejecting user token auth: missing socket client IP for token validation"
+            );
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        match crate::modules::persistence::user_token_db::validate_token(token, &client_ip) {
+            Ok((true, _)) => {
+                if let Ok(Some(user_token)) =
+                    crate::modules::persistence::user_token_db::get_token_by_value(token)
+                {
+                    let identity = UserTokenIdentity {
+                        token_id: user_token.id,
+                        username: user_token.username,
+                    };
+                    let (mut parts, body) = request.into_parts();
+                    parts.extensions.insert(identity);
+                    let request = Request::from_parts(parts, body);
+                    return Ok(next.run(request).await);
                 }
-                Ok((false, reason)) => {
-                    tracing::warn!("UserToken rejected: {:?}", reason);
-                    Err(StatusCode::UNAUTHORIZED)
-                }
-                Err(e) => {
-                    tracing::error!("UserToken validation error: {}", e);
-                    Err(StatusCode::INTERNAL_SERVER_ERROR)
-                }
+                Err(StatusCode::UNAUTHORIZED)
             }
-        } else {
-            Err(StatusCode::UNAUTHORIZED)
+            Ok((false, reason)) => {
+                tracing::warn!("UserToken rejected: {:?}", reason);
+                Err(StatusCode::UNAUTHORIZED)
+            }
+            Err(e) => {
+                tracing::error!("UserToken validation error: {}", e);
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
         }
     } else {
         Err(StatusCode::UNAUTHORIZED)
