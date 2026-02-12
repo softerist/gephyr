@@ -1,6 +1,6 @@
 use crate::models::DeviceProfile;
 use crate::modules::system::process;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::Rng;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -137,20 +137,49 @@ pub fn save_global_original(profile: &DeviceProfile) -> Result<(), String> {
 }
 pub fn generate_profile() -> DeviceProfile {
     DeviceProfile {
-        machine_id: Some(format!("auth0|user_{}", random_hex(32))),
+        // Machine ID is expected to be a stable, opaque identifier. When we generate a synthetic
+        // profile (explicit opt-in), keep it in a conservative hex-only format.
+        machine_id: Some(generate_machine_id()),
         mac_machine_id: Some(new_standard_machine_id()),
         dev_device_id: Some(Uuid::new_v4().to_string()),
         sqm_id: Some(format!("{{{}}}", Uuid::new_v4().to_string().to_uppercase())),
     }
 }
 
+pub fn generate_machine_id() -> String {
+    random_hex(64)
+}
+
+pub fn is_valid_machine_id(value: &str) -> bool {
+    if value.len() != 64 {
+        return false;
+    }
+    value
+        .as_bytes()
+        .iter()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+pub fn normalize_machine_id(value: &str) -> Option<String> {
+    if value.starts_with("auth0|user_") {
+        return Some(generate_machine_id());
+    }
+    if is_valid_machine_id(value) {
+        None
+    } else {
+        Some(generate_machine_id())
+    }
+}
+
 fn random_hex(length: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(length)
-        .map(char::from)
-        .collect::<String>()
-        .to_lowercase()
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut rng = rand::thread_rng();
+    let mut out = String::with_capacity(length);
+    for _ in 0..length {
+        let idx = rng.gen_range(0..16);
+        out.push(HEX[idx] as char);
+    }
+    out
 }
 
 fn new_standard_machine_id() -> String {
@@ -166,4 +195,32 @@ fn new_standard_machine_id() -> String {
         }
     }
     id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_hex_is_hex_only_and_correct_length() {
+        let s = random_hex(64);
+        assert_eq!(s.len(), 64);
+        assert!(s
+            .as_bytes()
+            .iter()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+    }
+
+    #[test]
+    fn generate_profile_machine_id_is_valid() {
+        let p = generate_profile();
+        let id = p.machine_id.expect("generated machine_id");
+        assert!(is_valid_machine_id(&id));
+    }
+
+    #[test]
+    fn normalize_machine_id_migrates_auth0_prefix() {
+        let migrated = normalize_machine_id("auth0|user_deadbeef").expect("should migrate");
+        assert!(is_valid_machine_id(&migrated));
+    }
 }

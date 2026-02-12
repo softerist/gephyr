@@ -157,7 +157,30 @@ pub fn load_account(account_id: &str) -> Result<Account, String> {
     let content = fs::read_to_string(&account_path)
         .map_err(|e| format!("failed_to_read_account_data: {}", e))?;
 
-    serde_json::from_str(&content).map_err(|e| format!("failed_to_parse_account_data: {}", e))
+    let mut account: Account = serde_json::from_str(&content)
+        .map_err(|e| format!("failed_to_parse_account_data: {}", e))?;
+
+    // Normalize legacy/invalid synthetic device identifiers to avoid persisting obviously
+    // non-standard formats when operators previously used generate mode.
+    let mut changed = false;
+    if let Some(profile) = account.device_profile.as_mut() {
+        if let Some(machine_id) = profile.machine_id.as_deref() {
+            if let Some(new_id) = crate::modules::system::device::normalize_machine_id(machine_id) {
+                profile.machine_id = Some(new_id);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        if let Err(e) = save_account(&account) {
+            crate::modules::system::logger::log_warn(&format!(
+                "[W-ACCOUNT-MIGRATION] failed_to_persist_device_profile_migration: {}",
+                e
+            ));
+        }
+    }
+
+    Ok(account)
 }
 pub fn save_account(account: &Account) -> Result<(), String> {
     let accounts_dir = get_accounts_dir()?;
@@ -1411,6 +1434,73 @@ mod tests {
             None,
             None,
         )
+    }
+
+    #[test]
+    fn load_account_migrates_legacy_auth0_machine_id_and_persists() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
+
+        let account_id = "acct-migrate";
+        let email = "migrate@example.com";
+        let now = chrono::Utc::now().timestamp();
+
+        let account = json!({
+            "id": account_id,
+            "email": email,
+            "name": null,
+            "token": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600,
+                "token_type": "Bearer",
+                "email": email,
+                "project_id": null,
+                "session_id": null
+            },
+            "device_profile": {
+                "machine_id": "auth0|user_deadbeef"
+            },
+            "quota": null,
+            "disabled": false,
+            "proxy_disabled": false,
+            "created_at": now,
+            "last_used": now
+        });
+
+        let accounts_dir = data_dir.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).expect("create accounts dir");
+        std::fs::write(
+            accounts_dir.join(format!("{}.json", account_id)),
+            serde_json::to_string_pretty(&account).expect("serialize account fixture"),
+        )
+        .expect("write account fixture");
+
+        let loaded = load_account(account_id).expect("load account");
+        let migrated = loaded
+            .device_profile
+            .and_then(|p| p.machine_id)
+            .expect("machine_id present");
+        assert!(!migrated.starts_with("auth0|user_"));
+        assert!(crate::modules::system::device::is_valid_machine_id(
+            &migrated
+        ));
+
+        // Ensure the migration was persisted to disk.
+        let loaded2 = load_account(account_id).expect("reload account");
+        let persisted = loaded2
+            .device_profile
+            .and_then(|p| p.machine_id)
+            .expect("machine_id present after reload");
+        assert_eq!(persisted, migrated);
+
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 
     #[test]
