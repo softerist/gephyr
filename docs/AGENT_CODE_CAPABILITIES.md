@@ -11,6 +11,8 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - User token DB: `src/modules/persistence/user_token_db.rs`
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
+- Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `1..10`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
+- Startup token health refresh now processes accounts sequentially with randomized per-account delay controlled by `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS` / `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS` (default `1..10`) to avoid simultaneous Google refresh spikes: `src/commands/proxy.rs`, `src/proxy/token/startup_health.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
 - One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
 - Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `ABV_SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ABV_ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
@@ -48,6 +50,7 @@ Admin routes are defined in `src/proxy/routes/admin.rs` and mounted under `/api`
 Main admin groups include:
 
 - Accounts CRUD/switch/import/export/reorder/quota/proxy-toggle
+- Manual bulk quota refresh endpoint (`POST /api/accounts/refresh`) requires explicit confirmation header `x-gephyr-confirm-bulk-refresh: true` and returns `400` without confirmation: `src/proxy/admin/accounts/accounts_core.rs`
 - OAuth prepare/start/complete/cancel/manual-code
 - Proxy start/stop/status/mapping/api-key/session/rate-limit/preferred-account
 - Proxy scoped update endpoints expose runtime-apply contract (`runtime_apply.policy`, `runtime_apply.applied`, `runtime_apply.requires_restart`)
@@ -250,6 +253,10 @@ Main admin groups include:
 - `ABV_OAUTH_USER_AGENT`
 - `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
 - `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
+- `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`
+- `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`
+- `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS`
+- `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS`
 - OAuth:
 - `GEPHYR_GOOGLE_OAUTH_CLIENT_ID`, `ABV_GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_ID`
 - `GEPHYR_GOOGLE_OAUTH_CLIENT_SECRET`, `ABV_GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_CLIENT_SECRET`

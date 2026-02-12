@@ -161,28 +161,35 @@ mod tests {
 
     #[test]
     fn account_deserialize_without_google_sub_is_ok() {
-        let account = Account::new("acc-1".to_string(), "user@example.com".to_string(), sample_token("user@example.com"));
+        let account = Account::new(
+            "acc-1".to_string(),
+            "user@example.com".to_string(),
+            sample_token("user@example.com"),
+        );
         let mut value = serde_json::to_value(account).expect("serialize account");
         value
             .as_object_mut()
             .expect("account must serialize as object")
             .remove("google_sub");
 
-        let parsed: Account = serde_json::from_value(value).expect("deserialize without google_sub");
+        let parsed: Account =
+            serde_json::from_value(value).expect("deserialize without google_sub");
         assert!(parsed.google_sub.is_none());
         assert_eq!(parsed.email, "user@example.com");
     }
 
     #[test]
     fn account_serialize_with_google_sub() {
-        let mut account = Account::new("acc-2".to_string(), "user2@example.com".to_string(), sample_token("user2@example.com"));
+        let mut account = Account::new(
+            "acc-2".to_string(),
+            "user2@example.com".to_string(),
+            sample_token("user2@example.com"),
+        );
         account.google_sub = Some("google-sub-2".to_string());
 
         let value = serde_json::to_value(account).expect("serialize account with google_sub");
         assert_eq!(
-            value
-                .get("google_sub")
-                .and_then(|v| v.as_str()),
+            value.get("google_sub").and_then(|v| v.as_str()),
             Some("google-sub-2")
         );
     }

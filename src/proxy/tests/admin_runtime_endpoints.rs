@@ -482,9 +482,7 @@ mod tests {
         assert!(metrics_body["compliance"]["account_403_in_last_minute"].is_object());
         assert!(metrics_body["compliance"]["account_429_in_last_minute"].is_object());
         assert!(metrics_body["compliance"]["refresh_attempts_last_minute"].is_number());
-        assert!(
-            metrics_body["compliance"]["refresh_attempts_by_account_last_minute"].is_object()
-        );
+        assert!(metrics_body["compliance"]["refresh_attempts_by_account_last_minute"].is_object());
         assert!(metrics_body["compliance"]["scheduler_refresh_runs_last_minute"].is_number());
         assert!(metrics_body["compliance"]["scheduler_refresh_failures_last_minute"].is_number());
         assert!(

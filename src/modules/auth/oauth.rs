@@ -1,8 +1,8 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::collections::{HashMap, VecDeque};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -554,7 +554,12 @@ pub async fn ensure_fresh_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{extract::State, http::HeaderMap, routing::{get, post}, Json, Router};
+    use axum::{
+        extract::State,
+        http::HeaderMap,
+        routing::{get, post},
+        Json, Router,
+    };
     use serde_json::json;
     use std::sync::Arc;
     use std::sync::{Mutex, OnceLock};
@@ -691,16 +696,8 @@ mod tests {
         let now = 1_700_000_000_i64;
         let window = refresh_window_seconds(Some("acct-1"));
 
-        assert!(should_refresh_token(
-            now + window - 1,
-            now,
-            Some("acct-1")
-        ));
-        assert!(!should_refresh_token(
-            now + window + 1,
-            now,
-            Some("acct-1")
-        ));
+        assert!(should_refresh_token(now + window - 1, now, Some("acct-1")));
+        assert!(!should_refresh_token(now + window + 1, now, Some("acct-1")));
     }
 
     #[test]
@@ -847,8 +844,10 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn verify_identity_fallback_rejects_unverified_email() {
-        let (_guard, previous_ua) =
-            (oauth_ua_test_guard(), std::env::var("ABV_OAUTH_USER_AGENT").ok());
+        let (_guard, previous_ua) = (
+            oauth_ua_test_guard(),
+            std::env::var("ABV_OAUTH_USER_AGENT").ok(),
+        );
         std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-verify-unverified");
 
         let (base_url, _state, server) = start_mock_oauth_server_with_userinfo(json!({
@@ -874,8 +873,10 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn verify_identity_fallback_rejects_missing_subject_identifier() {
-        let (_guard, previous_ua) =
-            (oauth_ua_test_guard(), std::env::var("ABV_OAUTH_USER_AGENT").ok());
+        let (_guard, previous_ua) = (
+            oauth_ua_test_guard(),
+            std::env::var("ABV_OAUTH_USER_AGENT").ok(),
+        );
         std::env::set_var("ABV_OAUTH_USER_AGENT", "ua-verify-missing-sub");
 
         let (base_url, _state, server) = start_mock_oauth_server_with_userinfo(json!({
@@ -917,12 +918,11 @@ mod tests {
         let token_url = format!("{}/token", base_url);
         let userinfo_url = format!("{}/userinfo", base_url);
 
-        let err =
-            refresh_and_verify_identity_at("refresh-token", None, &token_url, &userinfo_url)
-                .await
-                .expect_err(
-                    "refresh_and_verify_identity should fail when fallback userinfo is missing sub",
-                );
+        let err = refresh_and_verify_identity_at("refresh-token", None, &token_url, &userinfo_url)
+            .await
+            .expect_err(
+                "refresh_and_verify_identity should fail when fallback userinfo is missing sub",
+            );
 
         server.abort();
         assert!(err.contains("missing subject identifier"));

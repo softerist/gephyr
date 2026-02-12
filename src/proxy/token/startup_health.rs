@@ -6,13 +6,9 @@ use std::sync::Arc;
 
 use super::types::ProxyToken;
 
-/// Maximum number of concurrent token refresh attempts during startup health check.
-const MAX_CONCURRENT_REFRESHES: usize = 5;
-const MAX_CONCURRENT_REFRESHES_LIMIT: usize = 32;
-
-/// Random jitter window before each startup health refresh task (milliseconds).
-const STARTUP_HEALTH_JITTER_MIN_MS_DEFAULT: u64 = 150;
-const STARTUP_HEALTH_JITTER_MAX_MS_DEFAULT: u64 = 1200;
+/// Random delay window between startup token refreshes (seconds).
+const STARTUP_HEALTH_DELAY_MIN_SECONDS_DEFAULT: u64 = 1;
+const STARTUP_HEALTH_DELAY_MAX_SECONDS_DEFAULT: u64 = 10;
 
 /// Tokens expiring within this window (seconds) are proactively refreshed.
 const REFRESH_WINDOW_SECS: i64 = 300;
@@ -29,25 +25,21 @@ enum HealthCheckOutcome {
     NetworkError,
 }
 
-fn startup_health_max_concurrent_refreshes() -> usize {
-    std::env::var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(|v| v.clamp(1, MAX_CONCURRENT_REFRESHES_LIMIT))
-        .unwrap_or(MAX_CONCURRENT_REFRESHES)
-}
-
-fn startup_health_jitter_bounds_ms() -> (u64, u64) {
-    let min = std::env::var("ABV_STARTUP_HEALTH_JITTER_MIN_MS")
+fn startup_health_delay_bounds_seconds() -> (u64, u64) {
+    let min = std::env::var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(STARTUP_HEALTH_JITTER_MIN_MS_DEFAULT);
-    let max = std::env::var("ABV_STARTUP_HEALTH_JITTER_MAX_MS")
+        .unwrap_or(STARTUP_HEALTH_DELAY_MIN_SECONDS_DEFAULT);
+    let max = std::env::var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(STARTUP_HEALTH_JITTER_MAX_MS_DEFAULT);
+        .unwrap_or(STARTUP_HEALTH_DELAY_MAX_SECONDS_DEFAULT);
 
-    if min <= max { (min, max) } else { (max, min) }
+    if min <= max {
+        (min, max)
+    } else {
+        (max, min)
+    }
 }
 
 /// Per-account detail returned in the health check summary.
@@ -138,98 +130,90 @@ pub(crate) async fn run_startup_health_check(
         skipped
     );
 
-    let max_concurrent = startup_health_max_concurrent_refreshes();
-    let (jitter_min_ms, jitter_max_ms) = startup_health_jitter_bounds_ms();
+    let candidate_total = candidates.len();
+    let (delay_min_seconds, delay_max_seconds) = startup_health_delay_bounds_seconds();
     tracing::info!(
-        "[Health] Startup refresh controls: concurrency={}, jitter={}..{}ms",
-        max_concurrent,
-        jitter_min_ms,
-        jitter_max_ms
+        "[Startup Health] Sequential refresh enabled: {} account(s) will be refreshed one-by-one with random delay {}..{}s between accounts to avoid simultaneous Google connections",
+        candidate_total,
+        delay_min_seconds,
+        delay_max_seconds
     );
-
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
-    let tokens_ref = Arc::clone(tokens);
-    let data_dir_owned = data_dir.to_path_buf();
-
-    let mut handles = Vec::new();
-
-    for (account_id, refresh_token, email, account_path) in candidates {
-        let sem = Arc::clone(&semaphore);
-        let tokens_map = Arc::clone(&tokens_ref);
-        let data_dir_path = data_dir_owned.clone();
-        let email_clone = email.clone();
-        let id_clone = account_id.clone();
-        let jitter_ms = if jitter_max_ms == 0 {
-            0
-        } else {
-            rand::thread_rng().gen_range(jitter_min_ms..=jitter_max_ms)
-        };
-
-        let handle = tokio::spawn(async move {
-            if jitter_ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(jitter_ms)).await;
-            }
-            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
-            let outcome = check_single_account(
-                &id_clone,
-                &refresh_token,
-                &email_clone,
-                &account_path,
-                &tokens_map,
-                &data_dir_path,
-            )
-            .await;
-            (id_clone, email_clone, outcome)
-        });
-
-        handles.push(handle);
-    }
 
     let mut refreshed = 0u32;
     let mut disabled = 0u32;
     let mut network_errors = 0u32;
 
-    for handle in handles {
-        match handle.await {
-            Ok((id, email, (outcome, detail))) => match outcome {
-                HealthCheckOutcome::Refreshed => {
-                    refreshed += 1;
-                    account_results.push(AccountHealthResult {
-                        account_id: id,
-                        email,
-                        status: "refreshed".to_string(),
-                        detail,
-                    });
-                }
-                HealthCheckOutcome::Disabled => {
-                    disabled += 1;
-                    account_results.push(AccountHealthResult {
-                        account_id: id,
-                        email,
-                        status: "disabled".to_string(),
-                        detail,
-                    });
-                }
-                HealthCheckOutcome::NetworkError => {
-                    network_errors += 1;
-                    account_results.push(AccountHealthResult {
-                        account_id: id,
-                        email,
-                        status: "error".to_string(),
-                        detail,
-                    });
-                }
-                HealthCheckOutcome::Skipped => {
-                    account_results.push(AccountHealthResult {
-                        account_id: id,
-                        email,
-                        status: "ok".to_string(),
-                        detail,
-                    });
-                }
-            },
-            Err(e) => {
-                tracing::warn!("Health check task panicked: {}", e);
+    for (index, (account_id, refresh_token, email, account_path)) in candidates.into_iter().enumerate() {
+        if index > 0 && delay_max_seconds > 0 {
+            let delay_seconds = if delay_min_seconds == delay_max_seconds {
+                delay_min_seconds
+            } else {
+                rand::thread_rng().gen_range(delay_min_seconds..=delay_max_seconds)
+            };
+            if delay_seconds > 0 {
+                tracing::info!(
+                    "[Startup Health] Waiting {}s before next account refresh ({}/{})",
+                    delay_seconds,
+                    index + 1,
+                    candidate_total
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(delay_seconds)).await;
+            }
+        }
+
+        tracing::info!(
+            "[Startup Health] Refreshing account {}/{}: {} ({})",
+            index + 1,
+            candidate_total,
+            email,
+            account_id
+        );
+
+        let (outcome, detail) = check_single_account(
+            &account_id,
+            &refresh_token,
+            &email,
+            &account_path,
+            tokens,
+            data_dir,
+        )
+        .await;
+
+        match outcome {
+            HealthCheckOutcome::Refreshed => {
+                refreshed += 1;
+                account_results.push(AccountHealthResult {
+                    account_id,
+                    email,
+                    status: "refreshed".to_string(),
+                    detail,
+                });
+            }
+            HealthCheckOutcome::Disabled => {
+                disabled += 1;
+                account_results.push(AccountHealthResult {
+                    account_id,
+                    email,
+                    status: "disabled".to_string(),
+                    detail,
+                });
+            }
+            HealthCheckOutcome::NetworkError => {
+                network_errors += 1;
+                account_results.push(AccountHealthResult {
+                    account_id,
+                    email,
+                    status: "error".to_string(),
+                    detail,
+                });
+            }
+            HealthCheckOutcome::Skipped => {
+                account_results.push(AccountHealthResult {
+                    account_id,
+                    email,
+                    status: "ok".to_string(),
+                    detail,
+                });
             }
         }
     }
@@ -367,7 +351,7 @@ async fn check_single_account(
 
 #[cfg(test)]
 mod tests {
-    use super::{startup_health_jitter_bounds_ms, startup_health_max_concurrent_refreshes};
+    use super::startup_health_delay_bounds_seconds;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
@@ -376,29 +360,28 @@ mod tests {
     }
 
     #[test]
-    fn startup_health_jitter_bounds_swap_when_reversed() {
+    fn startup_health_delay_bounds_swap_when_reversed() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var("ABV_STARTUP_HEALTH_JITTER_MIN_MS", "1600");
-        std::env::set_var("ABV_STARTUP_HEALTH_JITTER_MAX_MS", "200");
+        std::env::set_var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS", "10");
+        std::env::set_var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS", "2");
 
-        let (min_ms, max_ms) = startup_health_jitter_bounds_ms();
-        assert_eq!(min_ms, 200);
-        assert_eq!(max_ms, 1600);
+        let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
+        assert_eq!(min_seconds, 2);
+        assert_eq!(max_seconds, 10);
 
-        std::env::remove_var("ABV_STARTUP_HEALTH_JITTER_MIN_MS");
-        std::env::remove_var("ABV_STARTUP_HEALTH_JITTER_MAX_MS");
+        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS");
+        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS");
     }
 
     #[test]
-    fn startup_health_concurrency_is_clamped() {
+    fn startup_health_delay_bounds_have_defaults() {
         let _guard = env_lock().lock().expect("env lock");
 
-        std::env::set_var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES", "0");
-        assert_eq!(startup_health_max_concurrent_refreshes(), 1);
+        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS");
+        std::env::remove_var("ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS");
 
-        std::env::set_var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES", "999");
-        assert_eq!(startup_health_max_concurrent_refreshes(), 32);
-
-        std::env::remove_var("ABV_STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES");
+        let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
+        assert_eq!(min_seconds, 1);
+        assert_eq!(max_seconds, 10);
     }
 }

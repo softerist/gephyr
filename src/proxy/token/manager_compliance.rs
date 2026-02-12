@@ -196,7 +196,11 @@ impl TokenManager {
         }
     }
 
-    pub(super) fn record_account_switch_event(&self, previous_account: Option<&str>, selected_account: &str) {
+    pub(super) fn record_account_switch_event(
+        &self,
+        previous_account: Option<&str>,
+        selected_account: &str,
+    ) {
         if previous_account.is_some_and(|prev| prev == selected_account) {
             return;
         }

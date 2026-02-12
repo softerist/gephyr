@@ -117,6 +117,9 @@ pub async fn internal_start_proxy_service(
         tracing::info!("🔒 Fixed account mode restored: {}", account_id);
     }
     let active_accounts = token_manager.load_accounts().await.unwrap_or(0);
+    tracing::info!(
+        "[Startup Health] Running startup token refresh checks in paced sequential mode to avoid simultaneous Google connections"
+    );
     let _ = token_manager.run_startup_health_check().await;
     token_manager.restore_persisted_session_bindings();
 

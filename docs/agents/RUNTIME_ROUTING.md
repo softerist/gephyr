@@ -28,6 +28,10 @@ From `src/lib.rs` and `src/proxy/server.rs`:
 - `ABV_OAUTH_USER_AGENT`
 - `ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
 - `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
+- `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`
+- `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`
+- `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS`
+- `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS`
 
 TLS backend note:
 - TLS backend selection is compile-time (`tls-native` default, `tls-rustls` alternate) and is surfaced at runtime via `GET /api/proxy/metrics` -> `runtime.tls_backend`: `Cargo.toml`, `src/utils/http.rs`, `src/proxy/admin/runtime/service_control.rs`
@@ -96,6 +100,12 @@ From `src/proxy/token/*`:
 - risky statuses (`401`,`403`,`429`,`500`,`503`,`529`) place the selected account in temporary cooldown
 - near-expiry refresh + persistence
 - account disable/removal on `invalid_grant`
+- startup health token refresh now runs sequentially (one account at a time), with randomized delay between accounts to avoid simultaneous Google refresh spikes (defaults `1..10s`, configurable via `ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS` / `ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS`): `src/proxy/token/startup_health.rs`
+
+From scheduler path (`src/modules/system/scheduler.rs`, `src/commands/mod.rs`, `src/modules/auth/account.rs`):
+
+- periodic quota refresh still runs every 10 minutes when `auto_refresh=true`, with pre-run scheduler jitter (`ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
+- per-run account processing is now sequential with randomized per-account delay (defaults `1..10s`, configurable via `ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`)
 
 ## Upstream and Proxy Pool Routing
 

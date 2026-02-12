@@ -95,6 +95,8 @@ OAuth Login:
     ABV_TLS_CANARY_REQUIRED
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
+    ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS
+    ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS
 EOF
 }
 
@@ -181,6 +183,8 @@ start_container() {
     ABV_TLS_CANARY_REQUIRED
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
+    ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS
+    ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS
   )
   local var_name var_value
   for var_name in "${runtime_env_names[@]}"; do
@@ -297,10 +301,14 @@ show_status() {
     # Linked Accounts
     echo -e "${G}┌─ Linked Accounts ──────────────────────────────────────────────${W}"
     local accounts_fetched="false"
+    local acct_http_code=""
     if [[ -n "${GEPHYR_API_KEY:-}" ]]; then
-      local acct_json
-      acct_json="$(curl -sS -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
+      local acct_raw
+      acct_raw="$(curl -sS -w $'\n%{http_code}' -H "Authorization: Bearer ${GEPHYR_API_KEY}" \
         "http://127.0.0.1:${PORT}/api/accounts" 2>/dev/null || true)"
+      acct_http_code="$(printf '%s' "$acct_raw" | tail -n 1)"
+      local acct_json
+      acct_json="$(printf '%s' "$acct_raw" | sed '$d')"
       if [[ -n "$acct_json" ]] && echo "$acct_json" | grep -q '"accounts"'; then
         accounts_fetched="true"
         if command -v python3 >/dev/null 2>&1; then
@@ -425,7 +433,7 @@ for a in accounts:
                         pass
                 print(f"      \033[90m{padded} \033[0m{bar(pct)}  \033[0m{pct_str}{reset_hint}")
     else:
-        print(f"      \033[90m(no quota data)\033[0m")
+        print(f"      \033[90m(quota data not fetched yet, try again in a few moments...)\033[0m")
 PY
         else
           # Fallback: no python3, just show raw count
@@ -441,12 +449,18 @@ PY
         loaded="$(printf '%s' "$health_json" | sed -nE 's/.*"accounts_loaded"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p')"
         if [[ -n "$loaded" ]]; then
           echo -e "  ${W}${loaded} account(s) loaded${W}"
-          echo -e "  ${G}(enable admin API for details)${W}"
+          echo -e "  ${G}(start with --admin-api to see full account details)${W}"
+        elif [[ "$acct_http_code" == "404" ]]; then
+          echo -e "  ${G}(admin API not enabled — start with --admin-api to view accounts)${W}"
+        elif [[ "$acct_http_code" == "401" ]]; then
+          echo -e "  ${R}(admin API returned 401 — API key mismatch; run restart or rotate-key)${W}"
+        elif [[ -n "$acct_http_code" ]]; then
+          echo -e "  ${Y}(could not query accounts — HTTP ${acct_http_code})${W}"
         else
-          echo -e "  ${G}(unknown — admin API not available)${W}"
+          echo -e "  ${G}(admin API not reachable)${W}"
         fi
       else
-        echo -e "  ${G}(unknown — admin API not available)${W}"
+        echo -e "  ${R}(health check failed — cannot determine account status)${W}"
       fi
     fi
     echo ""

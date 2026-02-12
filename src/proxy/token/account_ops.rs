@@ -1,9 +1,10 @@
 pub(crate) async fn get_verified_identity(
     refresh_token: &str,
 ) -> Result<crate::modules::auth::oauth::VerifiedIdentity, String> {
-    let (_, identity) = crate::modules::auth::oauth::refresh_and_verify_identity(refresh_token, None)
-        .await
-        .map_err(|e| format!("Failed to verify identity from refresh token: {}", e))?;
+    let (_, identity) =
+        crate::modules::auth::oauth::refresh_and_verify_identity(refresh_token, None)
+            .await
+            .map_err(|e| format!("Failed to verify identity from refresh token: {}", e))?;
     Ok(identity)
 }
 

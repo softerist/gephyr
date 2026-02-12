@@ -3,7 +3,7 @@ use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
     extract::{Json, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -349,7 +349,28 @@ pub(crate) async fn admin_switch_account(
 }
 
 pub(crate) async fn admin_refresh_all_quotas(
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let confirmed = headers
+        .get("x-gephyr-confirm-bulk-refresh")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "confirm"
+            )
+        })
+        .unwrap_or(false);
+
+    if !confirmed {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Bulk quota refresh touches every active account. Re-send this request with header `x-gephyr-confirm-bulk-refresh: true` only when you explicitly want to run a full refresh.".to_string(),
+            }),
+        ));
+    }
+
     logger::log_info("[API] Starting refresh of all account quotas");
     let stats = account::refresh_all_quotas_logic().await.map_err(|e| {
         (

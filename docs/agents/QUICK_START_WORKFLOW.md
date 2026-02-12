@@ -35,6 +35,7 @@ Use this when starting a new task quickly and safely.
 10. Prefer `POST /api/proxy/request-timeout` for timeout-only changes instead of posting full `/api/config`.
 11. Prefer `POST /api/proxy/pool/strategy` for proxy-pool strategy-only changes instead of posting full `/api/config`.
 12. Prefer `POST /api/proxy/pool/runtime` for proxy-pool runtime knobs (`enabled`, `auto_failover`, `allow_shared_proxy_fallback`, `require_proxy_for_account_requests`, `health_check_interval`) instead of posting full `/api/config`.
+13. For manual bulk quota refresh, require explicit operator intent by sending `x-gephyr-confirm-bulk-refresh: true` with `POST /api/accounts/refresh` (request is rejected with `400` if omitted).
 
 ## Smoke Scripts
 

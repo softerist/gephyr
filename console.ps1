@@ -99,6 +99,8 @@ OAuth Login:
     ABV_TLS_CANARY_REQUIRED
     ABV_SCHEDULER_REFRESH_JITTER_MIN_SECONDS
     ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS
+    ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS
+    ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS
 "@ | Write-Host
 }
 
@@ -240,6 +242,12 @@ function Start-Container {
     }
     if ($env:ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS) {
         $runtimeArgs += @("-e", "ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS=$($env:ABV_SCHEDULER_REFRESH_JITTER_MAX_SECONDS)")
+    }
+    if ($env:ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS) {
+        $runtimeArgs += @("-e", "ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS=$($env:ABV_STARTUP_HEALTH_DELAY_MIN_SECONDS)")
+    }
+    if ($env:ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS) {
+        $runtimeArgs += @("-e", "ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS=$($env:ABV_STARTUP_HEALTH_DELAY_MAX_SECONDS)")
     }
 
     $containerId = docker run --rm -d --name $ContainerName `
@@ -498,20 +506,30 @@ function Show-Status {
                             }
                         }
                     } else {
-                        Write-Host "      (no quota data)" -ForegroundColor DarkGray
+                        Write-Host "      (quota data not fetched yet, try again in a few moments...)" -ForegroundColor DarkGray
                     }
                 }
             }
             $accountsFetched = $true
         } catch {
             # Admin API not enabled or auth error — fall back to health count
+            $adminApiError = $_.Exception.Message
         }
         if (-not $accountsFetched) {
             if ($healthData -and $healthData.accounts_loaded) {
                 Write-Host "  $($healthData.accounts_loaded) account(s) loaded" -ForegroundColor White
-                Write-Host "  (enable admin API for details)" -ForegroundColor DarkGray
+                Write-Host "  (start with --admin-api to see full account details)" -ForegroundColor DarkGray
+            } elseif ($healthData) {
+                # Health check succeeded but /api/accounts failed
+                if ($adminApiError -match "404|Not Found") {
+                    Write-Host "  (admin API not enabled — start with -EnableAdminApi to view accounts)" -ForegroundColor DarkGray
+                } elseif ($adminApiError -match "401|Unauthorized") {
+                    Write-Host "  (admin API returned 401 — API key mismatch; run restart or rotate-key)" -ForegroundColor Red
+                } else {
+                    Write-Host "  (could not query accounts — $adminApiError)" -ForegroundColor Yellow
+                }
             } else {
-                Write-Host "  (unknown — admin API not available)" -ForegroundColor DarkGray
+                Write-Host "  (health check failed — cannot determine account status)" -ForegroundColor Red
             }
         }
         Write-Host ""

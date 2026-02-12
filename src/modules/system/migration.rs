@@ -135,17 +135,21 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             "Importing account: {}",
                             email_placeholder
                         ));
-                        let (token_resp, identity) =
-                            match oauth::refresh_and_verify_identity(&refresh_token, None).await {
-                                Ok(result) => result,
-                                Err(e) => {
-                                    crate::modules::system::logger::log_warn(&format!(
+                        let (token_resp, identity) = match oauth::refresh_and_verify_identity(
+                            &refresh_token,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(result) => result,
+                            Err(e) => {
+                                crate::modules::system::logger::log_warn(&format!(
                                         "Skipping import for {}: refresh/identity verification failed: {}",
                                         email_placeholder, e
                                     ));
-                                    continue;
-                                }
-                            };
+                                continue;
+                            }
+                        };
                         let crate::modules::auth::oauth::VerifiedIdentity {
                             email,
                             name,

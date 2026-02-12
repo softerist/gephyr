@@ -901,6 +901,33 @@ fn per_account_refresh_stagger_ms(account_id: &str, min_ms: u64, max_ms: u64) ->
     }
 }
 
+fn should_refresh_account_quota(account: &Account) -> bool {
+    if account.disabled {
+        crate::modules::system::logger::log_info(&format!(
+            "  - Skipping {} (Disabled)",
+            account.email
+        ));
+        return false;
+    }
+    if account.proxy_disabled {
+        crate::modules::system::logger::log_info(&format!(
+            "  - Skipping {} (Proxy Disabled)",
+            account.email
+        ));
+        return false;
+    }
+    if let Some(ref q) = account.quota {
+        if q.is_forbidden {
+            crate::modules::system::logger::log_info(&format!(
+                "  - Skipping {} (Forbidden)",
+                account.email
+            ));
+            return false;
+        }
+    }
+    true
+}
+
 pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use futures::future::join_all;
     use std::sync::Arc;
@@ -924,37 +951,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
 
     let tasks: Vec<_> = accounts
         .into_iter()
-        .filter(|account| {
-            if account.disabled || account.proxy_disabled {
-                crate::modules::system::logger::log_info(&format!(
-                    "  - Skipping {} ({})",
-                    account.email,
-                    if account.disabled {
-                        "Disabled"
-                    } else {
-                        "Proxy Disabled"
-                    }
-                ));
-                return false;
-            }
-            if account.proxy_disabled {
-                crate::modules::system::logger::log_info(&format!(
-                    "  - Skipping {} (Proxy Disabled)",
-                    account.email
-                ));
-                return false;
-            }
-            if let Some(ref q) = account.quota {
-                if q.is_forbidden {
-                    crate::modules::system::logger::log_info(&format!(
-                        "  - Skipping {} (Forbidden)",
-                        account.email
-                    ));
-                    return false;
-                }
-            }
-            true
-        })
+        .filter(should_refresh_account_quota)
         .map(|mut account| {
             let email = account.email.clone();
             let account_id = account.id.clone();
@@ -1011,6 +1008,91 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     let elapsed = start.elapsed();
     crate::modules::system::logger::log_info(&format!(
         "Batch refresh completed: {} success, {} failed, took: {}ms",
+        success,
+        failed,
+        elapsed.as_millis()
+    ));
+
+    Ok(RefreshStats {
+        total,
+        success,
+        failed,
+        details,
+    })
+}
+
+pub async fn refresh_all_quotas_sequential_logic(
+    min_delay_seconds: u64,
+    max_delay_seconds: u64,
+) -> Result<RefreshStats, String> {
+    use rand::Rng;
+
+    let start = std::time::Instant::now();
+    let (min_delay_seconds, max_delay_seconds) = if min_delay_seconds <= max_delay_seconds {
+        (min_delay_seconds, max_delay_seconds)
+    } else {
+        (max_delay_seconds, min_delay_seconds)
+    };
+
+    crate::modules::system::logger::log_info(&format!(
+        "Starting batch refresh of all account quotas (Sequential mode, delay: {}-{}s)",
+        min_delay_seconds, max_delay_seconds
+    ));
+
+    let accounts: Vec<Account> = list_accounts()?
+        .into_iter()
+        .filter(should_refresh_account_quota)
+        .collect();
+
+    let total = accounts.len();
+    let mut success = 0usize;
+    let mut failed = 0usize;
+    let mut details = Vec::new();
+
+    for (index, mut account) in accounts.into_iter().enumerate() {
+        if index > 0 && max_delay_seconds > 0 {
+            let delay_seconds = if min_delay_seconds == max_delay_seconds {
+                min_delay_seconds
+            } else {
+                rand::thread_rng().gen_range(min_delay_seconds..=max_delay_seconds)
+            };
+            if delay_seconds > 0 {
+                crate::modules::system::logger::log_info(&format!(
+                    "  - Waiting {}s before processing next account",
+                    delay_seconds
+                ));
+                tokio::time::sleep(std::time::Duration::from_secs(delay_seconds)).await;
+            }
+        }
+
+        let email = account.email.clone();
+        let account_id = account.id.clone();
+        crate::modules::system::logger::log_info(&format!("  - Processing {}", email));
+
+        match fetch_quota_with_retry(&mut account).await {
+            Ok(quota) => {
+                if let Err(e) = update_account_quota(&account_id, quota) {
+                    let msg = format!("Account {}: Save quota failed - {}", email, e);
+                    crate::modules::system::logger::log_error(&msg);
+                    failed += 1;
+                    details.push(msg);
+                } else {
+                    crate::modules::system::logger::log_info(&format!("    ✅ {} Success", email));
+                    success += 1;
+                }
+            }
+            Err(e) => {
+                let msg = format!("Account {}: Fetch quota failed - {}", email, e);
+                crate::modules::system::logger::log_error(&msg);
+                failed += 1;
+                details.push(msg);
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+    crate::modules::system::logger::log_info(&format!(
+        "Sequential quota refresh completed: {} success, {} failed, took: {}ms",
         success,
         failed,
         elapsed.as_millis()

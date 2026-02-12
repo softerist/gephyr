@@ -30,6 +30,11 @@ Primary groups:
 - import v1/db/custom-db, sync-db
 - bulk delete, export, reorder
 - fetch quota, toggle proxy status
+- `POST /api/accounts/refresh` now requires explicit confirmation header:
+- `x-gephyr-confirm-bulk-refresh: true` (accepted truthy values: `1|true|yes|confirm`)
+- without confirmation header, endpoint returns `400` with warning text
+- refresh endpoint still performs all-account quota refresh (manual bulk path)
+- `POST /api/accounts/health-check` runs startup-health token refresh checks and now processes refresh candidates sequentially (one-by-one)
 - OAuth:
 - prepare/start/complete/cancel/submit-code
 - web auth URL + callback flow

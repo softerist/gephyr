@@ -6,10 +6,31 @@ use crate::modules;
 
 pub use modules::auth::account::RefreshStats;
 
+fn scheduler_refresh_account_delay_bounds_seconds() -> (u64, u64) {
+    let min = std::env::var("ABV_SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1);
+    let max = std::env::var("ABV_SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10);
+    if min <= max {
+        (min, max)
+    } else {
+        (max, min)
+    }
+}
+
 pub async fn refresh_all_quotas_internal(
     proxy_state: &crate::commands::proxy::ProxyServiceState,
 ) -> Result<RefreshStats, String> {
-    let stats = modules::auth::account::refresh_all_quotas_logic().await?;
+    let (min_delay_seconds, max_delay_seconds) = scheduler_refresh_account_delay_bounds_seconds();
+    let stats = modules::auth::account::refresh_all_quotas_sequential_logic(
+        min_delay_seconds,
+        max_delay_seconds,
+    )
+    .await?;
 
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
