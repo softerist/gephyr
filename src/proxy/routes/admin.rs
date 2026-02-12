@@ -71,7 +71,7 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
     let router = admin_groups::add_system_routes(router);
     let router = admin_groups::add_security_routes(router);
     let router = admin_groups::add_user_token_routes(router);
-    add_legacy_stats_alias_routes(router)
+    router
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::proxy::middleware::admin_auth_middleware,
@@ -79,17 +79,4 @@ pub fn build_admin_routes(state: AppState) -> Router<AppState> {
         .layer(axum::middleware::from_fn(
             crate::proxy::middleware::request_context_middleware,
         ))
-}
-
-fn add_legacy_stats_alias_routes(router: Router<AppState>) -> Router<AppState> {
-    router
-        .route("/stats/summary", get(admin::admin_get_token_stats_summary))
-        .route("/stats/hourly", get(admin::admin_get_token_stats_hourly))
-        .route("/stats/daily", get(admin::admin_get_token_stats_daily))
-        .route("/stats/weekly", get(admin::admin_get_token_stats_weekly))
-        .route(
-            "/stats/accounts",
-            get(admin::admin_get_token_stats_by_account),
-        )
-        .route("/stats/models", get(admin::admin_get_token_stats_by_model))
 }
