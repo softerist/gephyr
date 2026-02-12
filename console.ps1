@@ -52,11 +52,6 @@ Commands:
   accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
   accounts-delete-all   Delete local account records (does not revoke)
   accounts-delete-all-and-stop  Delete local accounts, then stop container
-  logout       Alias for accounts-signout-all (deprecated)
-  logout-all   Alias for accounts-signout-all (deprecated)
-  logout-and-stop  Alias for accounts-signout-all-and-stop (deprecated)
-  remove-accounts  Alias for accounts-delete-all (deprecated)
-  remove-accounts-and-stop  Alias for accounts-delete-all-and-stop (deprecated)
 
 Options:
   -EnableAdminApi        Enable admin API on start/restart (default false)
@@ -87,8 +82,6 @@ Examples:
   .\console.ps1 accounts-signout-all-and-stop
   .\console.ps1 accounts-delete-all
   .\console.ps1 accounts-delete-all-and-stop
-  .\console.ps1 logout
-  .\console.ps1 remove-accounts
   .\console.ps1 -Command login
 
 Troubleshooting:
@@ -766,9 +759,9 @@ function Remove-Accounts {
             # Retry after restart
             $accountsResponse = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
         } elseif ($msg -match "401|Unauthorized") {
-            throw "Remove-accounts failed with 401. API key mismatch. Run restart or rotate-key."
+            throw "Accounts delete-all failed with 401. API key mismatch. Run restart or rotate-key."
         } else {
-            throw "Failed to query accounts for remove-accounts: $msg"
+            throw "Failed to query accounts for accounts-delete-all: $msg"
         }
     }
 
@@ -803,19 +796,6 @@ function Remove-Accounts {
 function Logout-AndStop {
     Logout-AllAccounts
     Stop-Container
-}
-
-function Logout-Accounts {
-    Write-Host "Note: 'logout' revokes + disables accounts. Use 'remove-accounts' to delete local account records." -ForegroundColor Yellow
-    Logout-AllAccounts
-}
-
-function Write-DeprecatedCommand {
-    param(
-        [Parameter(Mandatory = $true)][string]$Old,
-        [Parameter(Mandatory = $true)][string]$New
-    )
-    Write-Host "Deprecated: '$Old' is now '$New'." -ForegroundColor Yellow
 }
 
 function Accounts-SignoutAll {
@@ -1172,8 +1152,7 @@ $dockerCommands = @(
     "start", "stop", "restart", "status", "logs", "health", "check", "canary",
     "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update",
     "accounts-signout-all", "accounts-signout-all-and-stop",
-    "accounts-delete-all", "accounts-delete-all-and-stop",
-    "logout", "logout-all", "logout-and-stop", "remove-accounts", "remove-accounts-and-stop"
+    "accounts-delete-all", "accounts-delete-all-and-stop"
 )
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
@@ -1220,10 +1199,5 @@ switch ($Command) {
     "accounts-signout-all-and-stop" { Accounts-SignoutAllAndStop }
     "accounts-delete-all" { Accounts-DeleteAll }
     "accounts-delete-all-and-stop" { Accounts-DeleteAllAndStop }
-    "logout" { Write-DeprecatedCommand -Old "logout" -New "accounts-signout-all"; Accounts-SignoutAll }
-    "logout-all" { Write-DeprecatedCommand -Old "logout-all" -New "accounts-signout-all"; Accounts-SignoutAll }
-    "logout-and-stop" { Write-DeprecatedCommand -Old "logout-and-stop" -New "accounts-signout-all-and-stop"; Accounts-SignoutAllAndStop }
-    "remove-accounts" { Write-DeprecatedCommand -Old "remove-accounts" -New "accounts-delete-all"; Accounts-DeleteAll }
-    "remove-accounts-and-stop" { Write-DeprecatedCommand -Old "remove-accounts-and-stop" -New "accounts-delete-all-and-stop"; Accounts-DeleteAllAndStop }
     default { Write-Usage }
 }
