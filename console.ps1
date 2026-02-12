@@ -48,11 +48,15 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
-  logout       Logout all accounts (revoke + local token clear/disable)
-  logout-all   Alias for logout (deprecated)
-  logout-and-stop  Logout accounts, then stop container
-  remove-accounts  Delete local account records (does not revoke)
-  remove-accounts-and-stop  Remove accounts, then stop container
+  accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
+  accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
+  accounts-delete-all   Delete local account records (does not revoke)
+  accounts-delete-all-and-stop  Delete local accounts, then stop container
+  logout       Alias for accounts-signout-all (deprecated)
+  logout-all   Alias for accounts-signout-all (deprecated)
+  logout-and-stop  Alias for accounts-signout-all-and-stop (deprecated)
+  remove-accounts  Alias for accounts-delete-all (deprecated)
+  remove-accounts-and-stop  Alias for accounts-delete-all-and-stop (deprecated)
 
 Options:
   -EnableAdminApi        Enable admin API on start/restart (default false)
@@ -79,11 +83,12 @@ Examples:
   .\console.ps1 rebuild -NoCache
   .\console.ps1 docker-repair
   .\console.ps1 docker-repair -Aggressive
+  .\console.ps1 accounts-signout-all
+  .\console.ps1 accounts-signout-all-and-stop
+  .\console.ps1 accounts-delete-all
+  .\console.ps1 accounts-delete-all-and-stop
   .\console.ps1 logout
-  .\console.ps1 logout-all
-  .\console.ps1 logout-and-stop
   .\console.ps1 remove-accounts
-  .\console.ps1 remove-accounts-and-stop
   .\console.ps1 -Command login
 
 Troubleshooting:
@@ -183,7 +188,7 @@ function Get-AuthHeaders {
     Ensure-ApiKey
     $cid = Get-ConsoleCorrelationId
     $script:ConsoleRequestSeq++
-    $rid = "$cid:$($script:ConsoleRequestSeq)"
+    $rid = "${cid}:$($script:ConsoleRequestSeq)"
     return @{
         Authorization      = "Bearer $($env:API_KEY)"
         "x-correlation-id" = $cid
@@ -792,7 +797,7 @@ function Remove-Accounts {
         }
     }
 
-    Write-Host "Remove-accounts completed. Removed $removed account(s)."
+    Write-Host "Accounts delete-all completed. Removed $removed account(s)."
 }
 
 function Logout-AndStop {
@@ -803,6 +808,30 @@ function Logout-AndStop {
 function Logout-Accounts {
     Write-Host "Note: 'logout' revokes + disables accounts. Use 'remove-accounts' to delete local account records." -ForegroundColor Yellow
     Logout-AllAccounts
+}
+
+function Write-DeprecatedCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$Old,
+        [Parameter(Mandatory = $true)][string]$New
+    )
+    Write-Host "Deprecated: '$Old' is now '$New'." -ForegroundColor Yellow
+}
+
+function Accounts-SignoutAll {
+    Logout-AllAccounts
+}
+
+function Accounts-SignoutAllAndStop {
+    Logout-AndStop
+}
+
+function Accounts-DeleteAll {
+    Remove-Accounts
+}
+
+function Accounts-DeleteAllAndStop {
+    Remove-Accounts-AndStop
 }
 
 function Remove-Accounts-AndStop {
@@ -828,9 +857,9 @@ function Logout-AllAccounts {
             }
             $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/logout-all" -Headers $headers -Method Post -Body $body -TimeoutSec 60
         } elseif ($msg -match "401|Unauthorized") {
-            throw "Logout-all failed with 401. API key mismatch. Run restart or rotate-key."
+            throw "Accounts signout-all failed with 401. API key mismatch. Run restart or rotate-key."
         } else {
-            throw "Logout-all failed: $msg"
+            throw "Accounts signout-all failed: $msg"
         }
     }
 
@@ -839,10 +868,10 @@ function Logout-AllAccounts {
     $failed = @()
     if ($resp.failed) { $failed = @($resp.failed) }
 
-    Write-Host "Logout-all completed. total=$total logged_out=$loggedOut failed=$($failed.Count)"
+    Write-Host "Accounts signout-all completed. total=$total logged_out=$loggedOut failed=$($failed.Count)"
     if ($failed.Count -gt 0) {
         foreach ($f in $failed) {
-            Write-Warning "[W-LOGOUT-ALL-FAILED] $($f.account_id) $($f.email) : $($f.error)"
+            Write-Warning "[W-ACCOUNTS-SIGNOUT-ALL-FAILED] $($f.account_id) $($f.email) : $($f.error)"
         }
     }
 }
@@ -1139,7 +1168,13 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "canary", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-all", "logout-and-stop", "remove-accounts", "remove-accounts-and-stop")
+$dockerCommands = @(
+    "start", "stop", "restart", "status", "logs", "health", "check", "canary",
+    "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update",
+    "accounts-signout-all", "accounts-signout-all-and-stop",
+    "accounts-delete-all", "accounts-delete-all-and-stop",
+    "logout", "logout-all", "logout-and-stop", "remove-accounts", "remove-accounts-and-stop"
+)
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -1181,10 +1216,14 @@ switch ($Command) {
     "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }
     "update" { Update-Gephyr }
     "version" { Show-Version }
-    "logout" { Logout-AllAccounts }
-    "logout-all" { Logout-AllAccounts }
-    "logout-and-stop" { Logout-AndStop }
-    "remove-accounts" { Remove-Accounts }
-    "remove-accounts-and-stop" { Remove-Accounts-AndStop }
+    "accounts-signout-all" { Accounts-SignoutAll }
+    "accounts-signout-all-and-stop" { Accounts-SignoutAllAndStop }
+    "accounts-delete-all" { Accounts-DeleteAll }
+    "accounts-delete-all-and-stop" { Accounts-DeleteAllAndStop }
+    "logout" { Write-DeprecatedCommand -Old "logout" -New "accounts-signout-all"; Accounts-SignoutAll }
+    "logout-all" { Write-DeprecatedCommand -Old "logout-all" -New "accounts-signout-all"; Accounts-SignoutAll }
+    "logout-and-stop" { Write-DeprecatedCommand -Old "logout-and-stop" -New "accounts-signout-all-and-stop"; Accounts-SignoutAllAndStop }
+    "remove-accounts" { Write-DeprecatedCommand -Old "remove-accounts" -New "accounts-delete-all"; Accounts-DeleteAll }
+    "remove-accounts-and-stop" { Write-DeprecatedCommand -Old "remove-accounts-and-stop" -New "accounts-delete-all-and-stop"; Accounts-DeleteAllAndStop }
     default { Write-Usage }
 }

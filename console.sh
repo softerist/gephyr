@@ -44,11 +44,15 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
-  logout       Logout all accounts (revoke + local token clear/disable)
-  logout-all   Alias for logout (deprecated)
-  logout-and-stop  Logout accounts, then stop container
-  remove-accounts  Delete local account records (does not revoke)
-  remove-accounts-and-stop  Remove accounts, then stop container
+  accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
+  accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
+  accounts-delete-all   Delete local account records (does not revoke)
+  accounts-delete-all-and-stop  Delete local accounts, then stop container
+  logout       Alias for accounts-signout-all (deprecated)
+  logout-all   Alias for accounts-signout-all (deprecated)
+  logout-and-stop  Alias for accounts-signout-all-and-stop (deprecated)
+  remove-accounts  Alias for accounts-delete-all (deprecated)
+  remove-accounts-and-stop  Alias for accounts-delete-all-and-stop (deprecated)
 
 Options:
   --admin-api            Enable admin API on start/restart (default false)
@@ -76,11 +80,12 @@ Examples:
   ./console.sh rebuild --no-cache
   ./console.sh docker-repair
   ./console.sh docker-repair --aggressive
+  ./console.sh accounts-signout-all
+  ./console.sh accounts-signout-all-and-stop
+  ./console.sh accounts-delete-all
+  ./console.sh accounts-delete-all-and-stop
   ./console.sh logout
-  ./console.sh logout-all
-  ./console.sh logout-and-stop
   ./console.sh remove-accounts
-  ./console.sh remove-accounts-and-stop
 
 Troubleshooting:
   If health returns 401, your local API_KEY does not match the running container.
@@ -808,10 +813,10 @@ remove_accounts() {
   fi
 
   if [[ "$http_code" == "401" ]]; then
-    echo "Logout failed with 401. API key mismatch. Run restart or rotate-key." >&2
+    echo "Accounts delete-all failed with 401. API key mismatch. Run restart or rotate-key." >&2
     exit 1
   elif [[ "$http_code" -ge 400 ]]; then
-    echo "Failed to query accounts for logout. HTTP $http_code" >&2
+    echo "Failed to query accounts for accounts-delete-all. HTTP $http_code" >&2
     exit 1
   fi
 
@@ -853,7 +858,7 @@ for a in data.get("accounts", []):
     fi
   done
 
-  echo "Remove-accounts completed. Removed ${removed} account(s)."
+  echo "Accounts delete-all completed. Removed ${removed} account(s)."
 }
 
 logout_all_accounts() {
@@ -904,9 +909,10 @@ logout_all_accounts() {
   echo "$payload"
 }
 
-logout_accounts() {
-  echo "Note: 'logout' revokes + disables accounts. Use 'remove-accounts' to delete local account records." >&2
-  logout_all_accounts
+deprecated_command() {
+  local old="$1"
+  local new="$2"
+  echo "Deprecated: '${old}' is now '${new}'." >&2
 }
 
 logout_and_stop() {
@@ -918,6 +924,11 @@ remove_accounts_and_stop() {
   remove_accounts
   stop_container
 }
+
+accounts_signout_all() { logout_all_accounts; }
+accounts_signout_all_and_stop() { logout_and_stop; }
+accounts_delete_all() { remove_accounts; }
+accounts_delete_all_and_stop() { remove_accounts_and_stop; }
 
 api_test() {
   ensure_api_key
@@ -1222,7 +1233,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update logout logout-all logout-and-stop remove-accounts remove-accounts-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout-all accounts-signout-all-and-stop accounts-delete-all accounts-delete-all-and-stop logout logout-all logout-and-stop remove-accounts remove-accounts-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -1254,11 +1265,15 @@ case "$COMMAND" in
   rebuild) rebuild ;;
   update) update_gephyr ;;
   version) show_version ;;
-  logout) logout_all_accounts ;;
-  logout-all) logout_all_accounts ;;
-  logout-and-stop) logout_and_stop ;;
-  remove-accounts) remove_accounts ;;
-  remove-accounts-and-stop) remove_accounts_and_stop ;;
+  accounts-signout-all) accounts_signout_all ;;
+  accounts-signout-all-and-stop) accounts_signout_all_and_stop ;;
+  accounts-delete-all) accounts_delete_all ;;
+  accounts-delete-all-and-stop) accounts_delete_all_and_stop ;;
+  logout) deprecated_command "logout" "accounts-signout-all"; accounts_signout_all ;;
+  logout-all) deprecated_command "logout-all" "accounts-signout-all"; accounts_signout_all ;;
+  logout-and-stop) deprecated_command "logout-and-stop" "accounts-signout-all-and-stop"; accounts_signout_all_and_stop ;;
+  remove-accounts) deprecated_command "remove-accounts" "accounts-delete-all"; accounts_delete_all ;;
+  remove-accounts-and-stop) deprecated_command "remove-accounts-and-stop" "accounts-delete-all-and-stop"; accounts_delete_all_and_stop ;;
   *)
     echo "Unknown command: $COMMAND" >&2
     print_help
