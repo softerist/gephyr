@@ -26,6 +26,7 @@ From `src/lib.rs` and `src/proxy/server.rs`:
 - `DATA_DIR`
 - `ALLOWED_GOOGLE_DOMAINS`
 - Deprecated/ignored: `OAUTH_USER_AGENT`
+- Optional: `ANTIGRAVITY_STORAGE_JSON_PATH` (override path to IDE `storage.json` for device profile capture)
 - `SCHEDULER_REFRESH_JITTER_MIN_SECONDS`
 - `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`
 - `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS`

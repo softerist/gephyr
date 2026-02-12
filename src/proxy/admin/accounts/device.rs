@@ -1,9 +1,10 @@
 use crate::modules::auth::account;
+use crate::proxy::admin::runtime::audit;
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
     extract::{Json, Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -21,6 +22,8 @@ fn default_bind_mode() -> String {
 }
 
 pub(crate) async fn admin_bind_device(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
     Path(account_id): Path<String>,
     Json(payload): Json<BindDeviceRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
@@ -31,11 +34,47 @@ pub(crate) async fn admin_bind_device(
         )
     })?;
 
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+    audit::log_admin_audit(
+        "accounts.bind_device",
+        &actor,
+        serde_json::json!({
+            "account_id": account_id,
+            "mode": payload.mode,
+            "machine_id_set": result.machine_id.is_some(),
+            "mac_machine_id_set": result.mac_machine_id.is_some(),
+            "dev_device_id_set": result.dev_device_id.is_some(),
+            "sqm_id_set": result.sqm_id.is_some()
+        }),
+    );
+
     Ok(Json(serde_json::json!({
         "success": true,
         "message": "Device fingerprint bound successfully",
         "device_profile": result,
     })))
+}
+
+pub(crate) async fn admin_clear_device_profile(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Path(account_id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    account::clear_device_profile(&account_id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    let actor = audit::resolve_admin_actor(&state, &headers).await;
+    audit::log_admin_audit(
+        "accounts.clear_device_profile",
+        &actor,
+        serde_json::json!({ "account_id": account_id }),
+    );
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub(crate) async fn admin_get_device_profiles(

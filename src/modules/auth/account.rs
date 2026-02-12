@@ -479,19 +479,7 @@ pub async fn switch_account(
         account.token = fresh_token.clone();
         save_account(&account)?;
     }
-    if account.device_profile.is_none() {
-        crate::modules::system::logger::log_info(&format!(
-            "Account {} has no bound fingerprint, generating new one for isolation...",
-            account.email
-        ));
-        let new_profile = crate::modules::system::device::generate_profile();
-        apply_profile_to_account(
-            &mut account,
-            new_profile.clone(),
-            Some("auto_generated".to_string()),
-            true,
-        )?;
-    }
+    ensure_device_profile_on_switch(&mut account)?;
     integration.on_account_switch(&account).await?;
     {
         let _lock = ACCOUNT_INDEX_LOCK
@@ -510,6 +498,48 @@ pub async fn switch_account(
         account.email
     ));
 
+    Ok(())
+}
+
+fn ensure_device_profile_on_switch(account: &mut Account) -> Result<(), String> {
+    if account.device_profile.is_some() {
+        return Ok(());
+    }
+
+    // Prefer capturing from local IDE storage.json (real telemetry) instead of generating
+    // synthetic values. If capture fails, proceed without device headers.
+    let storage_path = match crate::modules::system::device::get_storage_path() {
+        Ok(path) => path,
+        Err(e) => {
+            crate::modules::system::logger::log_warn(&format!(
+                "[DeviceProfile] No bound profile for {}, and storage.json not available ({}). Proceeding without device profile.",
+                account.email, e
+            ));
+            return Ok(());
+        }
+    };
+    let profile = match crate::modules::system::device::read_profile(&storage_path) {
+        Ok(p) => p,
+        Err(e) => {
+            crate::modules::system::logger::log_warn(&format!(
+                "[DeviceProfile] Failed to read storage.json for {} ({}). Proceeding without device profile.",
+                account.email, e
+            ));
+            return Ok(());
+        }
+    };
+
+    let _ = crate::modules::system::device::save_global_original(&profile);
+    apply_profile_to_account(
+        account,
+        profile.clone(),
+        Some("capture_on_switch".to_string()),
+        true,
+    )?;
+    crate::modules::system::logger::log_info(&format!(
+        "[DeviceProfile] Captured device profile on switch for {}.",
+        account.email
+    ));
     Ok(())
 }
 #[derive(Debug, Serialize)]
@@ -557,6 +587,16 @@ pub fn bind_device_profile_with_profile(
     apply_profile_to_account(&mut account, profile.clone(), label, true)?;
 
     Ok(profile)
+}
+
+pub fn clear_device_profile(account_id: &str) -> Result<(), String> {
+    let mut account = load_account(account_id)?;
+    account.device_profile = None;
+    for h in account.device_history.iter_mut() {
+        h.is_current = false;
+    }
+    save_account(&account)?;
+    Ok(())
 }
 
 fn apply_profile_to_account(
@@ -1218,8 +1258,8 @@ pub async fn refresh_all_quotas_sequential_logic(
 #[cfg(test)]
 mod tests {
     use super::{
-        list_accounts, load_account, load_account_index, per_account_refresh_stagger_ms,
-        refresh_task_stagger_bounds_ms, upsert_account,
+        ensure_device_profile_on_switch, list_accounts, load_account, load_account_index,
+        per_account_refresh_stagger_ms, refresh_task_stagger_bounds_ms, upsert_account,
     };
     use crate::models::TokenData;
     use crate::test_utils::ScopedEnvVar;
@@ -1314,6 +1354,99 @@ mod tests {
             None,
             None,
         )
+    }
+
+    #[test]
+    fn ensure_device_profile_on_switch_does_not_generate_when_storage_override_missing() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        // Force deterministic behavior: make get_storage_path fail without scanning the real system.
+        let _storage_override = ScopedEnvVar::set(
+            "ANTIGRAVITY_STORAGE_JSON_PATH",
+            "Z:\\this-path-does-not-exist\\storage.json",
+        );
+
+        let mut account = crate::models::account::Account::new(
+            "acct-1".to_string(),
+            "no-device@example.com".to_string(),
+            make_token("no-device@example.com", "t1"),
+        );
+        account.device_profile = None;
+
+        ensure_device_profile_on_switch(&mut account).expect("should not error");
+        assert!(account.device_profile.is_none());
+    }
+
+    #[test]
+    fn ensure_device_profile_on_switch_captures_when_storage_override_present() {
+        let _guard = ACCOUNT_TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("account env lock");
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
+
+        // Write a minimal storage.json fixture.
+        let storage_path = data_dir.join("storage.json");
+        let storage = json!({
+            "telemetry": {
+                "machineId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "devDeviceId": "11111111-1111-4111-8111-111111111111",
+                "sqmId": "{22222222-2222-4222-8222-222222222222}"
+            }
+        });
+        std::fs::write(
+            &storage_path,
+            serde_json::to_string_pretty(&storage).expect("serialize storage.json"),
+        )
+        .expect("write storage.json");
+
+        let _storage_override = ScopedEnvVar::set(
+            "ANTIGRAVITY_STORAGE_JSON_PATH",
+            storage_path.to_string_lossy().as_ref(),
+        );
+
+        // Persist an account so apply_profile_to_account can save it.
+        write_account_fixture(
+            &data_dir,
+            "acct-switch",
+            "switch@example.com",
+            "plain-access-token",
+            "plain-refresh-token",
+        );
+        // Ensure the loaded account has no device_profile.
+        let mut account = load_account("acct-switch").expect("load account");
+        account.device_profile = None;
+        super::save_account(&account).expect("save account without device profile");
+
+        ensure_device_profile_on_switch(&mut account).expect("should capture");
+        let bound = account
+            .device_profile
+            .clone()
+            .expect("device profile captured");
+        assert_eq!(
+            bound.machine_id.as_deref(),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(
+            bound.dev_device_id.as_deref(),
+            Some("11111111-1111-4111-8111-111111111111")
+        );
+        assert_eq!(
+            bound.sqm_id.as_deref(),
+            Some("{22222222-2222-4222-8222-222222222222}")
+        );
+        // macMachineId was not present in fixture and should remain None.
+        assert!(bound.mac_machine_id.is_none());
+
+        let reloaded = load_account("acct-switch").expect("reload");
+        assert!(reloaded.device_profile.is_some());
+
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 
     #[test]

@@ -28,11 +28,13 @@ Primary groups:
 - list/add/current/switch/refresh/delete
 - logout (revoke + local token clear/disable)
 - bind device/profile, version list/restore/delete
+- clear bound device profile
 - import v1/db/custom-db, sync-db
 - bulk delete, export, reorder
 - fetch quota, toggle proxy status
 - `POST /api/accounts/:accountId/logout` revokes the refresh token (default) and clears local tokens, disabling the account.
 - request body: `{ "revokeRemote": true|false }` (default: `true`)
+- `DELETE /api/accounts/:accountId/device-profile` clears the bound device profile (does not delete history).
 - `POST /api/accounts/refresh` now requires explicit confirmation header:
 - `x-gephyr-confirm-bulk-refresh: true` (accepted truthy values: `1|true|yes|confirm`)
 - without confirmation header, endpoint returns `400` with warning text

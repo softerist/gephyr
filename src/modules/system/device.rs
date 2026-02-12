@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 const DATA_DIR: &str = ".gephyr";
 const GLOBAL_BASELINE: &str = "device_original.json";
+const STORAGE_JSON_PATH_ENV: &str = "ANTIGRAVITY_STORAGE_JSON_PATH";
 
 fn get_data_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
@@ -18,6 +19,17 @@ fn get_data_dir() -> Result<PathBuf, String> {
     Ok(data_dir)
 }
 pub fn get_storage_path() -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var(STORAGE_JSON_PATH_ENV) {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let storage = PathBuf::from(trimmed);
+            if storage.exists() {
+                return Ok(storage);
+            }
+            return Err("storage_json_override_not_found".to_string());
+        }
+    }
+
     if let Some(user_data_dir) = process::get_user_data_dir_from_process() {
         let path = user_data_dir
             .join("User")
