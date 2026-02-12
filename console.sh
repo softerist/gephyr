@@ -44,9 +44,11 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
-  logout       Remove linked account(s) via admin API
-  logout-all   Logout all accounts (revoke + local token clear/disable)
+  logout       Logout all accounts (revoke + local token clear/disable)
+  logout-all   Alias for logout (deprecated)
   logout-and-stop  Logout accounts, then stop container
+  remove-accounts  Delete local account records (does not revoke)
+  remove-accounts-and-stop  Remove accounts, then stop container
 
 Options:
   --admin-api            Enable admin API on start/restart (default false)
@@ -77,6 +79,8 @@ Examples:
   ./console.sh logout
   ./console.sh logout-all
   ./console.sh logout-and-stop
+  ./console.sh remove-accounts
+  ./console.sh remove-accounts-and-stop
 
 Troubleshooting:
   If health returns 401, your local API_KEY does not match the running container.
@@ -772,7 +776,7 @@ PY
   return 1
 }
 
-logout_accounts() {
+remove_accounts() {
   ensure_api_key
   ensure_request_ids
 
@@ -849,7 +853,7 @@ for a in data.get("accounts", []):
     fi
   done
 
-  echo "Logout completed. Removed ${removed} account(s)."
+  echo "Remove-accounts completed. Removed ${removed} account(s)."
 }
 
 logout_all_accounts() {
@@ -900,8 +904,18 @@ logout_all_accounts() {
   echo "$payload"
 }
 
+logout_accounts() {
+  echo "Note: 'logout' revokes + disables accounts. Use 'remove-accounts' to delete local account records." >&2
+  logout_all_accounts
+}
+
 logout_and_stop() {
-  logout_accounts
+  logout_all_accounts
+  stop_container
+}
+
+remove_accounts_and_stop() {
+  remove_accounts
   stop_container
 }
 
@@ -1208,7 +1222,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update logout logout-all logout-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update logout logout-all logout-and-stop remove-accounts remove-accounts-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -1240,9 +1254,11 @@ case "$COMMAND" in
   rebuild) rebuild ;;
   update) update_gephyr ;;
   version) show_version ;;
-  logout) logout_accounts ;;
+  logout) logout_all_accounts ;;
   logout-all) logout_all_accounts ;;
   logout-and-stop) logout_and_stop ;;
+  remove-accounts) remove_accounts ;;
+  remove-accounts-and-stop) remove_accounts_and_stop ;;
   *)
     echo "Unknown command: $COMMAND" >&2
     print_help

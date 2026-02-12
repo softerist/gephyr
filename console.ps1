@@ -48,9 +48,11 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
-  logout       Remove linked account(s) via admin API
-  logout-all   Logout all accounts (revoke + local token clear/disable)
+  logout       Logout all accounts (revoke + local token clear/disable)
+  logout-all   Alias for logout (deprecated)
   logout-and-stop  Logout accounts, then stop container
+  remove-accounts  Delete local account records (does not revoke)
+  remove-accounts-and-stop  Remove accounts, then stop container
 
 Options:
   -EnableAdminApi        Enable admin API on start/restart (default false)
@@ -80,6 +82,8 @@ Examples:
   .\console.ps1 logout
   .\console.ps1 logout-all
   .\console.ps1 logout-and-stop
+  .\console.ps1 remove-accounts
+  .\console.ps1 remove-accounts-and-stop
   .\console.ps1 -Command login
 
 Troubleshooting:
@@ -740,7 +744,7 @@ function Show-Accounts {
     }
 }
 
-function Logout-Accounts {
+function Remove-Accounts {
     $headers = Get-AuthHeaders
 
     try {
@@ -757,9 +761,9 @@ function Logout-Accounts {
             # Retry after restart
             $accountsResponse = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
         } elseif ($msg -match "401|Unauthorized") {
-            throw "Logout failed with 401. API key mismatch. Run restart or rotate-key."
+            throw "Remove-accounts failed with 401. API key mismatch. Run restart or rotate-key."
         } else {
-            throw "Failed to query accounts for logout: $msg"
+            throw "Failed to query accounts for remove-accounts: $msg"
         }
     }
 
@@ -788,11 +792,21 @@ function Logout-Accounts {
         }
     }
 
-    Write-Host "Logout completed. Removed $removed account(s)."
+    Write-Host "Remove-accounts completed. Removed $removed account(s)."
 }
 
 function Logout-AndStop {
-    Logout-Accounts
+    Logout-AllAccounts
+    Stop-Container
+}
+
+function Logout-Accounts {
+    Write-Host "Note: 'logout' revokes + disables accounts. Use 'remove-accounts' to delete local account records." -ForegroundColor Yellow
+    Logout-AllAccounts
+}
+
+function Remove-Accounts-AndStop {
+    Remove-Accounts
     Stop-Container
 }
 
@@ -1125,7 +1139,7 @@ function Assert-DockerRunning {
 }
 
 # Commands that require Docker
-$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "canary", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-all", "logout-and-stop")
+$dockerCommands = @("start", "stop", "restart", "status", "logs", "health", "check", "canary", "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update", "logout", "logout-all", "logout-and-stop", "remove-accounts", "remove-accounts-and-stop")
 
 if ($Help -or $Command -in @("--help", "-h", "-?", "?", "/help")) {
     $Command = "help"
@@ -1167,8 +1181,10 @@ switch ($Command) {
     "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }
     "update" { Update-Gephyr }
     "version" { Show-Version }
-    "logout" { Logout-Accounts }
+    "logout" { Logout-AllAccounts }
     "logout-all" { Logout-AllAccounts }
     "logout-and-stop" { Logout-AndStop }
+    "remove-accounts" { Remove-Accounts }
+    "remove-accounts-and-stop" { Remove-Accounts-AndStop }
     default { Write-Usage }
 }
