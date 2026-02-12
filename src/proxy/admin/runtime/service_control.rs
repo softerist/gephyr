@@ -627,7 +627,7 @@ pub(crate) async fn admin_fetch_zai_models(
         .get("base_url")
         .and_then(|v| v.as_str())
         .unwrap_or("https://api.z.ai");
-    let client = reqwest::Client::new();
+    let client = crate::utils::http::get_client();
     let resp = client
         .get(format!("{}/v1/models", base_url))
         .header("Authorization", format!("Bearer {}", api_key))
