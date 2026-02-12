@@ -10,7 +10,60 @@ use crate::models::{
 };
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 static ACCOUNT_INDEX_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+#[derive(Default)]
+struct IndexLoadLogThrottle {
+    last_logged_at: Option<Instant>,
+    last_count: Option<usize>,
+}
+static INDEX_LOAD_LOG_THROTTLE: Lazy<Mutex<IndexLoadLogThrottle>> =
+    Lazy::new(|| Mutex::new(IndexLoadLogThrottle::default()));
+
+#[derive(Default)]
+struct ListAccountsLogThrottle {
+    last_logged_at: Option<Instant>,
+}
+static LIST_ACCOUNTS_LOG_THROTTLE: Lazy<Mutex<ListAccountsLogThrottle>> =
+    Lazy::new(|| Mutex::new(ListAccountsLogThrottle::default()));
+
+fn should_log_loaded_index(count: usize) -> bool {
+    let Ok(mut state) = INDEX_LOAD_LOG_THROTTLE.lock() else {
+        return true;
+    };
+
+    let now = Instant::now();
+    let elapsed_ok = state
+        .last_logged_at
+        .map(|t| t.elapsed() >= Duration::from_secs(30))
+        .unwrap_or(true);
+    let count_changed = state.last_count != Some(count);
+
+    if elapsed_ok || count_changed {
+        state.last_logged_at = Some(now);
+        state.last_count = Some(count);
+        true
+    } else {
+        false
+    }
+}
+
+fn should_log_listing_accounts() -> bool {
+    let Ok(mut state) = LIST_ACCOUNTS_LOG_THROTTLE.lock() else {
+        return true;
+    };
+    let now = Instant::now();
+    let elapsed_ok = state
+        .last_logged_at
+        .map(|t| t.elapsed() >= Duration::from_secs(30))
+        .unwrap_or(true);
+    if elapsed_ok {
+        state.last_logged_at = Some(now);
+        true
+    } else {
+        false
+    }
+}
 const DATA_DIR: &str = ".gephyr";
 const ACCOUNTS_INDEX: &str = "accounts.json";
 const ACCOUNTS_DIR: &str = "accounts";
@@ -74,10 +127,12 @@ pub fn load_account_index() -> Result<AccountIndex, String> {
     let index: AccountIndex = serde_json::from_str(&content)
         .map_err(|e| format!("failed_to_parse_account_index: {}", e))?;
 
-    crate::modules::system::logger::log_info(&format!(
-        "Successfully loaded index with {} accounts",
-        index.accounts.len()
-    ));
+    if should_log_loaded_index(index.accounts.len()) {
+        crate::modules::system::logger::log_info(&format!(
+            "Successfully loaded index with {} accounts",
+            index.accounts.len()
+        ));
+    }
     Ok(index)
 }
 pub fn save_account_index(index: &AccountIndex) -> Result<(), String> {
@@ -223,7 +278,9 @@ pub async fn logout_account(account_id: &str, revoke_remote: bool) -> Result<(),
     Ok(())
 }
 pub fn list_accounts() -> Result<Vec<Account>, String> {
-    crate::modules::system::logger::log_info("Listing accounts...");
+    if should_log_listing_accounts() {
+        crate::modules::system::logger::log_info("Listing accounts...");
+    }
     let index = load_account_index()?;
     let mut accounts = Vec::new();
 

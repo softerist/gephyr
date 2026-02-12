@@ -70,6 +70,7 @@ struct OperatorStatusResponse {
     runtime_running: bool,
     tls_backend: String,
     oauth: OperatorOAuthConfigStatus,
+    oauth_flow: crate::modules::auth::oauth_server::OAuthFlowStatusSnapshot,
     proxy_pool: OperatorProxyPoolStatus,
     accounts: OperatorAccountsStatus,
     encryption: OperatorEncryptionStatus,
@@ -265,6 +266,7 @@ pub(crate) async fn admin_get_operator_status(
         client_secret_set: env_var_set("GOOGLE_OAUTH_CLIENT_SECRET"),
         allowed_domains_set: env_var_set("ALLOWED_GOOGLE_DOMAINS"),
     };
+    let oauth_flow = crate::modules::auth::oauth_server::get_oauth_flow_status();
 
     let is_running = { *state.runtime.is_running.read().await };
     let resp = OperatorStatusResponse {
@@ -275,6 +277,7 @@ pub(crate) async fn admin_get_operator_status(
         runtime_running: is_running,
         tls_backend: crate::utils::http::tls_backend_name().to_string(),
         oauth,
+        oauth_flow,
         proxy_pool,
         accounts,
         encryption,

@@ -43,12 +43,19 @@ pub async fn monitor_middleware(
     request: Request,
     next: Next,
 ) -> Response {
-    let _logging_enabled = state.monitor.is_enabled();
+    let logging_enabled = state.monitor.is_enabled();
+    if !logging_enabled {
+        return next.run(request).await;
+    }
 
     let method = request.method().to_string();
     let uri = request.uri().to_string();
 
-    if uri.contains("event_logging") || uri.contains("/api/") || uri.starts_with("/internal/") {
+    if uri == "/healthz"
+        || uri.contains("event_logging")
+        || uri.contains("/api/")
+        || uri.starts_with("/internal/")
+    {
         return next.run(request).await;
     }
 

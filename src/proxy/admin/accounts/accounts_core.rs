@@ -490,6 +490,8 @@ pub(crate) async fn admin_toggle_proxy_status(
 pub(crate) struct LogoutAccountRequest {
     #[serde(default = "default_logout_revoke_remote")]
     revoke_remote: bool,
+    #[serde(default)]
+    delete_local: bool,
 }
 
 fn default_logout_revoke_remote() -> bool {
@@ -541,7 +543,23 @@ pub(crate) async fn admin_logout_account(
             )
         })?;
 
-    let _ = state.core.token_manager.reload_account(&account_id).await;
+    let mut deleted = false;
+    if payload.delete_local {
+        state
+            .core
+            .account_service
+            .delete_account(&account_id)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: e }),
+                )
+            })?;
+        deleted = true;
+        let _ = state.core.token_manager.load_accounts().await;
+    } else {
+        let _ = state.core.token_manager.reload_account(&account_id).await;
+    }
 
     audit::log_admin_audit(
         "logout_account",
@@ -549,6 +567,7 @@ pub(crate) async fn admin_logout_account(
         serde_json::json!({
             "account_id": account_id,
             "revoke_remote": payload.revoke_remote,
+            "delete_local": payload.delete_local,
         }),
     );
 
@@ -558,6 +577,7 @@ pub(crate) async fn admin_logout_account(
         "revoked_remote": payload.revoke_remote,
         "local_cleared": true,
         "disabled": true,
+        "deleted": deleted,
     })))
 }
 
