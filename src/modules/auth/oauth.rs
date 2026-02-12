@@ -42,8 +42,17 @@ fn client_secret_optional() -> Option<String> {
 }
 
 fn oauth_user_agent() -> String {
-    env_first(&["OAUTH_USER_AGENT"])
-        .unwrap_or_else(|| crate::constants::USER_AGENT.as_str().to_string())
+    // OAuth calls should use the same UA as upstream calls to avoid inconsistent behavior.
+    // If an override is set, ignore it and warn (it is a common source of hard-to-debug mismatches).
+    if let Ok(v) = std::env::var("OAUTH_USER_AGENT") {
+        let t = v.trim();
+        if !t.is_empty() && t != crate::constants::USER_AGENT.as_str() {
+            tracing::warn!(
+                "Ignoring deprecated OAUTH_USER_AGENT override (OAuth uses the global User-Agent)."
+            );
+        }
+    }
+    crate::constants::USER_AGENT.as_str().to_string()
 }
 
 pub fn generate_pkce_verifier() -> String {
@@ -748,13 +757,13 @@ mod tests {
     }
 
     #[test]
-    fn oauth_user_agent_uses_override_when_set() {
+    fn oauth_user_agent_ignores_override_when_set() {
         let _guard = oauth_ua_test_guard();
         let previous = std::env::var("OAUTH_USER_AGENT").ok();
         std::env::set_var("OAUTH_USER_AGENT", "vscode/1.95.0 gephyr-test");
 
         let ua = oauth_user_agent();
-        assert_eq!(ua, "vscode/1.95.0 gephyr-test");
+        assert_eq!(ua, crate::constants::USER_AGENT.as_str());
 
         match previous {
             Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
@@ -783,16 +792,17 @@ mod tests {
         server.abort();
 
         assert!(
-            captured.iter().any(|ua| ua == "ua-integration-test"),
-            "expected OAuth refresh call to carry configured User-Agent"
+            captured
+                .iter()
+                .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
+            "expected OAuth refresh call to carry default User-Agent"
         );
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn get_user_info_sends_user_agent_header() {
         let _guard = oauth_ua_test_guard();
-        let previous_ua = std::env::var("OAUTH_USER_AGENT").ok();
-        std::env::set_var("OAUTH_USER_AGENT", "ua-userinfo-test");
+        let _ua = ScopedEnvVar::set("OAUTH_USER_AGENT", "ua-userinfo-test");
 
         let (base_url, state, server) = start_mock_oauth_server().await;
         let userinfo_url = format!("{}/userinfo", base_url);
@@ -805,14 +815,11 @@ mod tests {
         server.abort();
 
         assert!(
-            captured.iter().any(|ua| ua == "ua-userinfo-test"),
-            "expected OAuth userinfo call to carry configured User-Agent"
+            captured
+                .iter()
+                .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
+            "expected OAuth userinfo call to carry default User-Agent"
         );
-
-        match previous_ua {
-            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("OAUTH_USER_AGENT"),
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -861,11 +868,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn verify_identity_fallback_rejects_unverified_email() {
-        let (_guard, previous_ua) = (
-            oauth_ua_test_guard(),
-            std::env::var("OAUTH_USER_AGENT").ok(),
-        );
-        std::env::set_var("OAUTH_USER_AGENT", "ua-verify-unverified");
+        let _guard = oauth_ua_test_guard();
 
         let (base_url, _state, server) = start_mock_oauth_server_with_userinfo(json!({
             "email": "unverified@example.com",
@@ -881,20 +884,11 @@ mod tests {
 
         server.abort();
         assert!(err.contains("email is not verified"));
-
-        match previous_ua {
-            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("OAUTH_USER_AGENT"),
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn verify_identity_fallback_rejects_missing_subject_identifier() {
-        let (_guard, previous_ua) = (
-            oauth_ua_test_guard(),
-            std::env::var("OAUTH_USER_AGENT").ok(),
-        );
-        std::env::set_var("OAUTH_USER_AGENT", "ua-verify-missing-sub");
+        let _guard = oauth_ua_test_guard();
 
         let (base_url, _state, server) = start_mock_oauth_server_with_userinfo(json!({
             "email": "nosub@example.com",
@@ -910,11 +904,6 @@ mod tests {
 
         server.abort();
         assert!(err.contains("missing subject identifier"));
-
-        match previous_ua {
-            Some(value) => std::env::set_var("OAUTH_USER_AGENT", value),
-            None => std::env::remove_var("OAUTH_USER_AGENT"),
-        }
     }
 
     #[tokio::test(flavor = "current_thread")]

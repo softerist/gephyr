@@ -32,7 +32,7 @@ pub async fn fetch_project_id(
     access_token: &str,
     account_id: Option<&str>,
 ) -> Result<String, String> {
-    let url = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist";
+    let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
 
     let request_body = serde_json::json!({
         "metadata": {

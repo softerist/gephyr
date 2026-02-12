@@ -3,8 +3,7 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-const QUOTA_API_URL: &str =
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels";
+const QUOTA_API_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
 const MAX_RETRIES: u32 = 3;
 
@@ -81,7 +80,7 @@ async fn create_client(account_id: Option<&str>) -> Result<reqwest::Client, Stri
     }
 }
 
-const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com";
+const CLOUD_CODE_BASE_URL: &str = "https://cloudcode-pa.googleapis.com";
 async fn fetch_project_id(
     access_token: &str,
     email: &str,

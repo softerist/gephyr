@@ -7,8 +7,8 @@ use std::sync::Arc;
 use super::types::ProxyToken;
 
 /// Random delay window between startup token refreshes (seconds).
-const STARTUP_HEALTH_DELAY_MIN_SECONDS_DEFAULT: u64 = 1;
-const STARTUP_HEALTH_DELAY_MAX_SECONDS_DEFAULT: u64 = 10;
+const STARTUP_HEALTH_DELAY_MIN_SECONDS_DEFAULT: u64 = 2;
+const STARTUP_HEALTH_DELAY_MAX_SECONDS_DEFAULT: u64 = 8;
 
 /// Tokens expiring within this window (seconds) are proactively refreshed.
 const REFRESH_WINDOW_SECS: i64 = 300;
@@ -364,7 +364,7 @@ mod tests {
         let _max = ScopedEnvVar::unset("STARTUP_HEALTH_DELAY_MAX_SECONDS");
 
         let (min_seconds, max_seconds) = startup_health_delay_bounds_seconds();
-        assert_eq!(min_seconds, 1);
-        assert_eq!(max_seconds, 10);
+        assert_eq!(min_seconds, 2);
+        assert_eq!(max_seconds, 8);
     }
 }

@@ -43,9 +43,6 @@ GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
 # Optional: restrict accepted Google Workspace domains for identity verification
 ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
 
-# Optional: override User-Agent for OAuth token/userinfo calls only
-OAUTH_USER_AGENT=vscode/1.95.0 gephyr
-
 # Optional: scheduler jitter window in seconds (defaults shown)
 SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
 SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
@@ -148,7 +145,7 @@ curl http://127.0.0.1:8045/v1/chat/completions \
 | `ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
 | `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
-| `OAUTH_USER_AGENT` | — | Gephyr default UA | Optional UA override for OAuth token/userinfo calls |
+| `OAUTH_USER_AGENT` | — | ignored | Deprecated (OAuth always uses the global User-Agent) |
 | `TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
 | `TLS_CANARY_URL` | — | — | Optional startup TLS canary probe URL |
 | `TLS_CANARY_TIMEOUT_SECS` | — | `5` | Startup TLS canary timeout seconds (clamped 1..60) |

@@ -5,15 +5,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
-const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
-const V1_INTERNAL_BASE_URL_SANDBOX: &str =
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
-const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
-    V1_INTERNAL_BASE_URL_SANDBOX,
-    V1_INTERNAL_BASE_URL_DAILY,
-    V1_INTERNAL_BASE_URL_PROD,
-];
+const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 1] = [V1_INTERNAL_BASE_URL_PROD];
 
 fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
     let id = account_id?;
