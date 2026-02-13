@@ -152,6 +152,9 @@ wait_service_ready() {
       -H "Authorization: Bearer ${API_KEY}" \
       "${BASE_URL}/healthz" 2>/dev/null || true)"
     [[ "$code" == "200" ]] && return 0
+    if [[ "$code" == "401" ]]; then
+      die "Health check failed with 401 (API key mismatch). Run: ./console.sh restart (or rotate-key)."
+    fi
     sleep "$delay"
   done
   return 1

@@ -106,7 +106,7 @@ From `src/proxy/token/*`:
 From scheduler path (`src/modules/system/scheduler.rs`, `src/commands/mod.rs`, `src/modules/auth/account.rs`):
 
 - periodic quota refresh still runs every 10 minutes when `auto_refresh=true`, with pre-run scheduler jitter (`SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
-- per-run account processing is now sequential with randomized per-account delay (defaults `1..10s`, configurable via `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`)
+- per-run account processing is now sequential with randomized per-account delay (defaults `5..30s`, configurable via `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS`)
 
 ## Upstream and Proxy Pool Routing
 

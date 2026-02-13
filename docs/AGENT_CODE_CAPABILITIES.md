@@ -11,7 +11,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - User token DB: `src/modules/persistence/user_token_db.rs`
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
-- Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `1..10`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
+- Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `5..30`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
 - Startup token health refresh now processes accounts sequentially with randomized per-account delay controlled by `STARTUP_HEALTH_DELAY_MIN_SECONDS` / `STARTUP_HEALTH_DELAY_MAX_SECONDS` (default `1..10`) to avoid simultaneous Google refresh spikes: `src/commands/proxy.rs`, `src/proxy/token/startup_health.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
 - One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
