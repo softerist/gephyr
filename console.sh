@@ -45,10 +45,12 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
-  accounts-signout <accountId>  Sign out one account (revoke + local token clear/disable)
-  accounts-signout-and-delete <accountId>  Sign out one account and delete local record
+  accounts-signout <accountId|email>  Sign out one account (revoke + local token clear/disable)
+  accounts-signout-and-delete <accountId|email>  Sign out one account and delete local record
   accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
   accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
+  accounts-delete <accountId|email>  Delete one local account record (does not revoke)
+  accounts-delete-and-stop <accountId|email>  Delete one local account record, then stop container
   accounts-delete-all   Delete local account records (does not revoke)
   accounts-delete-all-and-stop  Delete local accounts, then stop container
 
@@ -78,10 +80,12 @@ Examples:
   ./console.sh rebuild --no-cache
   ./console.sh docker-repair
   ./console.sh docker-repair --aggressive
-  ./console.sh accounts-signout <accountId>
-  ./console.sh accounts-signout-and-delete <accountId>
+  ./console.sh accounts-signout <accountId|email>
+  ./console.sh accounts-signout-and-delete <accountId|email>
   ./console.sh accounts-signout-all
   ./console.sh accounts-signout-all-and-stop
+  ./console.sh accounts-delete <accountId|email>
+  ./console.sh accounts-delete-and-stop <accountId|email>
   ./console.sh accounts-delete-all
   ./console.sh accounts-delete-all-and-stop
 
@@ -929,13 +933,98 @@ logout_all_accounts() {
   echo "$payload"
 }
 
-logout_account() {
-  local account_id="${1:-}"
-  local delete_local="${2:-false}"
-  if [[ -z "$account_id" ]]; then
-    echo "Missing accountId. Usage: ./console.sh accounts-signout <accountId>" >&2
+fetch_accounts_json_or_restart_admin() {
+  ensure_api_key
+  ensure_request_ids
+
+  local payload http_code
+  payload="$(curl -sS -w $'\n%{http_code}' \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+    -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+    "http://127.0.0.1:${PORT}/api/accounts")"
+  http_code="$(printf '%s' "$payload" | tail -n 1)"
+  payload="$(printf '%s' "$payload" | sed '$d')"
+
+  if [[ "$http_code" == "404" ]]; then
+    echo "Admin API not enabled. Restarting container with admin API..." >&2
+    stop_container
+    start_container "true"
+    if ! wait_service_ready; then
+      echo "Service did not become ready after restart." >&2
+      exit 1
+    fi
+    payload="$(curl -sS -w $'\n%{http_code}' \
+      -H "Authorization: Bearer ${API_KEY}" \
+      -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+      -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+      "http://127.0.0.1:${PORT}/api/accounts")"
+    http_code="$(printf '%s' "$payload" | tail -n 1)"
+    payload="$(printf '%s' "$payload" | sed '$d')"
+  fi
+
+  if [[ "$http_code" == "401" ]]; then
+    echo "Accounts query failed with 401. API key mismatch. Run restart or rotate-key." >&2
+    exit 1
+  elif [[ "$http_code" -ge 400 ]]; then
+    echo "Failed to query accounts. HTTP $http_code" >&2
     exit 1
   fi
+
+  ACCOUNTS_JSON="$payload"
+}
+
+resolve_account_id_from_ref() {
+  local ref="${1:-}"
+  if [[ -z "${ref// /}" ]]; then
+    echo "Missing accountId/email. Usage: ./console.sh accounts-signout <accountId|email>" >&2
+    exit 1
+  fi
+
+  # UUID shortcut.
+  if printf '%s' "$ref" | grep -Eq '^[0-9a-fA-F-]{36}$'; then
+    echo "$ref"
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Cannot resolve account by email without python3. Use the account id (run ./console.sh accounts)." >&2
+    exit 1
+  fi
+
+  fetch_accounts_json_or_restart_admin
+
+  python3 - <<'PY' "$ref" <<< "${ACCOUNTS_JSON:-}"
+import json,sys
+ref = (sys.argv[1] or "").strip()
+try:
+    data = json.loads(sys.stdin.read() or "{}")
+except Exception:
+    print("", end="")
+    raise SystemExit(2)
+accounts = data.get("accounts", [])
+matches = []
+for a in accounts if isinstance(accounts, list) else []:
+    aid = str(a.get("id") or "")
+    email = str(a.get("email") or "")
+    if aid == ref or email.lower() == ref.lower():
+        matches.append(aid)
+if len(matches) == 1:
+    print(matches[0])
+    raise SystemExit(0)
+if len(matches) > 1:
+    print("", end="")
+    raise SystemExit(4)
+print("", end="")
+raise SystemExit(3)
+PY
+}
+
+logout_account() {
+  local account_ref="${1:-}"
+  local delete_local="${2:-false}"
+  local account_id
+  account_id="$(resolve_account_id_from_ref "$account_ref")"
 
   ensure_api_key
   ensure_request_ids
@@ -989,6 +1078,53 @@ logout_account() {
   echo "$payload"
 }
 
+delete_account_local() {
+  local account_ref="${1:-}"
+  local account_id
+  account_id="$(resolve_account_id_from_ref "$account_ref")"
+
+  ensure_api_key
+  ensure_request_ids
+
+  local payload http_code
+  payload="$(curl -sS -w $'\n%{http_code}' \
+    -X DELETE \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+    -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+    "http://127.0.0.1:${PORT}/api/accounts/${account_id}")"
+  http_code="$(printf '%s' "$payload" | tail -n 1)"
+  payload="$(printf '%s' "$payload" | sed '$d')"
+
+  if [[ "$http_code" == "404" ]]; then
+    echo "Admin API not enabled. Restarting container with admin API..." >&2
+    stop_container
+    start_container "true"
+    if ! wait_service_ready; then
+      echo "Service did not become ready after restart." >&2
+      exit 1
+    fi
+    payload="$(curl -sS -w $'\n%{http_code}' \
+      -X DELETE \
+      -H "Authorization: Bearer ${API_KEY}" \
+      -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+      -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+      "http://127.0.0.1:${PORT}/api/accounts/${account_id}")"
+    http_code="$(printf '%s' "$payload" | tail -n 1)"
+    payload="$(printf '%s' "$payload" | sed '$d')"
+  fi
+
+  if [[ "$http_code" == "401" ]]; then
+    echo "Account delete failed with 401. API key mismatch. Run restart or rotate-key." >&2
+    exit 1
+  elif [[ "$http_code" -ge 400 ]]; then
+    echo "Account delete failed. HTTP $http_code" >&2
+    exit 1
+  fi
+
+  echo "$payload"
+}
+
 logout_and_stop() {
   logout_all_accounts
   stop_container
@@ -1003,6 +1139,8 @@ accounts_signout_all() { logout_all_accounts; }
 accounts_signout_all_and_stop() { logout_and_stop; }
 accounts_signout() { logout_account "${EXTRA_ARGS[0]:-}" "false"; }
 accounts_signout_and_delete() { logout_account "${EXTRA_ARGS[0]:-}" "true"; }
+accounts_delete() { delete_account_local "${EXTRA_ARGS[0]:-}"; }
+accounts_delete_and_stop() { delete_account_local "${EXTRA_ARGS[0]:-}"; stop_container; }
 accounts_delete_all() { remove_accounts; }
 accounts_delete_all_and_stop() { remove_accounts_and_stop; }
 
@@ -1314,7 +1452,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout accounts-signout-and-delete accounts-signout-all accounts-signout-all-and-stop accounts-delete-all accounts-delete-all-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout accounts-signout-and-delete accounts-signout-all accounts-signout-all-and-stop accounts-delete accounts-delete-and-stop accounts-delete-all accounts-delete-all-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -1350,6 +1488,8 @@ case "$COMMAND" in
   accounts-signout-and-delete) accounts_signout_and_delete ;;
   accounts-signout-all) accounts_signout_all ;;
   accounts-signout-all-and-stop) accounts_signout_all_and_stop ;;
+  accounts-delete) accounts_delete ;;
+  accounts-delete-and-stop) accounts_delete_and_stop ;;
   accounts-delete-all) accounts_delete_all ;;
   accounts-delete-all-and-stop) accounts_delete_all_and_stop ;;
   *)

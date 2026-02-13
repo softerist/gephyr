@@ -54,10 +54,12 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
-  accounts-signout <accountId>  Sign out one account (revoke + local token clear/disable)
-  accounts-signout-and-delete <accountId>  Sign out one account and delete local record
+  accounts-signout <accountId|email>  Sign out one account (revoke + local token clear/disable)
+  accounts-signout-and-delete <accountId|email>  Sign out one account and delete local record
   accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
   accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
+  accounts-delete <accountId|email>  Delete one local account record (does not revoke)
+  accounts-delete-and-stop <accountId|email>  Delete one local account record, then stop container
   accounts-delete-all   Delete local account records (does not revoke)
   accounts-delete-all-and-stop  Delete local accounts, then stop container
 
@@ -86,10 +88,12 @@ Examples:
   .\console.ps1 rebuild -NoCache
   .\console.ps1 docker-repair
   .\console.ps1 docker-repair -Aggressive
-  .\console.ps1 accounts-signout <accountId>
-  .\console.ps1 accounts-signout-and-delete <accountId>
+  .\console.ps1 accounts-signout <accountId|email>
+  .\console.ps1 accounts-signout-and-delete <accountId|email>
   .\console.ps1 accounts-signout-all
   .\console.ps1 accounts-signout-all-and-stop
+  .\console.ps1 accounts-delete <accountId|email>
+  .\console.ps1 accounts-delete-and-stop <accountId|email>
   .\console.ps1 accounts-delete-all
   .\console.ps1 accounts-delete-all-and-stop
   .\console.ps1 -Command login
@@ -769,6 +773,27 @@ function Show-Accounts {
     }
 }
 
+function Get-AccountsResponseOrRestartAdmin {
+    $headers = Get-AuthHeaders
+    try {
+        return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "404|Not Found") {
+            Write-Host "Admin API not enabled. Restarting container with admin API..." -ForegroundColor Yellow
+            Stop-Container
+            Start-Container -AdminApiEnabled $true
+            if (-not (Wait-ServiceReady)) {
+                throw "Service did not become ready after restart."
+            }
+            return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts" -Headers $headers -Method Get -TimeoutSec 20
+        } elseif ($msg -match "401|Unauthorized") {
+            throw "Accounts query failed with 401. API key mismatch. Run restart or rotate-key."
+        }
+        throw "Failed to query accounts: $msg"
+    }
+}
+
 function Remove-Accounts {
     $headers = Get-AuthHeaders
 
@@ -884,13 +909,55 @@ function Logout-AllAccounts {
 }
 
 function Resolve-AccountId {
+    $ref = $null
     if ($ExtraArgs -and $ExtraArgs.Count -ge 1 -and $ExtraArgs[0]) {
-        return [string]$ExtraArgs[0]
+        $ref = [string]$ExtraArgs[0]
+    } elseif ($env:ACCOUNT_REF) {
+        $ref = [string]$env:ACCOUNT_REF
+    } elseif ($env:ACCOUNT_ID) {
+        $ref = [string]$env:ACCOUNT_ID
+    } elseif ($env:ACCOUNT_EMAIL) {
+        $ref = [string]$env:ACCOUNT_EMAIL
     }
-    if ($env:ACCOUNT_ID) {
-        return [string]$env:ACCOUNT_ID
+    if (-not $ref) {
+        throw "Missing accountId/email. Usage: .\\console.ps1 accounts-signout <accountId|email> (or set ACCOUNT_REF/ACCOUNT_ID/ACCOUNT_EMAIL)"
     }
-    throw "Missing accountId. Usage: .\\console.ps1 accounts-signout <accountId> (or set ACCOUNT_ID env var)"
+    return Resolve-AccountIdFromRef -Ref $ref
+}
+
+function Resolve-AccountIdFromRef {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Ref
+    )
+
+    $trimmed = $Ref.Trim()
+    if (-not $trimmed) {
+        throw "Missing account reference (empty)."
+    }
+
+    # Most account IDs are UUIDs; if it looks like one, use it directly.
+    if ($trimmed -match '^[0-9a-fA-F-]{36}$') {
+        return $trimmed
+    }
+
+    $resp = Get-AccountsResponseOrRestartAdmin
+    $accounts = @()
+    if ($resp -and $resp.accounts) { $accounts = @($resp.accounts) }
+
+    $matches = @(
+        $accounts | Where-Object {
+            $_.id -eq $trimmed -or ($_.email -and ([string]$_.email).ToLower() -eq $trimmed.ToLower())
+        }
+    )
+
+    if ($matches.Count -eq 1) {
+        return [string]$matches[0].id
+    }
+    if ($matches.Count -gt 1) {
+        throw "Account ref '$trimmed' is ambiguous. Use the exact account id."
+    }
+    throw "No account matched '$trimmed'. Run .\\console.ps1 accounts to list ids/emails."
 }
 
 function Logout-Account {
@@ -934,6 +1001,44 @@ function Accounts-SignoutAndDelete {
     $id = Resolve-AccountId
     $resp = Logout-Account -AccountId $id -DeleteLocal:$true
     Write-Host "Account signout+delete completed. id=$id deleted=$($resp.deleted)"
+}
+
+function Delete-AccountLocal {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId
+    )
+
+    $headers = Get-AuthHeaders
+    try {
+        return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/$AccountId" -Headers $headers -Method Delete -TimeoutSec 20
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "404|Not Found") {
+            Write-Host "Admin API not enabled. Restarting container with admin API..." -ForegroundColor Yellow
+            Stop-Container
+            Start-Container -AdminApiEnabled $true
+            if (-not (Wait-ServiceReady)) {
+                throw "Service did not become ready after restart."
+            }
+            return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/$AccountId" -Headers $headers -Method Delete -TimeoutSec 20
+        } elseif ($msg -match "401|Unauthorized") {
+            throw "Account delete failed with 401. API key mismatch. Run restart or rotate-key."
+        } else {
+            throw "Account delete failed: $msg"
+        }
+    }
+}
+
+function Accounts-Delete {
+    $id = Resolve-AccountId
+    Delete-AccountLocal -AccountId $id | Out-Null
+    Write-Host "Account delete completed. id=$id"
+}
+
+function Accounts-DeleteAndStop {
+    Accounts-Delete
+    Stop-Container
 }
 
 function Run-ApiTest {
@@ -1233,6 +1338,7 @@ $dockerCommands = @(
     "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update",
     "accounts-signout", "accounts-signout-and-delete",
     "accounts-signout-all", "accounts-signout-all-and-stop",
+    "accounts-delete", "accounts-delete-and-stop",
     "accounts-delete-all", "accounts-delete-all-and-stop"
 )
 
@@ -1280,6 +1386,8 @@ switch ($Command) {
     "accounts-signout-and-delete" { Accounts-SignoutAndDelete }
     "accounts-signout-all" { Accounts-SignoutAll }
     "accounts-signout-all-and-stop" { Accounts-SignoutAllAndStop }
+    "accounts-delete" { Accounts-Delete }
+    "accounts-delete-and-stop" { Accounts-DeleteAndStop }
     "accounts-delete-all" { Accounts-DeleteAll }
     "accounts-delete-all-and-stop" { Accounts-DeleteAllAndStop }
     default { Write-Usage }
