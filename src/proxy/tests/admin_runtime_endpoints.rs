@@ -174,6 +174,53 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn admin_health_echoes_request_id_headers_even_when_missing() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let request = Request::builder()
+            .uri("/health")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+
+        let response = router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("route should handle request");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let request_id = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let correlation_id = response
+            .headers()
+            .get("x-correlation-id")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        assert!(
+            !request_id.trim().is_empty(),
+            "expected x-request-id to be present"
+        );
+        assert!(
+            !correlation_id.trim().is_empty(),
+            "expected x-correlation-id to be present"
+        );
+        assert_eq!(
+            request_id, correlation_id,
+            "when the client provides no correlation id, we mirror request id"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn admin_version_routes_advertise_compliance_endpoints() {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()
