@@ -23,6 +23,12 @@ param(
 $ErrorActionPreference = "Stop"
 $envFilePath = Join-Path $PSScriptRoot ".env.local"
 
+# Some environments (e.g. `test-clean.ps1`) run with `Set-StrictMode -Version Latest`,
+# which turns reads of unset variables into hard errors. Predefine our script-scoped
+# correlation/request sequence variables so helper functions can safely read/update them.
+$script:ConsoleCorrelationId = $null
+$script:ConsoleRequestSeq = 0
+
 function Write-Usage {
     @"
 Usage:
