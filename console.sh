@@ -242,7 +242,18 @@ start_container() {
 
   # In Docker, the service must bind 0.0.0.0 to be reachable via port mapping.
   # Host exposure is still restricted by "-p 127.0.0.1:...".
-  local allow_lan="${ALLOW_LAN_ACCESS:-true}"
+  #
+  # Some users set ALLOW_LAN_ACCESS=false in their local env for native runs; if we passed
+  # that through to the container, the service would bind 127.0.0.1 inside the container
+  # and become unreachable via the published port.
+  local allow_lan="true"
+  if [[ -n "${ALLOW_LAN_ACCESS:-}" ]]; then
+    case "${ALLOW_LAN_ACCESS,,}" in
+      0|false|no|off)
+        echo "WARN: ALLOW_LAN_ACCESS=${ALLOW_LAN_ACCESS} would break Docker port mapping; forcing ALLOW_LAN_ACCESS=true for docker run." >&2
+        ;;
+    esac
+  fi
 
   docker run --rm -d --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${PORT}:8045" \

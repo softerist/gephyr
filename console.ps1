@@ -227,7 +227,10 @@ function Start-Container {
     $adminApi = if ($AdminApiEnabled) { "true" } else { "false" }
     # In Docker, the service must bind 0.0.0.0 to be reachable via port mapping.
     # Host exposure is still restricted by "-p 127.0.0.1:...".
-    $allowLan = if ($env:ALLOW_LAN_ACCESS) { $env:ALLOW_LAN_ACCESS } else { "true" }
+    if ($env:ALLOW_LAN_ACCESS -and $env:ALLOW_LAN_ACCESS.Trim().ToLower() -in @("0", "false", "no", "off")) {
+        Write-Warning "ALLOW_LAN_ACCESS=$($env:ALLOW_LAN_ACCESS) would bind 127.0.0.1 inside the container and break Docker port mapping; forcing ALLOW_LAN_ACCESS=true for docker run."
+    }
+    $allowLan = "true"
 
     if (-not $env:GOOGLE_OAUTH_CLIENT_ID -and (Test-Path $envFilePath)) {
         $legacy = Get-Content $envFilePath |
