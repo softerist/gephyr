@@ -219,7 +219,9 @@ function Start-Container {
     Remove-ContainerIfExists
 
     $adminApi = if ($AdminApiEnabled) { "true" } else { "false" }
-    $allowLan = if ($env:ALLOW_LAN_ACCESS) { $env:ALLOW_LAN_ACCESS } else { "false" }
+    # In Docker, the service must bind 0.0.0.0 to be reachable via port mapping.
+    # Host exposure is still restricted by "-p 127.0.0.1:...".
+    $allowLan = if ($env:ALLOW_LAN_ACCESS) { $env:ALLOW_LAN_ACCESS } else { "true" }
 
     if (-not $env:GOOGLE_OAUTH_CLIENT_ID -and (Test-Path $envFilePath)) {
         $legacy = Get-Content $envFilePath |

@@ -1342,12 +1342,9 @@ mod tests {
         per_account_refresh_stagger_ms, refresh_task_stagger_bounds_ms, upsert_account,
     };
     use crate::models::TokenData;
-    use crate::test_utils::ScopedEnvVar;
+    use crate::test_utils::{lock_env, ScopedEnvVar};
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, OnceLock};
-
-    static ACCOUNT_TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn write_account_fixture(
         root: &Path,
@@ -1438,10 +1435,7 @@ mod tests {
 
     #[test]
     fn load_account_migrates_legacy_auth0_machine_id_and_persists() {
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
@@ -1505,10 +1499,7 @@ mod tests {
 
     #[test]
     fn ensure_device_profile_on_switch_does_not_generate_when_storage_override_missing() {
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         // Force deterministic behavior: make get_storage_path fail without scanning the real system.
         let _storage_override = ScopedEnvVar::set(
@@ -1529,10 +1520,7 @@ mod tests {
 
     #[test]
     fn ensure_device_profile_on_switch_captures_when_storage_override_present() {
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
@@ -1599,10 +1587,7 @@ mod tests {
     #[test]
     fn load_account_accepts_malformed_v2_tokens_via_deserialize_fallback() {
         let _security_guard = crate::proxy::tests::acquire_security_test_lock();
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
@@ -1625,10 +1610,7 @@ mod tests {
     #[test]
     fn list_accounts_keeps_entries_with_malformed_v2_tokens() {
         let _security_guard = crate::proxy::tests::acquire_security_test_lock();
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
@@ -1674,10 +1656,7 @@ mod tests {
     #[test]
     fn upsert_prefers_google_sub_over_email() {
         let _security_guard = crate::proxy::tests::acquire_security_test_lock();
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
@@ -1721,10 +1700,7 @@ mod tests {
     #[test]
     fn upsert_backfills_google_sub() {
         let _security_guard = crate::proxy::tests::acquire_security_test_lock();
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
 
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
@@ -1764,10 +1740,7 @@ mod tests {
 
     #[test]
     fn refresh_stagger_is_deterministic_and_in_range() {
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
         let a = per_account_refresh_stagger_ms("acct-1", 250, 1500);
         let b = per_account_refresh_stagger_ms("acct-1", 250, 1500);
         let c = per_account_refresh_stagger_ms("acct-2", 250, 1500);
@@ -1779,10 +1752,7 @@ mod tests {
 
     #[test]
     fn refresh_stagger_bounds_swap_when_reversed() {
-        let _guard = ACCOUNT_TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("account env lock");
+        let _env_guard = lock_env();
         std::env::set_var("ACCOUNT_REFRESH_STAGGER_MIN_MS", "1900");
         std::env::set_var("ACCOUNT_REFRESH_STAGGER_MAX_MS", "300");
 

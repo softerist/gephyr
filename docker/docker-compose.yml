@@ -11,5 +11,6 @@ services:
     environment:
       - LOG_LEVEL=info
       - AUTH_MODE=strict
-      - ALLOW_LAN_ACCESS=false
+      # In Docker, bind 0.0.0.0 so the published port works; host exposure is limited by ports:.
+      - ALLOW_LAN_ACCESS=true
     restart: unless-stopped

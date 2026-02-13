@@ -240,7 +240,9 @@ start_container() {
     fi
   done
 
-  local allow_lan="${ALLOW_LAN_ACCESS:-false}"
+  # In Docker, the service must bind 0.0.0.0 to be reachable via port mapping.
+  # Host exposure is still restricted by "-p 127.0.0.1:...".
+  local allow_lan="${ALLOW_LAN_ACCESS:-true}"
 
   docker run --rm -d --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${PORT}:8045" \
