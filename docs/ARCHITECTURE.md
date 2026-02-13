@@ -177,6 +177,7 @@ Unit-heavy coverage in `src/proxy/tests` with focused admin runtime suite:
 
 Operator smoke scripts in `scripts/` validate live runtime behavior:
 
+- admin restart + health + version routes (minimal readiness)
 - session binding persistence
 - compliance counters
 - proxy pool strategy/runtime endpoints

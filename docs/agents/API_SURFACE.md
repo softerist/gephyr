@@ -107,3 +107,23 @@ Primary groups:
 - `/api/*` routes are not exposed unless `ENABLE_ADMIN_API=true`: `src/proxy/server.rs`.
 - `/auth/callback` is also only mounted when admin API is enabled: `src/proxy/server.rs`.
 - Sticky debug endpoint is `GET /api/proxy/session-bindings`; clear endpoint is `POST /api/proxy/session-bindings/clear`.
+
+## Operator Console Commands
+
+The repo includes operator scripts that call the admin API using the same headers the service understands:
+
+- PowerShell: `console.ps1`
+- Bash: `console.sh`
+
+Account lifecycle helpers (console wrappers around `/api/accounts/*`):
+
+- signout one account (revoke + local token clear/disable):
+  - `accounts-signout <accountId|email>` (uses `POST /api/accounts/:accountId/logout`)
+- signout one account and delete local record:
+  - `accounts-signout-and-delete <accountId|email>` (uses `POST /api/accounts/:accountId/logout` with `deleteLocal=true`)
+- signout all accounts (revoke + local token clear/disable):
+  - `accounts-signout-all` (uses `POST /api/accounts/logout-all`)
+- delete one local account record (does not revoke):
+  - `accounts-delete <accountId|email>` (uses `DELETE /api/accounts/:accountId`)
+- delete all local account records (does not revoke):
+  - `accounts-delete-all` (uses `DELETE /api/accounts/:accountId` for each account)
