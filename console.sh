@@ -19,6 +19,7 @@ AGGRESSIVE_REPAIR="false"
 JSON_OUTPUT="false"
 QUIET="false"
 NO_CACHE="false"
+EXTRA_ARGS=()
 
 print_help() {
   cat <<'EOF'
@@ -44,6 +45,8 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
+  accounts-signout <accountId>  Sign out one account (revoke + local token clear/disable)
+  accounts-signout-and-delete <accountId>  Sign out one account and delete local record
   accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
   accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
   accounts-delete-all   Delete local account records (does not revoke)
@@ -75,6 +78,8 @@ Examples:
   ./console.sh rebuild --no-cache
   ./console.sh docker-repair
   ./console.sh docker-repair --aggressive
+  ./console.sh accounts-signout <accountId>
+  ./console.sh accounts-signout-and-delete <accountId>
   ./console.sh accounts-signout-all
   ./console.sh accounts-signout-all-and-stop
   ./console.sh accounts-delete-all
@@ -924,6 +929,66 @@ logout_all_accounts() {
   echo "$payload"
 }
 
+logout_account() {
+  local account_id="${1:-}"
+  local delete_local="${2:-false}"
+  if [[ -z "$account_id" ]]; then
+    echo "Missing accountId. Usage: ./console.sh accounts-signout <accountId>" >&2
+    exit 1
+  fi
+
+  ensure_api_key
+  ensure_request_ids
+
+  local body payload http_code
+  if [[ "$delete_local" == "true" ]]; then
+    body='{"revokeRemote":true,"deleteLocal":true}'
+  else
+    body='{"revokeRemote":true,"deleteLocal":false}'
+  fi
+
+  payload="$(curl -sS -w $'\n%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${API_KEY}" \
+    -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+    -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+    -H "Content-Type: application/json" \
+    -d "$body" \
+    "http://127.0.0.1:${PORT}/api/accounts/${account_id}/logout")"
+  http_code="$(printf '%s' "$payload" | tail -n 1)"
+  payload="$(printf '%s' "$payload" | sed '$d')"
+
+  if [[ "$http_code" == "404" ]]; then
+    echo "Admin API not enabled. Restarting container with admin API..." >&2
+    stop_container
+    start_container "true"
+    if ! wait_service_ready; then
+      echo "Service did not become ready after restart." >&2
+      exit 1
+    fi
+    payload="$(curl -sS -w $'\n%{http_code}' \
+      -X POST \
+      -H "Authorization: Bearer ${API_KEY}" \
+      -H "x-correlation-id: ${CONSOLE_CORRELATION_ID}" \
+      -H "x-request-id: ${CONSOLE_REQUEST_ID}" \
+      -H "Content-Type: application/json" \
+      -d "$body" \
+      "http://127.0.0.1:${PORT}/api/accounts/${account_id}/logout")"
+    http_code="$(printf '%s' "$payload" | tail -n 1)"
+    payload="$(printf '%s' "$payload" | sed '$d')"
+  fi
+
+  if [[ "$http_code" == "401" ]]; then
+    echo "Account signout failed with 401. API key mismatch. Run restart or rotate-key." >&2
+    exit 1
+  elif [[ "$http_code" -ge 400 ]]; then
+    echo "Account signout failed. HTTP $http_code" >&2
+    exit 1
+  fi
+
+  echo "$payload"
+}
+
 logout_and_stop() {
   logout_all_accounts
   stop_container
@@ -936,6 +1001,8 @@ remove_accounts_and_stop() {
 
 accounts_signout_all() { logout_all_accounts; }
 accounts_signout_all_and_stop() { logout_and_stop; }
+accounts_signout() { logout_account "${EXTRA_ARGS[0]:-}" "false"; }
+accounts_signout_and_delete() { logout_account "${EXTRA_ARGS[0]:-}" "true"; }
 accounts_delete_all() { remove_accounts; }
 accounts_delete_all_and_stop() { remove_accounts_and_stop; }
 
@@ -1201,10 +1268,15 @@ while [[ $# -gt 0 ]]; do
     --quiet) QUIET="true"; shift ;;
     --no-cache) NO_CACHE="true"; shift ;;
     -h|--help|-?|\?|/help) COMMAND="help"; shift ;;
-    *)
+    -*)
       echo "Unknown argument: $1" >&2
       print_help
       exit 1
+      ;;
+    *)
+      # Allow positional args for certain commands (e.g. accountId for accounts-signout).
+      EXTRA_ARGS+=("$1")
+      shift
       ;;
   esac
 done
@@ -1242,7 +1314,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout-all accounts-signout-all-and-stop accounts-delete-all accounts-delete-all-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout accounts-signout-and-delete accounts-signout-all accounts-signout-all-and-stop accounts-delete-all accounts-delete-all-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then
@@ -1274,6 +1346,8 @@ case "$COMMAND" in
   rebuild) rebuild ;;
   update) update_gephyr ;;
   version) show_version ;;
+  accounts-signout) accounts_signout ;;
+  accounts-signout-and-delete) accounts_signout_and_delete ;;
   accounts-signout-all) accounts_signout_all ;;
   accounts-signout-all-and-stop) accounts_signout_all_and_stop ;;
   accounts-delete-all) accounts_delete_all ;;

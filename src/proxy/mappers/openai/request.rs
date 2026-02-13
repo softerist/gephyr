@@ -55,10 +55,10 @@ pub fn transform_openai_request(
         actual_include_thinking = false;
     }
     if user_enabled_thinking {
-        tracing::info!(
+        crate::modules::system::logger::log_info(&format!(
             "[OpenAI-Thinking] User explicitly enabled thinking with budget: {:?}",
             user_thinking_budget
-        );
+        ));
     }
 
     tracing::debug!(

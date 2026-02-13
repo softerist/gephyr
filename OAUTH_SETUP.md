@@ -91,18 +91,6 @@ Behavior:
 - Empty/unset: all domains accepted.
 - Set: login/import is rejected when Google identity does not match the allowlist.
 
-### Optional: override OAuth User-Agent
-
-Use this only if you want OAuth token/userinfo calls to send a specific UA:
-
-```env
-OAUTH_USER_AGENT=vscode/1.95.0 gephyr
-```
-
-Behavior:
-- Empty/unset: Gephyr default UA is used.
-- Set: applied to OAuth exchange, refresh, and userinfo calls.
-
 ### TLS backend profile (build-time + optional runtime override)
 
 Gephyr supports:

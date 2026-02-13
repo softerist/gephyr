@@ -21,12 +21,12 @@ pub fn resolve_request_config(
 ) -> RequestConfig {
     if is_image_generation_model(mapped_model) {
         if let Some(body_val) = body {
-            if let Some(gen_config) = body_val.get("generationConfig") {
-                if let Some(image_config) = gen_config.get("imageConfig") {
-                    tracing::info!(
+                if let Some(gen_config) = body_val.get("generationConfig") {
+                    if let Some(image_config) = gen_config.get("imageConfig") {
+                    crate::modules::system::logger::log_info(&format!(
                         "[Common-Utils] Parsed imageConfig from Gemini request body: {:?}",
                         image_config
-                    );
+                    ));
                     let parsed_base_model = MODEL_GEMINI_3_PRO_IMAGE.to_string();
 
                     return RequestConfig {
@@ -57,11 +57,11 @@ pub fn resolve_request_config(
     final_model = normalize_preview_alias(&final_model);
 
     if enable_networking && final_model != web_search_fallback_model() {
-        tracing::info!(
+        crate::modules::system::logger::log_info(&format!(
             "[Common-Utils] Downgrading {} to {} for web search",
             final_model,
             web_search_fallback_model()
-        );
+        ));
         final_model = web_search_fallback_model().to_string();
     }
 

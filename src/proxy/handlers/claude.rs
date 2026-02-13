@@ -158,10 +158,10 @@ pub async fn handle_messages(
             crate::proxy::ZaiDispatchMode::Exclusive => true,
             crate::proxy::ZaiDispatchMode::Fallback => {
                 if google_accounts == 0 {
-                    tracing::info!(
+                    crate::modules::system::logger::log_info(&format!(
                         "[{}] No Google accounts available, using fallback provider",
                         trace_id
-                    );
+                    ));
                     true
                 } else {
                     let has_available = state
@@ -170,11 +170,11 @@ pub async fn handle_messages(
                         .has_available_account("claude", &normalized_model)
                         .await;
                     if !has_available {
-                        tracing::info!(
+                        crate::modules::system::logger::log_info(&format!(
                             "[{}] All Google accounts unavailable (rate-limited or quota-protected for {}), using fallback provider",
                             trace_id,
                             request.model
-                        );
+                        ));
                     }
                     !has_available
                 }
@@ -210,10 +210,10 @@ pub async fn handle_messages(
         close_tool_loop_for_thinking(&mut request.messages);
     }
     if is_warmup_request(&request) {
-        tracing::info!(
+        crate::modules::system::logger::log_info(&format!(
             "[{}] 🔥 Intercepted Warmup request, returning simulated response (saving quota)",
             trace_id
-        );
+        ));
         return create_warmup_response(&request, request.stream);
     }
 

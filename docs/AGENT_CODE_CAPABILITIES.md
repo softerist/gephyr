@@ -260,7 +260,6 @@ Main admin groups include:
 - `GOOGLE_OAUTH_CLIENT_ID`
 - `GOOGLE_OAUTH_CLIENT_SECRET`
 - Deprecated/ignored:
-- `OAUTH_USER_AGENT`
 
 ## Open Edge Cases / Defects
 

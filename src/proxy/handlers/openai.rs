@@ -82,13 +82,13 @@ pub async fn handle_chat_completions(
     }
 
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
-    info!(
+    crate::modules::system::logger::log_info(&format!(
         "[{}] OpenAI Chat Request: {} | {} messages | stream: {}",
         trace_id,
         openai_req.model,
         openai_req.messages.len(),
         openai_req.stream
-    );
+    ));
     let debug_cfg = state.debug_logging.read().await.clone();
     if debug_logger::is_enabled(&debug_cfg) {
         let original_payload = json!({

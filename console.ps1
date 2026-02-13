@@ -54,6 +54,8 @@ Commands:
   rebuild      Rebuild Docker image from source
   update       Pull latest code, rebuild image, and restart container
   version      Show version from Cargo.toml
+  accounts-signout <accountId>  Sign out one account (revoke + local token clear/disable)
+  accounts-signout-and-delete <accountId>  Sign out one account and delete local record
   accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
   accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
   accounts-delete-all   Delete local account records (does not revoke)
@@ -84,6 +86,8 @@ Examples:
   .\console.ps1 rebuild -NoCache
   .\console.ps1 docker-repair
   .\console.ps1 docker-repair -Aggressive
+  .\console.ps1 accounts-signout <accountId>
+  .\console.ps1 accounts-signout-and-delete <accountId>
   .\console.ps1 accounts-signout-all
   .\console.ps1 accounts-signout-all-and-stop
   .\console.ps1 accounts-delete-all
@@ -879,6 +883,59 @@ function Logout-AllAccounts {
     }
 }
 
+function Resolve-AccountId {
+    if ($ExtraArgs -and $ExtraArgs.Count -ge 1 -and $ExtraArgs[0]) {
+        return [string]$ExtraArgs[0]
+    }
+    if ($env:ACCOUNT_ID) {
+        return [string]$env:ACCOUNT_ID
+    }
+    throw "Missing accountId. Usage: .\\console.ps1 accounts-signout <accountId> (or set ACCOUNT_ID env var)"
+}
+
+function Logout-Account {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$AccountId,
+        [bool]$DeleteLocal = $false
+    )
+
+    $headers = Get-AuthHeaders
+    $headers["Content-Type"] = "application/json"
+    $body = @{ revokeRemote = $true; deleteLocal = $DeleteLocal } | ConvertTo-Json
+
+    try {
+        return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/$AccountId/logout" -Headers $headers -Method Post -Body $body -TimeoutSec 60
+    } catch {
+        $msg = $_.Exception.Message
+        if ($msg -match "404|Not Found") {
+            Write-Host "Admin API not enabled. Restarting container with admin API..." -ForegroundColor Yellow
+            Stop-Container
+            Start-Container -AdminApiEnabled $true
+            if (-not (Wait-ServiceReady)) {
+                throw "Service did not become ready after restart."
+            }
+            return Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/accounts/$AccountId/logout" -Headers $headers -Method Post -Body $body -TimeoutSec 60
+        } elseif ($msg -match "401|Unauthorized") {
+            throw "Account signout failed with 401. API key mismatch. Run restart or rotate-key."
+        } else {
+            throw "Account signout failed: $msg"
+        }
+    }
+}
+
+function Accounts-Signout {
+    $id = Resolve-AccountId
+    $resp = Logout-Account -AccountId $id -DeleteLocal:$false
+    Write-Host "Account signout completed. id=$id deleted=$($resp.deleted)"
+}
+
+function Accounts-SignoutAndDelete {
+    $id = Resolve-AccountId
+    $resp = Logout-Account -AccountId $id -DeleteLocal:$true
+    Write-Host "Account signout+delete completed. id=$id deleted=$($resp.deleted)"
+}
+
 function Run-ApiTest {
     $headers = Get-AuthHeaders
     $headers["Content-Type"] = "application/json"
@@ -1174,6 +1231,7 @@ function Assert-DockerRunning {
 $dockerCommands = @(
     "start", "stop", "restart", "status", "logs", "health", "check", "canary",
     "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update",
+    "accounts-signout", "accounts-signout-and-delete",
     "accounts-signout-all", "accounts-signout-all-and-stop",
     "accounts-delete-all", "accounts-delete-all-and-stop"
 )
@@ -1218,6 +1276,8 @@ switch ($Command) {
     "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }
     "update" { Update-Gephyr }
     "version" { Show-Version }
+    "accounts-signout" { Accounts-Signout }
+    "accounts-signout-and-delete" { Accounts-SignoutAndDelete }
     "accounts-signout-all" { Accounts-SignoutAll }
     "accounts-signout-all-and-stop" { Accounts-SignoutAllAndStop }
     "accounts-delete-all" { Accounts-DeleteAll }

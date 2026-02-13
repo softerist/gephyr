@@ -56,7 +56,6 @@ Acceptance:
 ### 3) User-Agent Single Source Of Truth (Medium Priority)
 
 - Keep one effective UA for all Google calls (OAuth + upstream).
-- `OAUTH_USER_AGENT` is deprecated and ignored (OAuth uses the global User-Agent).
 - If UA overrides exist, make them come from one place (config/runtime knob), and write tests that validate consistency.
 
 Acceptance:
