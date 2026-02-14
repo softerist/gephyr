@@ -1,4 +1,8 @@
 use serde_json::Value;
+use crate::proxy::upstream::header_policy::{
+    build_google_headers, build_load_code_assist_metadata, host_from_url,
+    load_policy_from_runtime_config, GoogleHeaderPolicyContext,
+};
 
 fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
     let id = account_id?;
@@ -7,52 +11,48 @@ fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models
         .and_then(|account| account.device_profile)
 }
 
-fn apply_account_device_headers(
-    mut request: reqwest::RequestBuilder,
-    account_id: Option<&str>,
-) -> reqwest::RequestBuilder {
-    if let Some(profile) = load_account_device_profile(account_id) {
-        if let Some(v) = profile.machine_id.as_deref() {
-            request = request.header("x-machine-id", v);
-        }
-        if let Some(v) = profile.mac_machine_id.as_deref() {
-            request = request.header("x-mac-machine-id", v);
-        }
-        if let Some(v) = profile.dev_device_id.as_deref() {
-            request = request.header("x-dev-device-id", v);
-        }
-        if let Some(v) = profile.sqm_id.as_deref() {
-            request = request.header("x-sqm-id", v);
-        }
-    }
-    request
-}
-
 pub async fn fetch_project_id(
     access_token: &str,
     account_id: Option<&str>,
 ) -> Result<String, String> {
-    let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+    fetch_project_id_at(
+        access_token,
+        account_id,
+        "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    )
+    .await
+}
 
-    let request_body = serde_json::json!({
-        "metadata": {
-            "ideType": "ANTIGRAVITY"
-        }
-    });
+async fn fetch_project_id_at(
+    access_token: &str,
+    account_id: Option<&str>,
+    url: &str,
+) -> Result<String, String> {
+    let policy = load_policy_from_runtime_config();
+    let request_body = build_load_code_assist_metadata(&policy);
+    let endpoint_host = host_from_url(url);
+    let device_profile = load_account_device_profile(account_id);
+    let headers = build_google_headers(
+        GoogleHeaderPolicyContext {
+            endpoint: url,
+            endpoint_host: endpoint_host.as_deref(),
+            user_agent: crate::constants::USER_AGENT.as_str(),
+            access_token: Some(access_token),
+            content_type_json: true,
+            device_profile: device_profile.as_ref(),
+            extra_headers: None,
+        },
+        &policy,
+    );
 
     let client = crate::utils::http::get_client();
-    let response = apply_account_device_headers(
-        client
-            .post(url)
-            .bearer_auth(access_token)
-            .header("User-Agent", crate::constants::USER_AGENT.as_str())
-            .header("Content-Type", "application/json"),
-        account_id,
-    )
-    .json(&request_body)
-    .send()
-    .await
-    .map_err(|e| format!("loadCodeAssist request failed: {}", e))?;
+    let response = client
+        .post(url)
+        .headers(headers)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("loadCodeAssist request failed: {}", e))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -73,6 +73,97 @@ pub async fn fetch_project_id(
     let mock_id = generate_mock_project_id();
     tracing::warn!("Account ineligible for official cloudaicompanionProject, using randomly generated Project ID as fallback: {}", mock_id);
     Ok(mock_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex as AsyncMutex;
+
+    #[derive(Clone, Default)]
+    struct LoadCodeAssistCaptureState {
+        headers: Arc<AsyncMutex<Vec<(String, String)>>>,
+        body: Arc<AsyncMutex<Option<serde_json::Value>>>,
+    }
+
+    async fn load_code_assist_handler(
+        State(state): State<LoadCodeAssistCaptureState>,
+        headers: HeaderMap,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        let mut out = Vec::new();
+        for (name, value) in &headers {
+            out.push((
+                name.as_str().to_string(),
+                value.to_str().unwrap_or("<non-utf8>").to_string(),
+            ));
+        }
+        *state.headers.lock().await = out;
+        *state.body.lock().await = Some(body);
+
+        Json(json!({
+            "cloudaicompanionProject": "test-proj-123"
+        }))
+    }
+
+    async fn start_mock_load_code_assist_server(
+    ) -> (String, LoadCodeAssistCaptureState, tokio::task::JoinHandle<()>) {
+        let state = LoadCodeAssistCaptureState::default();
+        let app = Router::new()
+            .route("/v1internal:loadCodeAssist", post(load_code_assist_handler))
+            .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock loadCodeAssist");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock loadCodeAssist");
+        });
+
+        (
+            format!("http://{}/v1internal:loadCodeAssist", addr),
+            state,
+            server,
+        )
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fetch_project_id_sets_gzip_and_standard_metadata() {
+        let (url, state, server) = start_mock_load_code_assist_server().await;
+        let project_id = fetch_project_id_at("access-token", None, &url)
+            .await
+            .expect("fetch_project_id should succeed");
+        assert_eq!(project_id, "test-proj-123");
+
+        let headers = state.headers.lock().await.clone();
+        let body = state
+            .body
+            .lock()
+            .await
+            .clone()
+            .expect("captured loadCodeAssist request body");
+        server.abort();
+
+        let find = |name: &str| -> Option<String> {
+            headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.clone())
+        };
+
+        assert_eq!(find("accept-encoding"), Some("gzip".to_string()));
+        assert_eq!(find("authorization"), Some("Bearer access-token".to_string()));
+        assert!(body.pointer("/metadata/ideType").is_some());
+        assert!(body.pointer("/metadata/platform").is_some());
+        assert!(body.pointer("/metadata/pluginType").is_some());
+    }
 }
 pub fn generate_mock_project_id() -> String {
     use rand::Rng;

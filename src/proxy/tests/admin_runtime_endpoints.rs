@@ -247,6 +247,7 @@ mod tests {
         assert_eq!(body["routes"]["POST /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["GET /api/proxy/compliance"], true);
         assert_eq!(body["routes"]["POST /api/proxy/compliance"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/google/outbound-policy"], true);
         assert_eq!(body["routes"]["GET /api/proxy/tls-canary"], true);
         assert_eq!(body["routes"]["POST /api/proxy/tls-canary/run"], true);
         assert_eq!(body["routes"]["GET /api/proxy/operator-status"], true);
@@ -266,6 +267,7 @@ mod tests {
             "/accounts",
             "/auth/status",
             "/proxy/status",
+            "/proxy/google/outbound-policy",
             "/proxy/operator-status",
             "/logs",
             "/system/data-dir",
@@ -591,6 +593,39 @@ mod tests {
         assert!(policies.iter().any(|v| v == "always_hot_applied"));
         assert!(policies.iter().any(|v| v == "hot_applied_when_safe"));
         assert!(policies.iter().any(|v| v == "requires_restart"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_google_outbound_policy_returns_stable_shape() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let request = Request::builder()
+            .uri("/proxy/google/outbound-policy")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (status, body) = send(&router, request).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["mode"].is_string());
+        assert!(body["inputs"]["google_source"].is_string());
+        assert!(body["inputs"]["debug_logging_source"].is_string());
+        assert!(body["headers"]["send_host_header_configured"].is_boolean());
+        assert!(body["headers"]["send_host_header_effective"].is_boolean());
+        assert!(body["headers"]["always_set"].is_array());
+        assert!(body["headers"]["json_request_header"].is_object());
+        assert!(body["headers"]["passthrough_policy"].is_string());
+        assert!(body["headers"]["allowed_passthrough_headers"].is_array());
+        assert!(body["headers"]["blocked_categories"].is_array());
+        assert!(body["identity_metadata"]["ide_type"].is_string());
+        assert!(body["identity_metadata"]["platform"].is_string());
+        assert!(body["identity_metadata"]["plugin_type"].is_string());
+        assert!(body["debug"]["log_google_outbound_headers"].is_boolean());
+        assert!(body["debug"]["redaction_applies_to"].is_array());
     }
 
     #[tokio::test(flavor = "current_thread")]

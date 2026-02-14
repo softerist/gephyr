@@ -1,9 +1,12 @@
 use dashmap::DashMap;
-use reqwest::{header, Client, Response, StatusCode};
+use reqwest::{Client, Response, StatusCode};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
+use crate::proxy::upstream::header_policy::{
+    build_google_headers, host_from_url, GoogleHeaderPolicyContext, GoogleOutboundHeaderPolicy,
+};
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 1] = [V1_INTERNAL_BASE_URL_PROD];
@@ -15,52 +18,61 @@ fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models
         .and_then(|account| account.device_profile)
 }
 
-fn insert_custom_header(headers: &mut header::HeaderMap, name: &'static str, value: &str) {
-    match header::HeaderValue::from_str(value) {
-        Ok(v) => {
-            headers.insert(header::HeaderName::from_static(name), v);
-        }
-        Err(e) => {
-            tracing::warn!("Invalid {} header value skipped: {}", name, e);
-        }
-    }
-}
-
-fn apply_device_profile_headers(
-    headers: &mut header::HeaderMap,
-    profile: &crate::models::DeviceProfile,
-) {
-    if let Some(v) = profile.machine_id.as_deref() {
-        insert_custom_header(headers, "x-machine-id", v);
-    }
-    if let Some(v) = profile.mac_machine_id.as_deref() {
-        insert_custom_header(headers, "x-mac-machine-id", v);
-    }
-    if let Some(v) = profile.dev_device_id.as_deref() {
-        insert_custom_header(headers, "x-dev-device-id", v);
-    }
-    if let Some(v) = profile.sqm_id.as_deref() {
-        insert_custom_header(headers, "x-sqm-id", v);
-    }
-}
-
-fn apply_account_device_headers(headers: &mut header::HeaderMap, account_id: Option<&str>) {
-    if let Some(profile) = load_account_device_profile(account_id) {
-        apply_device_profile_headers(headers, &profile);
-    }
-}
-
 pub struct UpstreamClient {
     default_client: Client,
     proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
     client_cache: DashMap<String, Client>,
     user_agent_override: RwLock<Option<String>>,
+    google_policy: GoogleOutboundHeaderPolicy,
+    v1_internal_base_urls: Vec<String>,
 }
 
 impl UpstreamClient {
     pub fn new(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
         proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
+    ) -> Self {
+        Self::new_with_policy(
+            proxy_config,
+            proxy_pool,
+            GoogleOutboundHeaderPolicy::default(),
+        )
+    }
+
+    pub fn new_with_google_config(
+        proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
+        proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
+        google: crate::proxy::config::GoogleConfig,
+        debug: crate::proxy::config::DebugLoggingConfig,
+    ) -> Self {
+        Self::new_with_policy(
+            proxy_config,
+            proxy_pool,
+            GoogleOutboundHeaderPolicy::from_proxy_config(google, debug),
+        )
+    }
+
+    fn new_with_policy(
+        proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
+        proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
+        google_policy: GoogleOutboundHeaderPolicy,
+    ) -> Self {
+        Self::new_with_policy_and_base_urls(
+            proxy_config,
+            proxy_pool,
+            google_policy,
+            V1_INTERNAL_BASE_URL_FALLBACKS
+                .iter()
+                .map(|url| (*url).to_string())
+                .collect(),
+        )
+    }
+
+    fn new_with_policy_and_base_urls(
+        proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
+        proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
+        google_policy: GoogleOutboundHeaderPolicy,
+        v1_internal_base_urls: Vec<String>,
     ) -> Self {
         let default_client = Self::build_client_internal(proxy_config)
             .expect("Failed to create default HTTP client");
@@ -70,7 +82,19 @@ impl UpstreamClient {
             proxy_pool,
             client_cache: DashMap::new(),
             user_agent_override: RwLock::new(None),
+            google_policy,
+            v1_internal_base_urls,
         }
+    }
+
+    #[cfg(test)]
+    fn new_for_test(base_url: &str, google_policy: GoogleOutboundHeaderPolicy) -> Self {
+        Self::new_with_policy_and_base_urls(
+            None,
+            None,
+            google_policy,
+            vec![base_url.to_string()],
+        )
     }
     fn build_client_internal(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
@@ -194,36 +218,26 @@ impl UpstreamClient {
         account_id: Option<&str>,
     ) -> Result<Response, String> {
         let client = self.get_client(account_id).await?;
-        let mut headers = header::HeaderMap::new();
-        headers.insert(
-            header::CONTENT_TYPE,
-            header::HeaderValue::from_static("application/json"),
-        );
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", access_token))
-                .map_err(|e| e.to_string())?,
-        );
-        headers.insert(
-            header::USER_AGENT,
-            header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
-                tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
-                header::HeaderValue::from_static("antigravity")
-            }),
-        );
-        apply_account_device_headers(&mut headers, account_id);
-        for (k, v) in extra_headers {
-            if let Ok(hk) = header::HeaderName::from_bytes(k.as_bytes()) {
-                if let Ok(hv) = header::HeaderValue::from_str(&v) {
-                    headers.insert(hk, hv);
-                }
-            }
-        }
+        let user_agent = self.get_user_agent().await;
+        let device_profile = load_account_device_profile(account_id);
 
         let mut last_err: Option<String> = None;
-        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+        for (idx, base_url) in self.v1_internal_base_urls.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
+            let has_next = idx + 1 < self.v1_internal_base_urls.len();
+            let endpoint_host = host_from_url(&url);
+            let headers = build_google_headers(
+                GoogleHeaderPolicyContext {
+                    endpoint: &url,
+                    endpoint_host: endpoint_host.as_deref(),
+                    user_agent: &user_agent,
+                    access_token: Some(access_token),
+                    content_type_json: true,
+                    device_profile: device_profile.as_ref(),
+                    extra_headers: Some(&extra_headers),
+                },
+                &self.google_policy,
+            );
 
             let response = client
                 .post(&url)
@@ -241,7 +255,7 @@ impl UpstreamClient {
                                 "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
                                 base_url,
                                 status,
-                                V1_INTERNAL_BASE_URL_FALLBACKS.len() - idx - 1
+                                self.v1_internal_base_urls.len() - idx - 1
                             );
                         } else {
                             tracing::debug!(
@@ -283,6 +297,11 @@ impl UpstreamClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{extract::State, http::HeaderMap, routing::post, Json, Router};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex as AsyncMutex;
 
     #[test]
     fn test_build_url() {
@@ -307,34 +326,86 @@ mod tests {
         assert!(crate::constants::USER_AGENT.starts_with("antigravity/"));
     }
 
-    #[test]
-    fn device_profile_headers_are_applied_to_header_map() {
-        let profile = crate::models::DeviceProfile {
-            machine_id: Some("machine-1".to_string()),
-            mac_machine_id: Some("mac-1".to_string()),
-            dev_device_id: Some("dev-1".to_string()),
-            sqm_id: Some("{SQM-1}".to_string()),
-        };
-        let mut headers = header::HeaderMap::new();
-        apply_device_profile_headers(&mut headers, &profile);
+    #[derive(Clone, Default)]
+    struct UpstreamCaptureState {
+        headers: Arc<AsyncMutex<Vec<(String, String)>>>,
+    }
 
+    async fn capture_handler(
+        State(state): State<UpstreamCaptureState>,
+        headers: HeaderMap,
+    ) -> Json<serde_json::Value> {
+        let mut out = Vec::new();
+        for (name, value) in &headers {
+            out.push((
+                name.as_str().to_string(),
+                value.to_str().unwrap_or("<non-utf8>").to_string(),
+            ));
+        }
+        *state.headers.lock().await = out;
+        Json(json!({
+            "ok": true
+        }))
+    }
+
+    async fn start_mock_upstream_server() -> (String, UpstreamCaptureState, tokio::task::JoinHandle<()>) {
+        let state = UpstreamCaptureState::default();
+        let app = Router::new()
+            .route("/v1internal:generateContent", post(capture_handler))
+            .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock upstream");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve mock upstream");
+        });
+        (format!("http://{}/v1internal", addr), state, server)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_v1_internal_applies_google_header_policy() {
+        let (base_url, state, server) = start_mock_upstream_server().await;
+        let client = UpstreamClient::new_for_test(&base_url, GoogleOutboundHeaderPolicy::default());
+        let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-forwarded-for".to_string(), "1.2.3.4".to_string());
+        extra_headers.insert("anthropic-beta".to_string(), "context-1m-2025-08-07".to_string());
+
+        let response = client
+            .call_v1_internal_with_headers(
+                "generateContent",
+                "test-access-token",
+                json!({"contents":[]}),
+                None,
+                extra_headers,
+                None,
+            )
+            .await
+            .expect("upstream call should succeed");
+
+        assert!(response.status().is_success());
+        let captured = state.headers.lock().await.clone();
+        server.abort();
+
+        let find = |name: &str| -> Option<String> {
+            captured
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.clone())
+        };
+
+        assert_eq!(find("authorization"), Some("Bearer test-access-token".to_string()));
+        assert_eq!(find("content-type"), Some("application/json".to_string()));
+        assert_eq!(find("accept-encoding"), Some("gzip".to_string()));
         assert_eq!(
-            headers.get("x-machine-id").and_then(|v| v.to_str().ok()),
-            Some("machine-1")
+            find("user-agent"),
+            Some(crate::constants::USER_AGENT.clone())
         );
         assert_eq!(
-            headers
-                .get("x-mac-machine-id")
-                .and_then(|v| v.to_str().ok()),
-            Some("mac-1")
+            find("anthropic-beta"),
+            Some("context-1m-2025-08-07".to_string())
         );
-        assert_eq!(
-            headers.get("x-dev-device-id").and_then(|v| v.to_str().ok()),
-            Some("dev-1")
-        );
-        assert_eq!(
-            headers.get("x-sqm-id").and_then(|v| v.to_str().ok()),
-            Some("{SQM-1}")
-        );
+        assert!(find("x-forwarded-for").is_none());
     }
 }

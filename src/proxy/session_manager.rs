@@ -15,7 +15,6 @@ impl SessionManager {
             return Some(trimmed.to_string());
         }
 
-        // Prevent unbounded growth in in-memory and persisted binding keys while keeping stability.
         let mut hasher = Sha256::new();
         hasher.update(trimmed.as_bytes());
         let hash = format!("{:x}", hasher.finalize());

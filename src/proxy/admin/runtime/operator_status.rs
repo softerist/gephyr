@@ -138,7 +138,6 @@ async fn scan_accounts_for_operator_status(
         enc_status.prerequisites_error = Some(e);
     }
 
-    // Index summary is cheap and helps operators understand current routing state.
     if let Ok(index) = crate::modules::auth::account::load_account_index() {
         accounts_status.index_accounts = index.accounts.len();
         accounts_status.current_account_id = index.current_account_id;
@@ -201,8 +200,6 @@ async fn scan_accounts_for_operator_status(
             accounts_status.missing_refresh_token += 1;
         }
 
-        // Encrypted token sanity. We avoid loading the full Account struct here because
-        // serde would attempt decryption and fail fast on a mismatch; operators need a report.
         let account_id = as_string_field(&value, "id").unwrap_or_else(|| "<unknown>".to_string());
         let email = as_string_field(&value, "email").unwrap_or_else(|| "<unknown>".to_string());
         for (field, raw_opt) in [

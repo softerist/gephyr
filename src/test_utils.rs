@@ -7,10 +7,6 @@ fn global_env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Process-wide env-var lock for tests.
-///
-/// Rust tests run in parallel by default and environment variables are global state, so we
-/// must serialize test code that mutates env vars to avoid flaky cross-test interference.
 #[cfg(test)]
 pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     global_env_lock()

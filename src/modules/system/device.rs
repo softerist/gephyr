@@ -137,8 +137,6 @@ pub fn save_global_original(profile: &DeviceProfile) -> Result<(), String> {
 }
 pub fn generate_profile() -> DeviceProfile {
     DeviceProfile {
-        // Machine ID is expected to be a stable, opaque identifier. When we generate a synthetic
-        // profile (explicit opt-in), keep it in a conservative hex-only format.
         machine_id: Some(generate_machine_id()),
         mac_machine_id: Some(new_standard_machine_id()),
         dev_device_id: Some(Uuid::new_v4().to_string()),

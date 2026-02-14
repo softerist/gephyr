@@ -155,7 +155,6 @@ impl TokenManager {
         &self,
         request: RotationAttemptRequest<'_>,
     ) -> (Option<ProxyToken>, Option<(String, std::time::Instant)>) {
-        // Mode A: Sticky session processing (CacheFirst or Balance with session_id)
         let mut target_token = self
             .try_mode_a_sticky(ModeASelection {
                 rotate: request.rotate,
@@ -170,7 +169,6 @@ impl TokenManager {
             .await;
         let mut mode_b_update_last_used: Option<(String, std::time::Instant)> = None;
 
-        // Mode B: Atomic 60s global lock + P2C fallback
         if target_token.is_none() {
             let (mode_b_token, mode_b_update) = self
                 .try_mode_b_locked_or_p2c(ModeBSelection {
@@ -190,7 +188,6 @@ impl TokenManager {
             mode_b_update_last_used = mode_b_update;
         }
 
-        // Mode C: P2C Selection (instead of pure round-robin)
         if target_token.is_none() {
             target_token = self
                 .try_mode_c_p2c(
@@ -292,8 +289,6 @@ impl TokenManager {
         token: &ProxyToken,
         attempted: &mut HashSet<String>,
     ) -> bool {
-        // Safety net: avoid selecting an account that has been disabled on disk but still
-        // exists in the in-memory snapshot (e.g. stale cache + sticky session binding).
         match crate::proxy::token::loader::get_account_state_on_disk(&token.account_path).await {
             OnDiskAccountState::Disabled => {
                 tracing::warn!(

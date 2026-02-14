@@ -109,6 +109,7 @@ fn validate_proxy_config(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
     validate_cors_config(&config.cors, errors);
     validate_proxy_pool(&config.proxy_pool, errors);
     validate_compliance_config(&config.compliance, errors);
+    validate_google_config(&config.google, errors);
 }
 
 fn validate_trusted_proxies(config: &ProxyConfig, errors: &mut Vec<ConfigError>) {
@@ -335,6 +336,27 @@ fn validate_compliance_config(config: &ComplianceConfig, errors: &mut Vec<Config
         ));
     }
 }
+
+fn validate_google_config(config: &crate::proxy::config::GoogleConfig, errors: &mut Vec<ConfigError>) {
+    if config.identity_metadata.ide_type.trim().is_empty() {
+        errors.push(ConfigError::new(
+            "proxy.google.identity_metadata.ide_type",
+            "must not be empty",
+        ));
+    }
+    if config.identity_metadata.platform.trim().is_empty() {
+        errors.push(ConfigError::new(
+            "proxy.google.identity_metadata.platform",
+            "must not be empty",
+        ));
+    }
+    if config.identity_metadata.plugin_type.trim().is_empty() {
+        errors.push(ConfigError::new(
+            "proxy.google.identity_metadata.plugin_type",
+            "must not be empty",
+        ));
+    }
+}
 fn is_valid_proxy_url(url: &str) -> bool {
     let url_lower = url.to_lowercase();
     (url_lower.starts_with("http://")
@@ -506,5 +528,26 @@ mod tests {
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(errors.iter().any(|e| e.field.contains("backoff_steps")));
+    }
+
+    #[test]
+    fn test_google_identity_metadata_fields_must_not_be_empty() {
+        let mut config = AppConfig::new();
+        config.proxy.google.identity_metadata.ide_type = " ".to_string();
+        config.proxy.google.identity_metadata.platform = "".to_string();
+        config.proxy.google.identity_metadata.plugin_type = "   ".to_string();
+
+        let result = validate_app_config(&config);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("google.identity_metadata.ide_type")));
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("google.identity_metadata.platform")));
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("google.identity_metadata.plugin_type")));
     }
 }

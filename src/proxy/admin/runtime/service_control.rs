@@ -386,6 +386,76 @@ pub(crate) async fn admin_get_proxy_compliance_debug(
     )
 }
 
+pub(crate) async fn admin_get_google_outbound_policy(
+    State(state): State<AdminState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let cfg = crate::modules::system::config::load_app_config().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    let runtime_debug_logging = state.config.debug_logging.read().await.clone();
+    let policy = crate::proxy::upstream::header_policy::GoogleOutboundHeaderPolicy::from_proxy_config(
+        cfg.proxy.google.clone(),
+        runtime_debug_logging.clone(),
+    );
+
+    let mode = match policy.mode {
+        crate::proxy::config::GoogleMode::PublicGoogle => "public_google",
+        crate::proxy::config::GoogleMode::CodeassistCompat => "codeassist_compat",
+    };
+
+    Ok(Json(serde_json::json!({
+        "mode": mode,
+        "inputs": {
+            "google_source": "persisted_app_config",
+            "debug_logging_source": "runtime_state"
+        },
+        "headers": {
+            "send_host_header_configured": policy.send_host_header,
+            "send_host_header_effective": policy.should_send_host_header(),
+            "always_set": [
+                "authorization",
+                "user-agent",
+                "accept-encoding"
+            ],
+            "json_request_header": {
+                "content-type": "application/json"
+            },
+            "passthrough_policy": "deny_by_default",
+            "allowed_passthrough_headers": [
+                "anthropic-beta"
+            ],
+            "blocked_categories": [
+                "sec-*",
+                "origin",
+                "referer",
+                "cookie",
+                "x-forwarded-*",
+                "x-real-ip",
+                "hop-by-hop",
+                "host"
+            ]
+        },
+        "identity_metadata": {
+            "ide_type": policy.identity_metadata.ide_type,
+            "platform": policy.identity_metadata.platform,
+            "plugin_type": policy.identity_metadata.plugin_type
+        },
+        "debug": {
+            "log_google_outbound_headers": policy.log_google_outbound_headers,
+            "redaction_applies_to": [
+                "authorization",
+                "*token*",
+                "*api-key*",
+                "cookie"
+            ]
+        }
+    })))
+}
+
 pub(crate) async fn admin_get_proxy_metrics(State(state): State<AdminState>) -> impl IntoResponse {
     let monitor_stats = state.core.monitor.get_stats().await;
     let compliance = state

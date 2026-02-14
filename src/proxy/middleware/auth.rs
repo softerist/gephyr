@@ -146,8 +146,6 @@ async fn auth_middleware_internal(
             return Ok(next.run(request).await);
         }
     } else {
-        // Admin routes must never become unauthenticated due to proxy auth mode.
-        // Health checks for operators should use /healthz (non-admin) instead.
     }
     let api_key = request
         .headers()
@@ -184,7 +182,6 @@ async fn auth_middleware_internal(
         return Ok(next.run(request).await);
     }
 
-    // Allow user token auth fallback for both proxy and admin routes.
     if let Some(token) = api_key {
         let Some(client_ip) = crate::proxy::middleware::client_ip::extract_client_ip(&request)
         else {

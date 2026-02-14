@@ -6,17 +6,13 @@ use std::sync::Arc;
 
 use super::types::ProxyToken;
 
-/// Random delay window between startup token refreshes (seconds).
 const STARTUP_HEALTH_DELAY_MIN_SECONDS_DEFAULT: u64 = 2;
 const STARTUP_HEALTH_DELAY_MAX_SECONDS_DEFAULT: u64 = 8;
 
-/// Tokens expiring within this window (seconds) are proactively refreshed.
 const REFRESH_WINDOW_SECS: i64 = 300;
 
-/// Per-account timeout for a single refresh attempt (seconds).
 const REFRESH_TIMEOUT_SECS: u64 = 10;
 
-/// Result of a single account health check.
 enum HealthCheckOutcome {
     Refreshed,
     Disabled,
@@ -40,16 +36,14 @@ fn startup_health_delay_bounds_seconds() -> (u64, u64) {
     }
 }
 
-/// Per-account detail returned in the health check summary.
 #[derive(Serialize, Clone)]
 pub struct AccountHealthResult {
     pub account_id: String,
     pub email: String,
-    pub status: String, // "ok", "refreshed", "disabled", "error"
+    pub status: String, 
     pub detail: Option<String>,
 }
 
-/// Summary returned by the health check.
 #[derive(Serialize)]
 pub struct HealthCheckSummary {
     pub total: u32,
@@ -60,14 +54,6 @@ pub struct HealthCheckSummary {
     pub accounts: Vec<AccountHealthResult>,
 }
 
-/// Runs a lightweight health check on all loaded accounts.
-///
-/// For each account whose access token is expired or expiring within 5 minutes,
-/// attempts a token refresh. On `invalid_grant`, the account is disabled on disk
-/// and removed from the in-memory pool. Network errors are logged as warnings
-/// but do not disable the account (transient failure).
-///
-/// Accounts with tokens still valid beyond the window are skipped (no API call).
 pub(crate) async fn run_startup_health_check(
     tokens: &Arc<DashMap<String, ProxyToken>>,
     data_dir: &Path,
@@ -75,7 +61,6 @@ pub(crate) async fn run_startup_health_check(
     let now = chrono::Utc::now().timestamp();
     let total = tokens.len() as u32;
 
-    // Collect accounts that need a refresh (expired or expiring soon).
     let candidates: Vec<(String, String, String, std::path::PathBuf)> = tokens
         .iter()
         .filter_map(|entry| {
@@ -93,7 +78,6 @@ pub(crate) async fn run_startup_health_check(
         })
         .collect();
 
-    // Build results for skipped (healthy) accounts.
     let mut account_results: Vec<AccountHealthResult> = tokens
         .iter()
         .filter(|entry| entry.value().timestamp > now + REFRESH_WINDOW_SECS)
@@ -257,7 +241,6 @@ async fn check_single_account(
 
     match result {
         Ok(Ok(token_response)) => {
-            // Refresh succeeded — persist to disk and update in-memory token.
             if let Err(e) = crate::proxy::token::persistence::save_refreshed_token(
                 account_path,
                 &token_response,
@@ -269,7 +252,6 @@ async fn check_single_account(
                 );
             }
 
-            // Update the in-memory ProxyToken with new access token + expiry.
             if let Some(mut entry) = tokens.get_mut(account_id) {
                 let now = chrono::Utc::now().timestamp();
                 entry.access_token = token_response.access_token;
@@ -289,7 +271,6 @@ async fn check_single_account(
         }
         Ok(Err(e)) => {
             if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
-                // Refresh token is revoked or expired — disable the account.
                 tracing::warn!(
                     "[ERR] Health: {} ({}) -- invalid_grant, disabling account",
                     email,
@@ -307,7 +288,6 @@ async fn check_single_account(
                     );
                 }
 
-                // Remove from in-memory pool so it won't be used for routing.
                 tokens.remove(account_id);
 
                 (
@@ -315,7 +295,6 @@ async fn check_single_account(
                     Some(format!("invalid_grant: {}", e)),
                 )
             } else {
-                // Other error (network issue, server error, etc.) — don't disable.
                 tracing::warn!(
                     "[WARN] Health: {} ({}) -- refresh error (not disabling): {}",
                     email,
@@ -326,7 +305,6 @@ async fn check_single_account(
             }
         }
         Err(_) => {
-            // Timeout — treat as network error, don't disable.
             tracing::warn!(
                 "[WARN] Health: {} ({}) -- refresh timed out ({}s), skipping",
                 email,

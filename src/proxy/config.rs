@@ -228,6 +228,52 @@ pub struct DebugLoggingConfig {
     pub enabled: bool,
     #[serde(default)]
     pub output_dir: Option<String>,
+    #[serde(default)]
+    pub log_google_outbound_headers: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleMode {
+    #[default]
+    PublicGoogle,
+    CodeassistCompat,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GoogleHeaderOptions {
+    #[serde(default)]
+    pub send_host_header: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleIdentityMetadata {
+    #[serde(default = "default_google_identity_ide_type")]
+    pub ide_type: String,
+    #[serde(default = "default_google_identity_platform")]
+    pub platform: String,
+    #[serde(default = "default_google_identity_plugin_type")]
+    pub plugin_type: String,
+}
+
+impl Default for GoogleIdentityMetadata {
+    fn default() -> Self {
+        Self {
+            ide_type: default_google_identity_ide_type(),
+            platform: default_google_identity_platform(),
+            plugin_type: default_google_identity_plugin_type(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GoogleConfig {
+    #[serde(default)]
+    pub mode: GoogleMode,
+    #[serde(default)]
+    pub headers: GoogleHeaderOptions,
+    #[serde(default)]
+    pub identity_metadata: GoogleIdentityMetadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +450,8 @@ pub struct ProxyConfig {
     pub proxy_pool: ProxyPoolConfig,
     #[serde(default)]
     pub compliance: ComplianceConfig,
+    #[serde(default)]
+    pub google: GoogleConfig,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpstreamProxyConfig {
@@ -439,6 +487,7 @@ impl Default for ProxyConfig {
             thinking_budget: ThinkingBudgetConfig::default(),
             proxy_pool: ProxyPoolConfig::default(),
             compliance: ComplianceConfig::default(),
+            google: GoogleConfig::default(),
         }
     }
 }
@@ -461,6 +510,18 @@ fn default_zai_sonnet_model() -> String {
 
 fn default_zai_haiku_model() -> String {
     "glm-4.5-air".to_string()
+}
+
+fn default_google_identity_ide_type() -> String {
+    "ANTIGRAVITY".to_string()
+}
+
+fn default_google_identity_platform() -> String {
+    "PLATFORM_UNSPECIFIED".to_string()
+}
+
+fn default_google_identity_plugin_type() -> String {
+    "GEMINI".to_string()
 }
 
 impl ProxyConfig {

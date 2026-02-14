@@ -160,8 +160,6 @@ pub fn load_account(account_id: &str) -> Result<Account, String> {
     let mut account: Account = serde_json::from_str(&content)
         .map_err(|e| format!("failed_to_parse_account_data: {}", e))?;
 
-    // Normalize legacy/invalid synthetic device identifiers to avoid persisting obviously
-    // non-standard formats when operators previously used generate mode.
     let mut changed = false;
     if let Some(profile) = account.device_profile.as_mut() {
         if let Some(machine_id) = profile.machine_id.as_deref() {
@@ -253,22 +251,17 @@ pub fn startup_preflight_verify_persisted_tokens() -> Result<(), String> {
 }
 
 pub async fn logout_account(account_id: &str, revoke_remote: bool) -> Result<(), String> {
-    // Load the account first. We intentionally do not hold ACCOUNT_INDEX_LOCK across the network
-    // request to Google's revoke endpoint.
     let mut account = load_account(account_id)?;
 
-    // If there's nothing to revoke, treat as idempotent local logout.
     let refresh_token_raw = account.token.refresh_token.clone();
     let refresh_token_is_empty = refresh_token_raw.trim().is_empty();
 
     if revoke_remote && !refresh_token_is_empty {
-        // Ensure encryption prerequisites are satisfied (required when tokens are persisted as v2:*).
         crate::utils::crypto::validate_encryption_key_prerequisites()?;
         let refresh_token = crate::utils::crypto::decrypt_secret_or_plaintext(&refresh_token_raw)?;
         crate::modules::auth::oauth::revoke_refresh_token(&refresh_token, Some(account_id)).await?;
     }
 
-    // Local wipe + disable.
     let now = chrono::Utc::now().timestamp();
     account.disabled = true;
     account.disabled_at = Some(now);
@@ -283,7 +276,6 @@ pub async fn logout_account(account_id: &str, revoke_remote: bool) -> Result<(),
 
     save_account(&account)?;
 
-    // Keep account index summary consistent.
     let mut index = load_account_index()?;
     if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
         summary.disabled = true;
@@ -586,8 +578,6 @@ fn ensure_device_profile_on_switch(account: &mut Account) -> Result<(), String> 
         return Ok(());
     }
 
-    // Prefer capturing from local IDE storage.json (real telemetry) instead of generating
-    // synthetic values. If capture fails, proceed without device headers.
     let storage_path = match crate::modules::system::device::get_storage_path() {
         Ok(path) => path,
         Err(e) => {
@@ -1486,7 +1476,6 @@ mod tests {
             &migrated
         ));
 
-        // Ensure the migration was persisted to disk.
         let loaded2 = load_account(account_id).expect("reload account");
         let persisted = loaded2
             .device_profile
@@ -1501,7 +1490,6 @@ mod tests {
     fn ensure_device_profile_on_switch_does_not_generate_when_storage_override_missing() {
         let _env_guard = lock_env();
 
-        // Force deterministic behavior: make get_storage_path fail without scanning the real system.
         let _storage_override = ScopedEnvVar::set(
             "ANTIGRAVITY_STORAGE_JSON_PATH",
             "Z:\\this-path-does-not-exist\\storage.json",
@@ -1525,7 +1513,6 @@ mod tests {
         let data_dir = make_temp_data_dir();
         let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
 
-        // Write a minimal storage.json fixture.
         let storage_path = data_dir.join("storage.json");
         let storage = json!({
             "telemetry": {
@@ -1545,7 +1532,6 @@ mod tests {
             storage_path.to_string_lossy().as_ref(),
         );
 
-        // Persist an account so apply_profile_to_account can save it.
         write_account_fixture(
             &data_dir,
             "acct-switch",
@@ -1553,7 +1539,6 @@ mod tests {
             "plain-access-token",
             "plain-refresh-token",
         );
-        // Ensure the loaded account has no device_profile.
         let mut account = load_account("acct-switch").expect("load account");
         account.device_profile = None;
         super::save_account(&account).expect("save account without device profile");
@@ -1575,7 +1560,6 @@ mod tests {
             bound.sqm_id.as_deref(),
             Some("{22222222-2222-4222-8222-222222222222}")
         );
-        // macMachineId was not present in fixture and should remain None.
         assert!(bound.mac_machine_id.is_none());
 
         let reloaded = load_account("acct-switch").expect("reload");

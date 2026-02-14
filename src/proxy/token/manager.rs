@@ -193,7 +193,6 @@ impl TokenManager {
             return;
         }
         if let Err(e) = std::fs::rename(&tmp_path, &path) {
-            // Windows rename fails when destination exists; fall back to replace semantics.
             let _ = std::fs::remove_file(&path);
             if let Err(e2) = std::fs::rename(&tmp_path, &path) {
                 tracing::warn!(

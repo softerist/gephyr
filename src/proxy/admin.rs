@@ -35,7 +35,7 @@ pub(crate) use runtime::{
     admin_clear_rate_limit, admin_create_user_token, admin_delete_user_token,
     admin_fetch_zai_models, admin_generate_api_key, admin_get_account_proxy_binding,
     admin_get_all_account_bindings, admin_get_antigravity_args, admin_get_antigravity_cache_paths,
-    admin_get_antigravity_path, admin_get_config, admin_get_data_dir_path,
+    admin_get_antigravity_path, admin_get_config, admin_get_data_dir_path, admin_get_google_outbound_policy,
     admin_get_operator_status, admin_get_preferred_account, admin_get_proxy_compliance_debug,
     admin_get_proxy_log_detail, admin_get_proxy_logs_count_filtered, admin_get_proxy_logs_filtered,
     admin_get_proxy_metrics, admin_get_proxy_pool_config, admin_get_proxy_pool_runtime,

@@ -156,6 +156,7 @@ pub struct AxumStartConfig {
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
     pub experimental_config: crate::proxy::config::ExperimentalConfig,
     pub debug_logging: crate::proxy::config::DebugLoggingConfig,
+    pub google_config: crate::proxy::config::GoogleConfig,
     pub integration: crate::modules::system::integration::SystemManager,
     pub proxy_pool_config: crate::proxy::config::ProxyPoolConfig,
 }
@@ -196,6 +197,7 @@ impl AxumServer {
             monitor,
             experimental_config,
             debug_logging,
+            google_config,
             integration,
             proxy_pool_config,
         } = config;
@@ -210,7 +212,7 @@ impl AxumServer {
         let zai_state = Arc::new(RwLock::new(zai_config));
         let provider_rr = Arc::new(AtomicUsize::new(0));
         let experimental_state = Arc::new(RwLock::new(experimental_config));
-        let debug_logging_state = Arc::new(RwLock::new(debug_logging));
+        let debug_logging_state = Arc::new(RwLock::new(debug_logging.clone()));
         let is_running_state = Arc::new(RwLock::new(true));
         let switching_state = Arc::new(RwLock::new(false));
         let account_service = Arc::new(crate::modules::auth::account_service::AccountService::new(
@@ -218,9 +220,11 @@ impl AxumServer {
         ));
         let request_timeout_secs = request_timeout.max(5);
         let upstream = {
-            let u = Arc::new(crate::proxy::upstream::client::UpstreamClient::new(
+            let u = Arc::new(crate::proxy::upstream::client::UpstreamClient::new_with_google_config(
                 Some(upstream_proxy.clone()),
                 Some(proxy_pool_manager.clone()),
+                google_config.clone(),
+                debug_logging.clone(),
             ));
             if user_agent_override.is_some() {
                 u.set_user_agent_override(user_agent_override).await;
@@ -474,6 +478,7 @@ mod tests {
             monitor: Arc::new(ProxyMonitor::new(64)),
             experimental_config: ExperimentalConfig::default(),
             debug_logging: DebugLoggingConfig::default(),
+            google_config: crate::proxy::config::GoogleConfig::default(),
             integration: SystemManager::Headless,
             proxy_pool_config: ProxyPoolConfig::default(),
         }
@@ -544,8 +549,6 @@ Content-Length: 4096\r\n\
         let _guard = SERVER_TEST_LOCK.get_or_init(|| Mutex::new(())).lock().await;
         let _drain_timeout_env = ScopedEnvVar::set(SHUTDOWN_DRAIN_TIMEOUT_ENV, "2");
 
-        // This is a local throughput benchmark and is inherently sensitive to machine/CI load.
-        // Keep it opt-in so normal `cargo test` runs are stable.
         let run = std::env::var("RUN_BENCHMARK_TESTS")
             .ok()
             .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))

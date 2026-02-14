@@ -16,8 +16,6 @@ pub(crate) struct BindDeviceRequest {
 }
 
 fn default_bind_mode() -> String {
-    // Prefer capture from local Antigravity storage.json to avoid generating
-    // synthetic telemetry identifiers unless the operator explicitly opts in.
     "capture".to_string()
 }
 

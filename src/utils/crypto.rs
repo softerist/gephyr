@@ -10,7 +10,6 @@ const NONCE_LEN: usize = 12;
 const GCM_TAG_LEN: usize = 16;
 const LEGACY_NONCE_BYTES: &[u8] = b"antigravity_salt";
 const CIPHERTEXT_V2_PREFIX: &str = "v2:";
-// Packed payload is nonce + ciphertext+tag; ciphertext can be empty.
 const MIN_ENCRYPTED_BYTES: usize = NONCE_LEN + GCM_TAG_LEN;
 
 fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
@@ -82,7 +81,6 @@ pub fn preflight_verify_decryptable_secret(raw: &str) -> Result<(), String> {
     if !is_probably_encrypted_secret(raw) {
         return Ok(());
     }
-    // Fail closed for encrypted payloads: if we can't decrypt now, runtime will be broken.
     decrypt_secret_or_plaintext(raw).map(|_| ())
 }
 

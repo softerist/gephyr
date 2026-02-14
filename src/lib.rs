@@ -61,8 +61,6 @@ fn apply_headless_env_overrides(config: &mut crate::models::AppConfig) {
         }
     }
 
-    // Docker images commonly set PORT; treat it as an override for the bind/listen port in headless mode.
-    // This prevents persisted config in the data dir from accidentally breaking container port mappings.
     if let Ok(port) = std::env::var("PORT") {
         let trimmed = port.trim();
         if !trimmed.is_empty() {

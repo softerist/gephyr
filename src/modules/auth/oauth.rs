@@ -42,8 +42,6 @@ fn client_secret_optional() -> Option<String> {
 }
 
 fn oauth_user_agent() -> String {
-    // OAuth calls should use the same UA as upstream calls to avoid inconsistent behavior.
-    // If an override is set, ignore it and warn (it is a common source of hard-to-debug mismatches).
     if let Ok(v) = std::env::var("OAUTH_USER_AGENT") {
         let t = v.trim();
         if !t.is_empty() && t != crate::constants::USER_AGENT.as_str() {
@@ -146,27 +144,29 @@ fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models
 }
 
 fn apply_google_identity_headers(
-    mut request: reqwest::RequestBuilder,
+    request: reqwest::RequestBuilder,
     account_id: Option<&str>,
+    endpoint: &str,
 ) -> reqwest::RequestBuilder {
-    request = request.header(reqwest::header::USER_AGENT, oauth_user_agent());
+    let policy = crate::proxy::upstream::header_policy::load_policy_from_runtime_config();
+    let endpoint_host = crate::proxy::upstream::header_policy::host_from_url(endpoint);
+    let user_agent = oauth_user_agent();
+    let device_profile = load_account_device_profile(account_id);
 
-    if let Some(profile) = load_account_device_profile(account_id) {
-        if let Some(v) = profile.machine_id.as_deref() {
-            request = request.header("x-machine-id", v);
-        }
-        if let Some(v) = profile.mac_machine_id.as_deref() {
-            request = request.header("x-mac-machine-id", v);
-        }
-        if let Some(v) = profile.dev_device_id.as_deref() {
-            request = request.header("x-dev-device-id", v);
-        }
-        if let Some(v) = profile.sqm_id.as_deref() {
-            request = request.header("x-sqm-id", v);
-        }
-    }
+    let headers = crate::proxy::upstream::header_policy::build_google_headers(
+        crate::proxy::upstream::header_policy::GoogleHeaderPolicyContext {
+            endpoint,
+            endpoint_host: endpoint_host.as_deref(),
+            user_agent: user_agent.as_str(),
+            access_token: None,
+            content_type_json: false,
+            device_profile: device_profile.as_ref(),
+            extra_headers: None,
+        },
+        &policy,
+    );
 
-    request
+    request.headers(headers)
 }
 
 fn refresh_jitter_seconds(account_id: Option<&str>) -> i64 {
@@ -294,8 +294,6 @@ async fn exchange_code_at(
     code_verifier: &str,
     token_url: &str,
 ) -> Result<TokenResponse, String> {
-    // OAuth code exchange happens before an account exists. Keep routing consistent with the
-    // upstream "default client" policy (upstream proxy config, but no proxy-pool selection).
     let client = crate::utils::http::get_long_client();
 
     let cid = client_id()?;
@@ -311,7 +309,7 @@ async fn exchange_code_at(
         params.push(("client_secret", s));
     }
 
-    let response = apply_google_identity_headers(client.post(token_url), None)
+    let response = apply_google_identity_headers(client.post(token_url), None, token_url)
         .form(&params)
         .send()
         .await
@@ -405,7 +403,7 @@ async fn refresh_access_token_at(
         );
     }
 
-    let response = apply_google_identity_headers(client.post(token_url), account_id)
+    let response = apply_google_identity_headers(client.post(token_url), account_id, token_url)
         .form(&params)
         .send()
         .await
@@ -455,14 +453,12 @@ async fn revoke_refresh_token_at(
         ("token_type_hint", "refresh_token".to_string()),
     ];
 
-    let response = apply_google_identity_headers(client.post(revoke_url), account_id)
+    let response = apply_google_identity_headers(client.post(revoke_url), account_id, revoke_url)
         .form(&params)
         .send()
         .await
         .map_err(|e| format!("Revoke request failed: {}", e))?;
 
-    // Google typically returns 200 even when the token is already invalid. If it doesn't,
-    // we still treat 400 as a "best-effort" success to preserve idempotence.
     if response.status().is_success() || response.status() == reqwest::StatusCode::BAD_REQUEST {
         return Ok(());
     }
@@ -494,7 +490,7 @@ async fn get_user_info_at(
         crate::utils::http::get_client()
     };
 
-    let response = apply_google_identity_headers(client.get(userinfo_url), account_id)
+    let response = apply_google_identity_headers(client.get(userinfo_url), account_id, userinfo_url)
         .bearer_auth(access_token)
         .send()
         .await
@@ -626,6 +622,7 @@ mod tests {
     #[derive(Clone)]
     struct MockOauthState {
         user_agents: Arc<AsyncMutex<Vec<String>>>,
+        accept_encodings: Arc<AsyncMutex<Vec<String>>>,
         userinfo_response: serde_json::Value,
     }
 
@@ -633,6 +630,7 @@ mod tests {
         fn default() -> Self {
             Self {
                 user_agents: Arc::new(AsyncMutex::new(Vec::new())),
+                accept_encodings: Arc::new(AsyncMutex::new(Vec::new())),
                 userinfo_response: json!({
                     "email": "ua-test@example.com",
                     "email_verified": true,
@@ -652,6 +650,15 @@ mod tests {
                 state.user_agents.lock().await.push(ua_str.to_string());
             }
         }
+        if let Some(accept_encoding) = headers.get(reqwest::header::ACCEPT_ENCODING) {
+            if let Ok(accept_encoding_str) = accept_encoding.to_str() {
+                state
+                    .accept_encodings
+                    .lock()
+                    .await
+                    .push(accept_encoding_str.to_string());
+            }
+        }
         Json(json!({
             "access_token": "access-test-token",
             "expires_in": 3600,
@@ -668,6 +675,15 @@ mod tests {
         if let Some(ua) = headers.get(reqwest::header::USER_AGENT) {
             if let Ok(ua_str) = ua.to_str() {
                 state.user_agents.lock().await.push(ua_str.to_string());
+            }
+        }
+        if let Some(accept_encoding) = headers.get(reqwest::header::ACCEPT_ENCODING) {
+            if let Ok(accept_encoding_str) = accept_encoding.to_str() {
+                state
+                    .accept_encodings
+                    .lock()
+                    .await
+                    .push(accept_encoding_str.to_string());
             }
         }
         Json(state.userinfo_response.clone())
@@ -780,7 +796,6 @@ mod tests {
     async fn refresh_access_token_sends_user_agent_header() {
         let _guard = oauth_ua_test_guard();
         let _ua = ScopedEnvVar::set("OAUTH_USER_AGENT", "ua-integration-test");
-        // Set client ID env var for test isolation.
         let _cid = ScopedEnvVar::set(
             "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
@@ -793,6 +808,7 @@ mod tests {
             .await
             .expect("refresh should succeed against mock server");
         let captured = state.user_agents.lock().await.clone();
+        let captured_accept_encoding = state.accept_encodings.lock().await.clone();
 
         server.abort();
 
@@ -801,6 +817,10 @@ mod tests {
                 .iter()
                 .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
             "expected OAuth refresh call to carry default User-Agent"
+        );
+        assert!(
+            captured_accept_encoding.iter().any(|value| value == "gzip"),
+            "expected OAuth refresh call to carry Accept-Encoding: gzip"
         );
     }
 
@@ -816,6 +836,7 @@ mod tests {
             .await
             .expect("userinfo should succeed against mock server");
         let captured = state.user_agents.lock().await.clone();
+        let captured_accept_encoding = state.accept_encodings.lock().await.clone();
 
         server.abort();
 
@@ -825,6 +846,39 @@ mod tests {
                 .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
             "expected OAuth userinfo call to carry default User-Agent"
         );
+        assert!(
+            captured_accept_encoding.iter().any(|value| value == "gzip"),
+            "expected OAuth userinfo call to carry Accept-Encoding: gzip"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn exchange_code_sends_accept_encoding_header() {
+        let _guard = oauth_ua_test_guard();
+        let _cid = ScopedEnvVar::set(
+            "GOOGLE_OAUTH_CLIENT_ID",
+            "test-client.apps.googleusercontent.com",
+        );
+
+        let (base_url, state, server) = start_mock_oauth_server().await;
+        let token_url = format!("{}/token", base_url);
+
+        let _ = exchange_code_at(
+            "auth-code",
+            "http://localhost:8080/callback",
+            "verifier",
+            &token_url,
+        )
+        .await
+        .expect("token exchange should succeed against mock server");
+        let captured_accept_encoding = state.accept_encodings.lock().await.clone();
+
+        server.abort();
+
+        assert!(
+            captured_accept_encoding.iter().any(|value| value == "gzip"),
+            "expected OAuth token exchange call to carry Accept-Encoding: gzip"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -832,7 +886,6 @@ mod tests {
         let _guard = oauth_ua_test_guard();
         clear_refresh_observability_for_tests();
 
-        // Set client ID env var for test isolation.
         let _cid = ScopedEnvVar::set(
             "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",

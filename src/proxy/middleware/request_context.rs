@@ -5,7 +5,6 @@ fn sanitize_request_header(value: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    // Keep these identifiers small to avoid accidental log/header abuse.
     if trimmed.len() > 128 {
         return None;
     }
@@ -37,8 +36,6 @@ pub async fn request_context_middleware(mut request: Request, next: Next) -> Res
         correlation_id = Some(request_id.clone());
     }
 
-    // Ensure downstream components that read directly from headers (audit, monitor) can
-    // access the resolved IDs, even when the client didn't supply them.
     if request.headers().get("x-request-id").is_none() {
         if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
             request.headers_mut().insert("x-request-id", value);
@@ -62,7 +59,6 @@ pub async fn request_context_middleware(mut request: Request, next: Next) -> Res
     })
     .await;
 
-    // Echo back for clients/scripts so a single request can be traced end-to-end.
     if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
         response.headers_mut().insert("x-request-id", value);
     }

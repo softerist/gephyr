@@ -184,6 +184,7 @@ pub async fn ensure_admin_server(
         monitor,
         experimental_config: config.experimental.clone(),
         debug_logging: config.debug_logging.clone(),
+        google_config: config.google.clone(),
         integration: integration.clone(),
         proxy_pool_config: config.proxy_pool.clone(),
     };
@@ -272,7 +273,6 @@ mod tests {
             .lock()
             .await;
 
-        // Isolate DATA_DIR to avoid parallel test env var interference (proxy_db uses DATA_DIR).
         let data_dir = std::env::temp_dir().join(format!(
             ".gephyr-proxy-startup-test-{}",
             uuid::Uuid::new_v4()
