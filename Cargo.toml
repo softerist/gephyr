@@ -30,7 +30,7 @@ serde_json = "1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = "0.4"
 dirs = "5.0"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "socks", "charset", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "socks", "charset", "http2", "gzip"] }
 jsonwebtoken = "9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }

@@ -133,6 +133,44 @@ pub fn record_usage(
 
     Ok(())
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRequestCount {
+    pub model: String,
+    pub request_count: u64,
+}
+
+pub fn get_request_counts_since(
+    account_email: &str,
+    since_timestamp: i64,
+) -> Result<Vec<ModelRequestCount>, String> {
+    let conn = connect_db()?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT model, COUNT(*) as count
+             FROM token_usage
+             WHERE account_email = ?1 AND timestamp >= ?2
+             GROUP BY model
+             ORDER BY count DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![account_email, since_timestamp], |row| {
+            Ok(ModelRequestCount {
+                model: row.get(0)?,
+                request_count: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
 pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
     let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);

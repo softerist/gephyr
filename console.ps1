@@ -568,6 +568,11 @@ function Show-Status {
                                 Write-Host "$bar" -NoNewline -ForegroundColor $barColor
                                 Write-Host "  $pctStr" -NoNewline -ForegroundColor White
 
+                                if ($null -ne $m.request_count -and $m.request_count -gt 0) {
+                                    $reqStr = "($($m.request_count) reqs)"
+                                    Write-Host "  $reqStr" -NoNewline -ForegroundColor DarkCyan
+                                }
+
                                 if ($pct -le 50 -and $m.reset_time) {
                                     try {
                                         $resetDt = [DateTime]::Parse($m.reset_time).ToLocalTime()

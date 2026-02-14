@@ -605,8 +605,10 @@ mod tests {
     use super::*;
     use crate::test_utils::ScopedEnvVar;
     use axum::{
+        body::Body,
         extract::State,
-        http::HeaderMap,
+        http::{header, HeaderMap, HeaderValue},
+        response::Response,
         routing::{get, post},
         Json, Router,
     };
@@ -668,6 +670,43 @@ mod tests {
         }))
     }
 
+    async fn token_capture_gzip_handler(
+        State(state): State<MockOauthState>,
+        headers: HeaderMap,
+    ) -> Response {
+        if let Some(ua) = headers.get(reqwest::header::USER_AGENT) {
+            if let Ok(ua_str) = ua.to_str() {
+                state.user_agents.lock().await.push(ua_str.to_string());
+            }
+        }
+        if let Some(accept_encoding) = headers.get(reqwest::header::ACCEPT_ENCODING) {
+            if let Ok(accept_encoding_str) = accept_encoding.to_str() {
+                state
+                    .accept_encodings
+                    .lock()
+                    .await
+                    .push(accept_encoding_str.to_string());
+            }
+        }
+
+        // Gzip-compressed JSON for TokenResponse.
+        const GZIP_TOKEN_RESPONSE_B64: &str = "H4sIAAAAAAAAClWM0QpAQBQF/+U8r1LKwz76kU3ryEZL964i+XfFUh5npuZA6z1VXZpHRtiMRaKm4nEG3JYgVBcibFWXpcFdXNoXwqJhKxQYCHuhDt8r838WurfHdZrOC4yC4FeBAAAA";
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(GZIP_TOKEN_RESPONSE_B64)
+            .expect("valid gzip fixture bytes");
+
+        let mut response = Response::new(Body::from(body));
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        response.headers_mut().insert(
+            header::CONTENT_ENCODING,
+            HeaderValue::from_static("gzip"),
+        );
+        response
+    }
+
     async fn userinfo_capture_handler(
         State(state): State<MockOauthState>,
         headers: HeaderMap,
@@ -722,6 +761,27 @@ mod tests {
             "name": "UA Test"
         }))
         .await
+    }
+
+    async fn start_mock_oauth_gzip_token_server(
+    ) -> (String, MockOauthState, tokio::task::JoinHandle<()>) {
+        let state = MockOauthState::default();
+        let app = Router::new()
+            .route("/token", post(token_capture_gzip_handler))
+            .route("/userinfo", get(userinfo_capture_handler))
+            .with_state(state.clone());
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test oauth listener");
+        let addr = listener.local_addr().expect("test oauth local addr");
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("mock oauth server should run");
+        });
+
+        (format!("http://{}", addr), state, handle)
     }
 
     #[test]
@@ -818,6 +878,32 @@ mod tests {
                 .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
             "expected OAuth refresh call to carry default User-Agent"
         );
+        assert!(
+            captured_accept_encoding.iter().any(|value| value == "gzip"),
+            "expected OAuth refresh call to carry Accept-Encoding: gzip"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_access_token_parses_gzip_encoded_response() {
+        let _guard = oauth_ua_test_guard();
+        let _cid = ScopedEnvVar::set(
+            "GOOGLE_OAUTH_CLIENT_ID",
+            "test-client.apps.googleusercontent.com",
+        );
+
+        let (base_url, state, server) = start_mock_oauth_gzip_token_server().await;
+        let token_url = format!("{}/token", base_url);
+
+        let token = refresh_access_token_at("refresh-token", None, &token_url)
+            .await
+            .expect("refresh should parse gzip-encoded token response");
+        let captured_accept_encoding = state.accept_encodings.lock().await.clone();
+
+        server.abort();
+
+        assert_eq!(token.access_token, "access-test-token");
+        assert_eq!(token.expires_in, 3600);
         assert!(
             captured_accept_encoding.iter().any(|value| value == "gzip"),
             "expected OAuth refresh call to carry Accept-Encoding: gzip"

@@ -505,7 +505,9 @@ for a in accounts:
                         reset_hint = f"  \033[90m⟳ {rt.astimezone().strftime('%H:%M')}\033[0m"
                     except Exception:
                         pass
-                print(f"      \033[90m{padded} \033[0m{bar(pct)}  \033[0m{pct_str}{reset_hint}")
+                req_count = m.get("request_count")
+                req_hint = f"  \033[36m({req_count} reqs)\033[0m" if req_count else ""
+                print(f"      \033[90m{padded} \033[0m{bar(pct)}  \033[0m{pct_str}{req_hint}{reset_hint}")
     else:
         print(f"      \033[90m(quota data not fetched yet, try again in a few moments...)\033[0m")
 PY

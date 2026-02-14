@@ -44,6 +44,8 @@ pub(crate) struct ModelQuota {
     name: String,
     percentage: i32,
     reset_time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_count: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -52,10 +54,42 @@ pub(crate) struct AccountListResponse {
     current_account_id: Option<String>,
 }
 
+fn parse_reset_time_to_timestamp(reset_time: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(reset_time)
+        .ok()
+        .map(|dt| dt.timestamp())
+}
+
+fn find_request_count_for_model(
+    quota_model_name: &str,
+    counts: &[crate::modules::stats::token_stats::ModelRequestCount],
+) -> u64 {
+    let normalized = quota_model_name
+        .trim_start_matches("models/")
+        .to_lowercase();
+
+    counts
+        .iter()
+        .filter(|c| c.model.to_lowercase() == normalized)
+        .map(|c| c.request_count)
+        .sum()
+}
+
 pub(crate) fn to_account_response(
     account: &crate::models::account::Account,
     current_id: &Option<String>,
 ) -> AccountResponse {
+    let request_counts = account.quota.as_ref().and_then(|q| {
+        let earliest_reset = q
+            .models
+            .iter()
+            .filter_map(|m| parse_reset_time_to_timestamp(&m.reset_time))
+            .min();
+
+        let since = earliest_reset.unwrap_or(q.last_updated);
+        crate::modules::stats::token_stats::get_request_counts_since(&account.email, since).ok()
+    });
+
     AccountResponse {
         id: account.id.clone(),
         email: account.email.clone(),
@@ -68,19 +102,23 @@ pub(crate) fn to_account_response(
         proxy_disabled_reason: account.proxy_disabled_reason.clone(),
         proxy_disabled_at: account.proxy_disabled_at,
         protected_models: account.protected_models.iter().cloned().collect(),
-        quota: account.quota.as_ref().map(|q| QuotaResponse {
-            models: q
-                .models
-                .iter()
-                .map(|m| ModelQuota {
-                    name: m.name.clone(),
-                    percentage: m.percentage,
-                    reset_time: m.reset_time.clone(),
-                })
-                .collect(),
-            last_updated: q.last_updated,
-            subscription_tier: q.subscription_tier.clone(),
-            is_forbidden: q.is_forbidden,
+        quota: account.quota.as_ref().map(|q| {
+            let counts = request_counts.as_deref().unwrap_or(&[]);
+            QuotaResponse {
+                models: q
+                    .models
+                    .iter()
+                    .map(|m| ModelQuota {
+                        name: m.name.clone(),
+                        percentage: m.percentage,
+                        reset_time: m.reset_time.clone(),
+                        request_count: Some(find_request_count_for_model(&m.name, counts)),
+                    })
+                    .collect(),
+                last_updated: q.last_updated,
+                subscription_tier: q.subscription_tier.clone(),
+                is_forbidden: q.is_forbidden,
+            }
         }),
         device_bound: account.device_profile.is_some(),
         last_used: account.last_used,
@@ -116,6 +154,7 @@ pub(crate) async fn admin_list_accounts(
                         name: m.name,
                         percentage: m.percentage,
                         reset_time: m.reset_time,
+                        request_count: None,
                     })
                     .collect(),
                 last_updated: q.last_updated,
@@ -193,6 +232,7 @@ pub(crate) async fn admin_get_current_account(
                         name: m.name,
                         percentage: m.percentage,
                         reset_time: m.reset_time,
+                        request_count: None,
                     })
                     .collect(),
                 last_updated: q.last_updated,
