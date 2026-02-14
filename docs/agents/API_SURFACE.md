@@ -69,6 +69,7 @@ Primary groups:
 - session bindings debug snapshot (bindings + recent sticky decisions)
 - compliance debug snapshot (live RPM/in-flight/cooldown counters)
 - compliance config update (`POST /api/proxy/compliance`) without full `config` round-trip
+- Google outbound policy snapshot (`GET /api/proxy/google/outbound-policy`) with effective mode/host-header behavior/metadata and passthrough allow/block contract
 - key mutating admin endpoints emit `[ADMIN_AUDIT]` logs with actor identity and before/after details
 - clear session bindings
 - clear rate limits (all or account)

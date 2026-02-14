@@ -17,6 +17,7 @@ Use this when starting a new task quickly and safely.
 - `Task: Auth/token/security changes` -> `docs/agents/SECURITY_AUTH.md`, then `docs/agents/EDGE_CASES_DEFECTS.md`
 - `Task: Debug production issue` -> `docs/agents/EDGE_CASES_DEFECTS.md`, then `docs/agents/RUNTIME_ROUTING.md`
 - `Task: Account/proxy-pool/rate-limit behavior` -> `docs/agents/RUNTIME_ROUTING.md`, then `docs/AGENT_CODE_CAPABILITIES.md`
+- `Task: Google legit-connection/trace diffing` -> `docs/agents/GOOGLE_TRACE_VALIDATION.md`, then `docs/agents/API_SURFACE.md`
 - `Task: Quick orientation` -> `AGENTS.md`, then `docs/agents/README.md`
 
 ## Execution Checklist

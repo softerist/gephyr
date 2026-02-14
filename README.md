@@ -198,6 +198,7 @@ Admin visibility:
 - `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
 - `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
 - `GET /api/proxy/metrics` returns runtime/monitor/sticky/proxy-pool/compliance aggregates (including TLS diagnostics: backend/requested/compiled/canary snapshot) and supported runtime-apply policy values.
+- `GET /api/proxy/google/outbound-policy` returns the effective Google outbound header policy snapshot (mode, host-header behavior, metadata shape, passthrough allow/block policy, debug redaction contract).
 - `GET /api/proxy/tls-canary` returns latest TLS canary probe snapshot.
 - `POST /api/proxy/tls-canary/run` runs TLS canary probe on demand and returns the latest canary snapshot.
 - `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
@@ -271,6 +272,47 @@ curl -X POST http://127.0.0.1:8045/api/proxy/pool/runtime \
     "health_check_interval": 120
   }'
 ```
+
+### Google Outbound Policy (Config + Runtime)
+
+Google-bound calls now use a shared policy with explicit defaults:
+
+- Always set: `authorization`, `user-agent`, `accept-encoding: gzip`
+- JSON requests additionally set: `content-type: application/json`
+- Passthrough policy: deny-by-default (only explicit allowlist keys are forwarded)
+- Optional explicit `Host` header: compat mode only (`codeassist_compat` + `send_host_header=true`)
+
+Config example (`config.json`):
+
+```json
+{
+  "proxy": {
+    "google": {
+      "mode": "public_google",
+      "headers": {
+        "send_host_header": false
+      },
+      "identity_metadata": {
+        "ide_type": "ANTIGRAVITY",
+        "platform": "PLATFORM_UNSPECIFIED",
+        "plugin_type": "GEMINI"
+      }
+    },
+    "debug_logging": {
+      "log_google_outbound_headers": false
+    }
+  }
+}
+```
+
+Runtime note:
+
+- Saving config via `POST /api/config` hot-applies Google outbound policy to live upstream calls (no restart required).
+- Verify effective runtime policy with `GET /api/proxy/google/outbound-policy`.
+
+Staging trace validation runbook:
+
+- See `docs/agents/GOOGLE_TRACE_VALIDATION.md` for a step-by-step manual diff workflow.
 
 Manual TLS canary run:
 

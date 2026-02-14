@@ -86,6 +86,10 @@ impl ConfigState {
             let mut experimental = self.experimental.write().await;
             *experimental = proxy.experimental.clone();
         }
+        {
+            let mut debug_logging = self.debug_logging.write().await;
+            *debug_logging = proxy.debug_logging.clone();
+        }
         self.request_timeout
             .store(proxy.request_timeout, Ordering::Relaxed);
     }

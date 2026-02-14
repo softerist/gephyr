@@ -389,18 +389,7 @@ pub(crate) async fn admin_get_proxy_compliance_debug(
 pub(crate) async fn admin_get_google_outbound_policy(
     State(state): State<AdminState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let cfg = crate::modules::system::config::load_app_config().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    let runtime_debug_logging = state.config.debug_logging.read().await.clone();
-    let policy = crate::proxy::upstream::header_policy::GoogleOutboundHeaderPolicy::from_proxy_config(
-        cfg.proxy.google.clone(),
-        runtime_debug_logging.clone(),
-    );
+    let policy = state.core.upstream.get_google_policy().await;
 
     let mode = match policy.mode {
         crate::proxy::config::GoogleMode::PublicGoogle => "public_google",
@@ -410,7 +399,7 @@ pub(crate) async fn admin_get_google_outbound_policy(
     Ok(Json(serde_json::json!({
         "mode": mode,
         "inputs": {
-            "google_source": "persisted_app_config",
+            "google_source": "runtime_state",
             "debug_logging_source": "runtime_state"
         },
         "headers": {

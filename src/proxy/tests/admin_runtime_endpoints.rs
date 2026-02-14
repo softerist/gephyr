@@ -1144,6 +1144,76 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn admin_save_config_hot_applies_google_outbound_policy() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let get_config_request = Request::builder()
+            .uri("/config")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (config_status, mut config_body) = send(&router, get_config_request).await;
+        assert_eq!(config_status, StatusCode::OK);
+
+        config_body["proxy"]["google"]["mode"] = Value::from("codeassist_compat");
+        config_body["proxy"]["google"]["headers"]["send_host_header"] = Value::from(true);
+        config_body["proxy"]["google"]["identity_metadata"]["ide_type"] = Value::from("TEST_IDE");
+        config_body["proxy"]["google"]["identity_metadata"]["platform"] =
+            Value::from("TEST_PLATFORM");
+        config_body["proxy"]["google"]["identity_metadata"]["plugin_type"] =
+            Value::from("TEST_PLUGIN");
+        config_body["proxy"]["debug_logging"]["log_google_outbound_headers"] = Value::from(true);
+
+        let save_request = Request::builder()
+            .method("POST")
+            .uri("/config")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({ "config": config_body }).to_string()))
+            .expect("request");
+        let (save_status, save_body) = send(&router, save_request).await;
+        assert_eq!(save_status, StatusCode::OK);
+        assert_eq!(save_body["ok"], Value::from(true));
+
+        let policy_request = Request::builder()
+            .uri("/proxy/google/outbound-policy")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (policy_status, policy_body) = send(&router, policy_request).await;
+        assert_eq!(policy_status, StatusCode::OK);
+        assert_eq!(policy_body["mode"], Value::from("codeassist_compat"));
+        assert_eq!(
+            policy_body["headers"]["send_host_header_configured"],
+            Value::from(true)
+        );
+        assert_eq!(
+            policy_body["headers"]["send_host_header_effective"],
+            Value::from(true)
+        );
+        assert_eq!(
+            policy_body["identity_metadata"]["ide_type"],
+            Value::from("TEST_IDE")
+        );
+        assert_eq!(
+            policy_body["identity_metadata"]["platform"],
+            Value::from("TEST_PLATFORM")
+        );
+        assert_eq!(
+            policy_body["identity_metadata"]["plugin_type"],
+            Value::from("TEST_PLUGIN")
+        );
+        assert_eq!(
+            policy_body["debug"]["log_google_outbound_headers"],
+            Value::from(true)
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn admin_scoped_updates_persist_across_restart_like_reinit() {
         let _guard = ADMIN_ENDPOINT_TEST_LOCK
             .lock()

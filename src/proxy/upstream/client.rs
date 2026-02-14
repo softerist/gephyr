@@ -23,7 +23,7 @@ pub struct UpstreamClient {
     proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
     client_cache: DashMap<String, Client>,
     user_agent_override: RwLock<Option<String>>,
-    google_policy: GoogleOutboundHeaderPolicy,
+    google_policy: RwLock<GoogleOutboundHeaderPolicy>,
     v1_internal_base_urls: Vec<String>,
 }
 
@@ -82,7 +82,7 @@ impl UpstreamClient {
             proxy_pool,
             client_cache: DashMap::new(),
             user_agent_override: RwLock::new(None),
-            google_policy,
+            google_policy: RwLock::new(google_policy),
             v1_internal_base_urls,
         }
     }
@@ -143,6 +143,13 @@ impl UpstreamClient {
             .as_ref()
             .cloned()
             .unwrap_or_else(|| crate::constants::USER_AGENT.clone())
+    }
+    pub async fn set_google_policy(&self, policy: GoogleOutboundHeaderPolicy) {
+        let mut lock = self.google_policy.write().await;
+        *lock = policy;
+    }
+    pub async fn get_google_policy(&self) -> GoogleOutboundHeaderPolicy {
+        self.google_policy.read().await.clone()
     }
     pub async fn get_client(&self, account_id: Option<&str>) -> Result<Client, String> {
         if let Some(pool) = &self.proxy_pool {
@@ -220,6 +227,7 @@ impl UpstreamClient {
         let client = self.get_client(account_id).await?;
         let user_agent = self.get_user_agent().await;
         let device_profile = load_account_device_profile(account_id);
+        let google_policy = self.get_google_policy().await;
 
         let mut last_err: Option<String> = None;
         for (idx, base_url) in self.v1_internal_base_urls.iter().enumerate() {
@@ -236,7 +244,7 @@ impl UpstreamClient {
                     device_profile: device_profile.as_ref(),
                     extra_headers: Some(&extra_headers),
                 },
-                &self.google_policy,
+                &google_policy,
             );
 
             let response = client
@@ -407,5 +415,34 @@ mod tests {
             Some("context-1m-2025-08-07".to_string())
         );
         assert!(find("x-forwarded-for").is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn google_policy_can_be_hot_updated_at_runtime() {
+        let client = UpstreamClient::new_for_test(
+            "http://127.0.0.1:1/v1internal",
+            GoogleOutboundHeaderPolicy::default(),
+        );
+        let initial = client.get_google_policy().await;
+        assert!(matches!(
+            initial.mode,
+            crate::proxy::config::GoogleMode::PublicGoogle
+        ));
+
+        let mut updated = initial.clone();
+        updated.mode = crate::proxy::config::GoogleMode::CodeassistCompat;
+        updated.send_host_header = true;
+        updated.log_google_outbound_headers = true;
+        updated.identity_metadata.ide_type = "UPDATED_IDE".to_string();
+        client.set_google_policy(updated.clone()).await;
+
+        let effective = client.get_google_policy().await;
+        assert!(matches!(
+            effective.mode,
+            crate::proxy::config::GoogleMode::CodeassistCompat
+        ));
+        assert!(effective.send_host_header);
+        assert!(effective.log_google_outbound_headers);
+        assert_eq!(effective.identity_metadata.ide_type, "UPDATED_IDE");
     }
 }

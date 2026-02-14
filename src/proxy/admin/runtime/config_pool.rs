@@ -66,6 +66,16 @@ pub(crate) async fn admin_save_config(
     state.config.apply_proxy_config(&new_config.proxy).await;
     state
         .core
+        .upstream
+        .set_google_policy(
+            crate::proxy::upstream::header_policy::GoogleOutboundHeaderPolicy::from_proxy_config(
+                new_config.proxy.google.clone(),
+                new_config.proxy.debug_logging.clone(),
+            ),
+        )
+        .await;
+    state
+        .core
         .token_manager
         .update_sticky_config(new_config.proxy.scheduling.clone())
         .await;

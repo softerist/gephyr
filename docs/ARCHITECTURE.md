@@ -50,7 +50,7 @@ Client IP resolution for middleware (`src/proxy/middleware/client_ip.rs`) is tru
   1. load submitted config
   2. validate
   3. persist (`save_app_config`)
-  4. hot-apply to runtime (`ConfigState::apply_proxy_config` + token-manager sync)
+  4. hot-apply to runtime (`ConfigState::apply_proxy_config` + token-manager sync + upstream Google outbound policy sync)
   5. emit structured admin audit
 
 ### Scoped proxy patch path
@@ -76,6 +76,11 @@ Scoped endpoints in this path:
 ## Hot-Reload Policy
 
 Policy enum: `RuntimeApplyPolicy` in `src/proxy/admin/runtime/config_patch.rs`.
+
+Operational visibility for Google outbound hardening:
+
+- `GET /api/proxy/google/outbound-policy` returns effective runtime policy (mode, host-header behavior, metadata, passthrough allow/block contract, debug redaction contract)
+- full `POST /api/config` updates hot-apply the upstream Google outbound policy without restart
 
 Current scoped endpoint policy mapping:
 

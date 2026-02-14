@@ -171,16 +171,14 @@ async fn fetch_quota_with_cache_at(
     use crate::error::AppError;
     let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
         (Some(pid.to_string()), None)
+    } else if cloud_code_base_url == CLOUD_CODE_BASE_URL {
+        fetch_project_id(access_token, email, account_id)
+            .await
+            .map_err(AppError::Unknown)?
     } else {
-        if cloud_code_base_url == CLOUD_CODE_BASE_URL {
-            fetch_project_id(access_token, email, account_id)
-                .await
-                .map_err(AppError::Unknown)?
-        } else {
-            fetch_project_id_at(access_token, email, account_id, cloud_code_base_url)
-                .await
-                .map_err(AppError::Unknown)?
-        }
+        fetch_project_id_at(access_token, email, account_id, cloud_code_base_url)
+            .await
+            .map_err(AppError::Unknown)?
     };
 
     let final_project_id = project_id.as_deref().unwrap_or("bamboo-precept-lgxtn");

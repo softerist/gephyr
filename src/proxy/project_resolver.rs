@@ -75,6 +75,26 @@ async fn fetch_project_id_at(
     Ok(mock_id)
 }
 
+pub fn generate_mock_project_id() -> String {
+    use rand::Rng;
+
+    let adjectives = ["useful", "bright", "swift", "calm", "bold"];
+    let nouns = ["fuze", "wave", "spark", "flow", "core"];
+
+    let mut rng = rand::thread_rng();
+    let adj = adjectives[rng.gen_range(0..adjectives.len())];
+    let noun = nouns[rng.gen_range(0..nouns.len())];
+    let random_num: String = (0..5)
+        .map(|_| {
+            let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+            let idx = rng.gen_range(0..chars.len());
+            chars.chars().nth(idx).unwrap()
+        })
+        .collect();
+
+    format!("{}-{}-{}", adj, noun, random_num)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,23 +184,4 @@ mod tests {
         assert!(body.pointer("/metadata/platform").is_some());
         assert!(body.pointer("/metadata/pluginType").is_some());
     }
-}
-pub fn generate_mock_project_id() -> String {
-    use rand::Rng;
-
-    let adjectives = ["useful", "bright", "swift", "calm", "bold"];
-    let nouns = ["fuze", "wave", "spark", "flow", "core"];
-
-    let mut rng = rand::thread_rng();
-    let adj = adjectives[rng.gen_range(0..adjectives.len())];
-    let noun = nouns[rng.gen_range(0..nouns.len())];
-    let random_num: String = (0..5)
-        .map(|_| {
-            let chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-            let idx = rng.gen_range(0..chars.len());
-            chars.chars().nth(idx).unwrap()
-        })
-        .collect();
-
-    format!("{}-{}-{}", adj, noun, random_num)
 }
