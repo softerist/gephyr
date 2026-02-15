@@ -5,6 +5,7 @@ pub mod config;
 pub mod debug_logger;
 pub mod handlers;
 pub mod health;
+pub mod google;
 pub mod mappers;
 pub mod middleware;
 pub mod monitor;

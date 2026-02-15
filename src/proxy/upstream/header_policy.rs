@@ -6,6 +6,9 @@ use std::collections::HashMap;
 pub struct GoogleOutboundHeaderPolicy {
     pub mode: crate::proxy::config::GoogleMode,
     pub send_host_header: bool,
+    pub send_x_goog_api_client: Option<bool>,
+    pub x_goog_api_client: String,
+    pub send_x_goog_api_client_on_cloudcode: bool,
     pub log_google_outbound_headers: bool,
     pub identity_metadata: crate::proxy::config::GoogleIdentityMetadata,
 }
@@ -13,8 +16,11 @@ pub struct GoogleOutboundHeaderPolicy {
 impl Default for GoogleOutboundHeaderPolicy {
     fn default() -> Self {
         Self {
-            mode: crate::proxy::config::GoogleMode::PublicGoogle,
-            send_host_header: false,
+            mode: crate::proxy::config::GoogleMode::CodeassistCompat,
+            send_host_header: true,
+            send_x_goog_api_client: None,
+            x_goog_api_client: "gl-node/22.21.1".to_string(),
+            send_x_goog_api_client_on_cloudcode: true,
             log_google_outbound_headers: false,
             identity_metadata: crate::proxy::config::GoogleIdentityMetadata::default(),
         }
@@ -29,6 +35,9 @@ impl GoogleOutboundHeaderPolicy {
         Self {
             mode: google.mode,
             send_host_header: google.headers.send_host_header,
+            send_x_goog_api_client: google.headers.send_x_goog_api_client,
+            x_goog_api_client: google.headers.x_goog_api_client,
+            send_x_goog_api_client_on_cloudcode: google.headers.send_x_goog_api_client_on_cloudcode,
             log_google_outbound_headers: debug.log_google_outbound_headers,
             identity_metadata: google.identity_metadata,
         }
@@ -37,6 +46,37 @@ impl GoogleOutboundHeaderPolicy {
     pub fn should_send_host_header(&self) -> bool {
         matches!(self.mode, crate::proxy::config::GoogleMode::CodeassistCompat)
             && self.send_host_header
+    }
+
+    pub fn send_x_goog_api_client_effective(&self) -> bool {
+        self.send_x_goog_api_client.unwrap_or(matches!(
+            self.mode,
+            crate::proxy::config::GoogleMode::CodeassistCompat
+        ))
+    }
+
+    pub fn should_send_x_goog_api_client_for(
+        &self,
+        scope: GoogleHeaderScope,
+        user_agent: &str,
+    ) -> bool {
+        if !self.send_x_goog_api_client_effective() {
+            return false;
+        }
+        if self.x_goog_api_client.trim().is_empty() {
+            return false;
+        }
+        if !is_antigravity_style_user_agent(user_agent) {
+            return false;
+        }
+
+        match scope {
+            GoogleHeaderScope::OAuth => true,
+            GoogleHeaderScope::Cloudcode => {
+                matches!(self.mode, crate::proxy::config::GoogleMode::CodeassistCompat)
+                    && self.send_x_goog_api_client_on_cloudcode
+            }
+        }
     }
 }
 
@@ -53,11 +93,19 @@ pub fn load_policy_from_runtime_config() -> GoogleOutboundHeaderPolicy {
 pub struct GoogleHeaderPolicyContext<'a> {
     pub endpoint: &'a str,
     pub endpoint_host: Option<&'a str>,
+    pub scope: GoogleHeaderScope,
     pub user_agent: &'a str,
     pub access_token: Option<&'a str>,
     pub content_type_json: bool,
     pub device_profile: Option<&'a crate::models::DeviceProfile>,
     pub extra_headers: Option<&'a HashMap<String, String>>,
+    pub force_connection_close: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoogleHeaderScope {
+    OAuth,
+    Cloudcode,
 }
 
 pub fn build_google_headers(
@@ -65,11 +113,17 @@ pub fn build_google_headers(
     policy: &GoogleOutboundHeaderPolicy,
 ) -> HeaderMap {
     let mut headers = HeaderMap::new();
+    let normalized_user_agent = normalize_google_user_agent(context.scope, context.user_agent);
 
     if context.content_type_json {
         headers.insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
+        );
+    } else if should_set_oauth_form_content_type(context.scope, context.endpoint) {
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-www-form-urlencoded;charset=UTF-8"),
         );
     }
 
@@ -79,16 +133,21 @@ pub fn build_google_headers(
         }
     }
 
-    if let Ok(value) = HeaderValue::from_str(context.user_agent) {
+    if let Ok(value) = HeaderValue::from_str(&normalized_user_agent) {
         headers.insert(header::USER_AGENT, value);
     } else {
         headers.insert(header::USER_AGENT, HeaderValue::from_static("antigravity"));
     }
 
+    headers.insert(header::ACCEPT, HeaderValue::from_static("*/*"));
     headers.insert(
         header::ACCEPT_ENCODING,
-        HeaderValue::from_static("gzip"),
+        HeaderValue::from_static("gzip, deflate, br"),
     );
+
+    if policy.should_send_x_goog_api_client_for(context.scope, &normalized_user_agent) {
+        insert_custom_header(&mut headers, "x-goog-api-client", &policy.x_goog_api_client);
+    }
 
     if policy.should_send_host_header() {
         if let Some(host) = context.endpoint_host {
@@ -96,6 +155,10 @@ pub fn build_google_headers(
                 headers.insert(header::HOST, value);
             }
         }
+    }
+
+    if context.force_connection_close {
+        headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
     }
 
     if let Some(profile) = context.device_profile {
@@ -117,6 +180,13 @@ pub fn build_google_headers(
 
     log_google_outbound_headers(context.endpoint, policy, &headers);
     headers
+}
+
+fn should_set_oauth_form_content_type(scope: GoogleHeaderScope, endpoint: &str) -> bool {
+    if !matches!(scope, GoogleHeaderScope::OAuth) {
+        return false;
+    }
+    endpoint.starts_with("https://oauth2.googleapis.com/token")
 }
 
 pub fn build_load_code_assist_metadata(policy: &GoogleOutboundHeaderPolicy) -> serde_json::Value {
@@ -234,6 +304,34 @@ fn redact_header_value(name: &str, value: &str) -> String {
     value.to_string()
 }
 
+fn is_antigravity_style_user_agent(user_agent: &str) -> bool {
+    let lower = user_agent.to_ascii_lowercase();
+    lower.contains("antigravity/") || lower.contains("google-api-nodejs-client/")
+}
+
+fn normalize_google_user_agent(scope: GoogleHeaderScope, user_agent: &str) -> String {
+    let trimmed = user_agent.trim();
+    if trimmed.is_empty() {
+        return "antigravity google-api-nodejs-client/10.3.0".to_string();
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("google-api-nodejs-client/") {
+        return trimmed.to_string();
+    }
+
+    match scope {
+        GoogleHeaderScope::OAuth => "google-api-nodejs-client/10.3.0".to_string(),
+        GoogleHeaderScope::Cloudcode => {
+            if lower.contains("antigravity/") {
+                format!("{} google-api-nodejs-client/10.3.0", trimmed)
+            } else {
+                trimmed.to_string()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,11 +352,13 @@ mod tests {
             GoogleHeaderPolicyContext {
                 endpoint: "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                 endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
                 user_agent: "antigravity/test",
                 access_token: Some("access-token"),
                 content_type_json: true,
                 device_profile: None,
                 extra_headers: None,
+                force_connection_close: false,
             },
             &policy,
         );
@@ -266,7 +366,7 @@ mod tests {
         assert!(headers.contains_key(header::AUTHORIZATION));
         assert_eq!(
             headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()),
-            Some("antigravity/test")
+            Some("antigravity/test google-api-nodejs-client/10.3.0")
         );
         assert_eq!(
             headers
@@ -278,7 +378,11 @@ mod tests {
             headers
                 .get(header::ACCEPT_ENCODING)
                 .and_then(|v| v.to_str().ok()),
-            Some("gzip")
+            Some("gzip, deflate, br")
+        );
+        assert_eq!(
+            headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()),
+            Some("*/*")
         );
     }
 
@@ -290,11 +394,13 @@ mod tests {
             GoogleHeaderPolicyContext {
                 endpoint: "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                 endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
                 user_agent: "antigravity/test",
                 access_token: Some("access-token"),
                 content_type_json: true,
                 device_profile: Some(&profile),
                 extra_headers: None,
+                force_connection_close: false,
             },
             &policy,
         );
@@ -322,16 +428,19 @@ mod tests {
     #[test]
     fn host_header_is_compat_mode_only() {
         let mut policy = GoogleOutboundHeaderPolicy::default();
+        policy.mode = crate::proxy::config::GoogleMode::PublicGoogle;
         policy.send_host_header = true;
         let headers = build_google_headers(
             GoogleHeaderPolicyContext {
                 endpoint: "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                 endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
                 user_agent: "antigravity/test",
                 access_token: Some("access-token"),
                 content_type_json: true,
                 device_profile: None,
                 extra_headers: None,
+                force_connection_close: false,
             },
             &policy,
         );
@@ -342,11 +451,13 @@ mod tests {
             GoogleHeaderPolicyContext {
                 endpoint: "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                 endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
                 user_agent: "antigravity/test",
                 access_token: Some("access-token"),
                 content_type_json: true,
                 device_profile: None,
                 extra_headers: None,
+                force_connection_close: false,
             },
             &policy,
         );
@@ -369,11 +480,13 @@ mod tests {
             GoogleHeaderPolicyContext {
                 endpoint: "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                 endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
                 user_agent: "antigravity/test",
                 access_token: Some("access-token"),
                 content_type_json: true,
                 device_profile: None,
                 extra_headers: Some(&extra),
+                force_connection_close: false,
             },
             &policy,
         );
@@ -399,16 +512,172 @@ mod tests {
             GoogleHeaderPolicyContext {
                 endpoint: "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                 endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
                 user_agent: "antigravity/test",
                 access_token: Some("access-token"),
                 content_type_json: true,
                 device_profile: None,
                 extra_headers: Some(&extra),
+                force_connection_close: false,
             },
             &policy,
         );
 
         assert!(headers.get("x-custom-extra").is_none());
+    }
+
+    #[test]
+    fn x_goog_api_client_is_oauth_scoped_and_mode_aware() {
+        let mut policy = GoogleOutboundHeaderPolicy::default();
+        policy.mode = crate::proxy::config::GoogleMode::PublicGoogle;
+
+        let oauth_headers_public = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://oauth2.googleapis.com/token",
+                endpoint_host: Some("oauth2.googleapis.com"),
+                scope: GoogleHeaderScope::OAuth,
+                user_agent: "antigravity/test",
+                access_token: None,
+                content_type_json: false,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: false,
+            },
+            &policy,
+        );
+        assert!(oauth_headers_public.get("x-goog-api-client").is_none());
+
+        policy.mode = crate::proxy::config::GoogleMode::CodeassistCompat;
+        let oauth_headers_compat = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://oauth2.googleapis.com/token",
+                endpoint_host: Some("oauth2.googleapis.com"),
+                scope: GoogleHeaderScope::OAuth,
+                user_agent: "antigravity/test",
+                access_token: None,
+                content_type_json: false,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: false,
+            },
+            &policy,
+        );
+        assert_eq!(
+            oauth_headers_compat
+                .get("x-goog-api-client")
+                .and_then(|v| v.to_str().ok()),
+            Some("gl-node/22.21.1")
+        );
+
+        let cloudcode_headers_default = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+                endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
+                user_agent: "antigravity/test",
+                access_token: Some("token"),
+                content_type_json: true,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: false,
+            },
+            &policy,
+        );
+        assert_eq!(
+            cloudcode_headers_default
+                .get("x-goog-api-client")
+                .and_then(|v| v.to_str().ok()),
+            Some("gl-node/22.21.1")
+        );
+    }
+
+    #[test]
+    fn x_goog_api_client_requires_antigravity_user_agent() {
+        let mut policy = GoogleOutboundHeaderPolicy::default();
+        policy.mode = crate::proxy::config::GoogleMode::CodeassistCompat;
+
+        let headers = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+                endpoint_host: Some("cloudcode-pa.googleapis.com"),
+                scope: GoogleHeaderScope::Cloudcode,
+                user_agent: "curl/8.7.1",
+                access_token: Some("token"),
+                content_type_json: true,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: false,
+            },
+            &policy,
+        );
+
+        assert!(headers.get("x-goog-api-client").is_none());
+    }
+
+    #[test]
+    fn force_connection_close_adds_connection_header() {
+        let policy = GoogleOutboundHeaderPolicy::default();
+        let closed = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://oauth2.googleapis.com/token",
+                endpoint_host: Some("oauth2.googleapis.com"),
+                scope: GoogleHeaderScope::OAuth,
+                user_agent: "antigravity/test",
+                access_token: None,
+                content_type_json: false,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: true,
+            },
+            &policy,
+        );
+        assert_eq!(
+            closed
+                .get(header::CONNECTION)
+                .and_then(|v| v.to_str().ok()),
+            Some("close")
+        );
+
+        let keep_default = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://oauth2.googleapis.com/token",
+                endpoint_host: Some("oauth2.googleapis.com"),
+                scope: GoogleHeaderScope::OAuth,
+                user_agent: "antigravity/test",
+                access_token: None,
+                content_type_json: false,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: false,
+            },
+            &policy,
+        );
+        assert!(keep_default.get(header::CONNECTION).is_none());
+    }
+
+    #[test]
+    fn oauth_token_endpoint_sets_form_content_type() {
+        let policy = GoogleOutboundHeaderPolicy::default();
+        let headers = build_google_headers(
+            GoogleHeaderPolicyContext {
+                endpoint: "https://oauth2.googleapis.com/token",
+                endpoint_host: Some("oauth2.googleapis.com"),
+                scope: GoogleHeaderScope::OAuth,
+                user_agent: "google-api-nodejs-client/10.3.0",
+                access_token: None,
+                content_type_json: false,
+                device_profile: None,
+                extra_headers: None,
+                force_connection_close: true,
+            },
+            &policy,
+        );
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("application/x-www-form-urlencoded;charset=UTF-8")
+        );
     }
 
     #[test]
@@ -445,3 +714,5 @@ mod tests {
         assert_eq!(redact_header_value("user-agent", "ua"), "ua");
     }
 }
+
+

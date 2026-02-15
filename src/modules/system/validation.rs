@@ -356,6 +356,24 @@ fn validate_google_config(config: &crate::proxy::config::GoogleConfig, errors: &
             "must not be empty",
         ));
     }
+
+    let send_x_goog_api_client = config.headers.send_x_goog_api_client.unwrap_or(matches!(
+        config.mode,
+        crate::proxy::config::GoogleMode::CodeassistCompat
+    ));
+    if send_x_goog_api_client && config.headers.x_goog_api_client.trim().is_empty() {
+        errors.push(ConfigError::new(
+            "proxy.google.headers.x_goog_api_client",
+            "must not be empty when x-goog-api-client forwarding is enabled",
+        ));
+    }
+
+    if config.mimic.cooldown_seconds == 0 {
+        errors.push(ConfigError::new(
+            "proxy.google.mimic.cooldown_seconds",
+            "must be greater than 0",
+        ));
+    }
 }
 fn is_valid_proxy_url(url: &str) -> bool {
     let url_lower = url.to_lowercase();
@@ -549,5 +567,32 @@ mod tests {
         assert!(errors
             .iter()
             .any(|e| e.field.contains("google.identity_metadata.plugin_type")));
+    }
+
+    #[test]
+    fn test_google_x_goog_api_client_value_must_not_be_empty_when_effective() {
+        let mut config = AppConfig::new();
+        config.proxy.google.mode = crate::proxy::config::GoogleMode::CodeassistCompat;
+        config.proxy.google.headers.x_goog_api_client = " ".to_string();
+
+        let result = validate_app_config(&config);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("google.headers.x_goog_api_client")));
+    }
+
+    #[test]
+    fn test_google_mimic_cooldown_must_be_positive() {
+        let mut config = AppConfig::new();
+        config.proxy.google.mimic.cooldown_seconds = 0;
+
+        let result = validate_app_config(&config);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors
+            .iter()
+            .any(|e| e.field.contains("google.mimic.cooldown_seconds")));
     }
 }

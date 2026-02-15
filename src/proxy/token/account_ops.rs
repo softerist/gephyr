@@ -25,7 +25,7 @@ pub(crate) async fn add_account(refresh_token: &str) -> Result<(), String> {
     let refresh_token_clone = refresh_token.to_string();
     let google_sub_clone = google_sub.clone();
 
-    tokio::task::spawn_blocking(move || {
+    let account = tokio::task::spawn_blocking(move || {
         let token_data = crate::models::TokenData::new(
             token_info.access_token,
             refresh_token_clone,
@@ -45,6 +45,16 @@ pub(crate) async fn add_account(refresh_token: &str) -> Result<(), String> {
     .await
     .map_err(|e| format!("Task join error: {}", e))?
     .map_err(|e| format!("Failed to save account: {}", e))?;
+
+    let access_token = account.token.access_token.clone();
+    tokio::spawn(async move {
+        let _ = crate::proxy::google::mimic_flow::run_auth_event_mimic_flow(
+            &access_token,
+            Some(&account.id),
+            account.token.project_id.as_deref(),
+        )
+        .await;
+    });
 
     Ok(())
 }

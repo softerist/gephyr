@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use tokio::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
 use crate::proxy::debug_logger;
@@ -27,6 +27,20 @@ use std::sync::{atomic::Ordering, Arc};
 const MAX_RETRY_ATTEMPTS: usize = 3;
 const INTERNAL_BACKGROUND_TASK: &str =
     crate::proxy::common::model_mapping::MODEL_INTERNAL_BACKGROUND_TASK;
+
+fn model_not_found_fallback(model: &str) -> Option<&'static str> {
+    let lower = model.to_ascii_lowercase();
+    if !(lower.starts_with("claude-") || lower.starts_with("anthropic.claude-")) {
+        return None;
+    }
+
+    let fallback = crate::proxy::common::model_mapping::MODEL_CLAUDE_SONNET_45_THINKING;
+    if lower == fallback {
+        return None;
+    }
+
+    Some(fallback)
+}
 const CONTEXT_SUMMARY_PROMPT: &str = r#"You are a context compression specialist. Your task is to create a structured XML snapshot of the conversation history.
 
 This snapshot will become the Agent's ONLY memory of the past. All key details, plans, errors, and user instructions MUST be preserved.
@@ -348,6 +362,7 @@ pub async fn handle_messages(
 
     let mut last_error = String::new();
     let mut retried_without_thinking = false;
+    let mut attempted_not_found_fallback = false;
     let mut last_email: Option<String> = None;
     let mut last_mapped_model: Option<String> = None;
     let mut last_status = StatusCode::SERVICE_UNAVAILABLE;
@@ -959,6 +974,17 @@ pub async fn handle_messages(
                 tracing::error!("Failed to set forbidden status for {}: {}", email, e);
             } else {
                 tracing::warn!("[Claude] Account {} marked as forbidden due to 403", email);
+            }
+        }
+        if status_code == 404 && !attempted_not_found_fallback {
+            if let Some(fallback) = model_not_found_fallback(&mapped_model) {
+                warn!(
+                    "[{}] Claude model '{}' returned 404; retrying with fallback '{}'",
+                    trace_id, mapped_model, fallback
+                );
+                request_for_body.model = fallback.to_string();
+                attempted_not_found_fallback = true;
+                continue;
             }
         }
         let strategy = determine_retry_strategy(status_code, &error_text, retried_without_thinking);

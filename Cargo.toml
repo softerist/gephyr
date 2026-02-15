@@ -1,6 +1,6 @@
 [package]
 name = "gephyr"
-version = "4.1.8"
+version = "1.16.5"
 description = "Gephyr headless AI relay service for Google AI services"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"

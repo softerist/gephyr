@@ -550,6 +550,17 @@ pub async fn switch_account(
     if fresh_token.access_token != account.token.access_token {
         account.token = fresh_token.clone();
         save_account(&account)?;
+        let access_token = fresh_token.access_token.clone();
+        let account_id = account.id.clone();
+        let project_id = account.token.project_id.clone();
+        tokio::spawn(async move {
+            let _ = crate::proxy::google::mimic_flow::run_auth_event_mimic_flow(
+                &access_token,
+                Some(&account_id),
+                project_id.as_deref(),
+            )
+            .await;
+        });
     }
     ensure_device_profile_on_switch(&mut account)?;
     integration.on_account_switch(&account).await?;
@@ -921,6 +932,17 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             account.google_sub.clone(),
         )
         .map_err(AppError::Account)?;
+        let access_token = token.access_token.clone();
+        let account_id = account.id.clone();
+        let project_id = token.project_id.clone();
+        tokio::spawn(async move {
+            let _ = crate::proxy::google::mimic_flow::run_auth_event_mimic_flow(
+                &access_token,
+                Some(&account_id),
+                project_id.as_deref(),
+            )
+            .await;
+        });
     }
     if account.name.is_none() || account.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         crate::modules::system::logger::log_info(&format!(

@@ -1,7 +1,7 @@
 use crate::models::QuotaData;
 use crate::proxy::upstream::header_policy::{
     build_google_headers, build_load_code_assist_metadata, host_from_url,
-    load_policy_from_runtime_config, GoogleHeaderPolicyContext,
+    load_policy_from_runtime_config, GoogleHeaderPolicyContext, GoogleHeaderScope,
 };
 use reqwest;
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,25 @@ async fn fetch_project_id(
     email: &str,
     account_id: Option<&str>,
 ) -> Result<(Option<String>, Option<String>), String> {
-    fetch_project_id_at(access_token, email, account_id, CLOUD_CODE_BASE_URL).await
+    let profile = crate::modules::system::config::load_app_config()
+        .ok()
+        .map(|cfg| cfg.proxy.google.mimic.profile)
+        .unwrap_or_default();
+    let hosts = crate::proxy::google::endpoints::cloudcode_hosts_for_profile(profile);
+    let mut last_err = String::new();
+    for host in hosts {
+        let cloud_code_base_url = format!("https://{}", host);
+        match fetch_project_id_at(access_token, email, account_id, &cloud_code_base_url).await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                last_err = e;
+            }
+        }
+    }
+    if last_err.is_empty() {
+        return Err("No cloudcode hosts configured".to_string());
+    }
+    Err(last_err)
 }
 
 async fn fetch_project_id_at(
@@ -88,11 +106,13 @@ async fn fetch_project_id_at(
         GoogleHeaderPolicyContext {
             endpoint: &endpoint,
             endpoint_host: endpoint_host.as_deref(),
+            scope: GoogleHeaderScope::Cloudcode,
             user_agent: crate::constants::USER_AGENT.as_str(),
             access_token: Some(access_token),
             content_type_json: true,
             device_profile: device_profile.as_ref(),
             extra_headers: None,
+            force_connection_close: true,
         },
         &policy,
     );
@@ -149,6 +169,36 @@ pub async fn fetch_quota_with_cache(
     cached_project_id: Option<&str>,
     account_id: Option<&str>,
 ) -> crate::error::AppResult<(QuotaData, Option<String>)> {
+    let profile = crate::modules::system::config::load_app_config()
+        .ok()
+        .map(|cfg| cfg.proxy.google.mimic.profile)
+        .unwrap_or_default();
+    let hosts = crate::proxy::google::endpoints::cloudcode_hosts_for_profile(profile);
+    let mut last_err: Option<crate::error::AppError> = None;
+    for host in hosts {
+        let cloud_code_base_url = format!("https://{}", host);
+        let quota_api_url = crate::proxy::google::endpoints::endpoint_fetch_available_models(host);
+        match fetch_quota_with_cache_at(
+            access_token,
+            email,
+            cached_project_id,
+            account_id,
+            &quota_api_url,
+            &cloud_code_base_url,
+        )
+        .await
+        {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                last_err = Some(e);
+            }
+        }
+    }
+
+    if let Some(err) = last_err {
+        return Err(err);
+    }
+
     fetch_quota_with_cache_at(
         access_token,
         email,
@@ -196,11 +246,13 @@ async fn fetch_quota_with_cache_at(
         GoogleHeaderPolicyContext {
             endpoint: url,
             endpoint_host: endpoint_host.as_deref(),
+            scope: GoogleHeaderScope::Cloudcode,
             user_agent: crate::constants::USER_AGENT.as_str(),
             access_token: Some(access_token),
             content_type_json: true,
             device_profile: device_profile.as_ref(),
             extra_headers: None,
+            force_connection_close: true,
         },
         &policy,
     );
@@ -402,11 +454,11 @@ mod tests {
 
         assert_eq!(
             find(&load_headers, "accept-encoding"),
-            Some("gzip".to_string())
+            Some("gzip, deflate, br".to_string())
         );
         assert_eq!(
             find(&quota_headers, "accept-encoding"),
-            Some("gzip".to_string())
+            Some("gzip, deflate, br".to_string())
         );
         assert!(load_body.pointer("/metadata/ideType").is_some());
         assert!(load_body.pointer("/metadata/platform").is_some());

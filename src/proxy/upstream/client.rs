@@ -5,7 +5,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use crate::proxy::upstream::header_policy::{
-    build_google_headers, host_from_url, GoogleHeaderPolicyContext, GoogleOutboundHeaderPolicy,
+    build_google_headers, host_from_url, GoogleHeaderPolicyContext, GoogleHeaderScope,
+    GoogleOutboundHeaderPolicy,
 };
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 
@@ -24,7 +25,7 @@ pub struct UpstreamClient {
     client_cache: DashMap<String, Client>,
     user_agent_override: RwLock<Option<String>>,
     google_policy: RwLock<GoogleOutboundHeaderPolicy>,
-    v1_internal_base_urls: Vec<String>,
+    v1_internal_base_urls: RwLock<Vec<String>>,
 }
 
 impl UpstreamClient {
@@ -45,10 +46,12 @@ impl UpstreamClient {
         google: crate::proxy::config::GoogleConfig,
         debug: crate::proxy::config::DebugLoggingConfig,
     ) -> Self {
-        Self::new_with_policy(
+        let base_urls = Self::build_v1_internal_base_urls(&google);
+        Self::new_with_policy_and_base_urls(
             proxy_config,
             proxy_pool,
             GoogleOutboundHeaderPolicy::from_proxy_config(google, debug),
+            base_urls,
         )
     }
 
@@ -83,8 +86,21 @@ impl UpstreamClient {
             client_cache: DashMap::new(),
             user_agent_override: RwLock::new(None),
             google_policy: RwLock::new(google_policy),
-            v1_internal_base_urls,
+            v1_internal_base_urls: RwLock::new(v1_internal_base_urls),
         }
+    }
+
+    fn build_v1_internal_base_urls(google: &crate::proxy::config::GoogleConfig) -> Vec<String> {
+        let hosts =
+            crate::proxy::google::endpoints::cloudcode_hosts_for_profile(google.mimic.profile.clone());
+        let mut urls: Vec<String> = hosts
+            .into_iter()
+            .map(|host| format!("https://{}/v1internal", host))
+            .collect();
+        if urls.is_empty() {
+            urls.push(V1_INTERNAL_BASE_URL_PROD.to_string());
+        }
+        urls
     }
 
     #[cfg(test)]
@@ -147,6 +163,18 @@ impl UpstreamClient {
     pub async fn set_google_policy(&self, policy: GoogleOutboundHeaderPolicy) {
         let mut lock = self.google_policy.write().await;
         *lock = policy;
+    }
+    pub async fn set_google_runtime_config(
+        &self,
+        google: crate::proxy::config::GoogleConfig,
+        debug: crate::proxy::config::DebugLoggingConfig,
+    ) {
+        {
+            let mut lock = self.google_policy.write().await;
+            *lock = GoogleOutboundHeaderPolicy::from_proxy_config(google.clone(), debug);
+        }
+        let mut urls = self.v1_internal_base_urls.write().await;
+        *urls = Self::build_v1_internal_base_urls(&google);
     }
     pub async fn get_google_policy(&self) -> GoogleOutboundHeaderPolicy {
         self.google_policy.read().await.clone()
@@ -230,19 +258,22 @@ impl UpstreamClient {
         let google_policy = self.get_google_policy().await;
 
         let mut last_err: Option<String> = None;
-        for (idx, base_url) in self.v1_internal_base_urls.iter().enumerate() {
+        let base_urls = self.v1_internal_base_urls.read().await.clone();
+        for (idx, base_url) in base_urls.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < self.v1_internal_base_urls.len();
+            let has_next = idx + 1 < base_urls.len();
             let endpoint_host = host_from_url(&url);
             let headers = build_google_headers(
                 GoogleHeaderPolicyContext {
                     endpoint: &url,
                     endpoint_host: endpoint_host.as_deref(),
+                    scope: GoogleHeaderScope::Cloudcode,
                     user_agent: &user_agent,
                     access_token: Some(access_token),
                     content_type_json: true,
                     device_profile: device_profile.as_ref(),
                     extra_headers: Some(&extra_headers),
+                    force_connection_close: false,
                 },
                 &google_policy,
             );
@@ -263,7 +294,7 @@ impl UpstreamClient {
                                 "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
                                 base_url,
                                 status,
-                                self.v1_internal_base_urls.len() - idx - 1
+                                base_urls.len() - idx - 1
                             );
                         } else {
                             tracing::debug!(
@@ -405,10 +436,16 @@ mod tests {
 
         assert_eq!(find("authorization"), Some("Bearer test-access-token".to_string()));
         assert_eq!(find("content-type"), Some("application/json".to_string()));
-        assert_eq!(find("accept-encoding"), Some("gzip".to_string()));
+        assert_eq!(
+            find("accept-encoding"),
+            Some("gzip, deflate, br".to_string())
+        );
         assert_eq!(
             find("user-agent"),
-            Some(crate::constants::USER_AGENT.clone())
+            Some(format!(
+                "{} google-api-nodejs-client/10.3.0",
+                crate::constants::USER_AGENT.as_str()
+            ))
         );
         assert_eq!(
             find("anthropic-beta"),
@@ -426,7 +463,7 @@ mod tests {
         let initial = client.get_google_policy().await;
         assert!(matches!(
             initial.mode,
-            crate::proxy::config::GoogleMode::PublicGoogle
+            crate::proxy::config::GoogleMode::CodeassistCompat
         ));
 
         let mut updated = initial.clone();

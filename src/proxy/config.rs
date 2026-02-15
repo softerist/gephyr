@@ -236,14 +236,68 @@ pub struct DebugLoggingConfig {
 #[serde(rename_all = "snake_case")]
 pub enum GoogleMode {
     #[default]
-    PublicGoogle,
     CodeassistCompat,
+    PublicGoogle,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleMimicProfile {
+    #[default]
+    StrictMimic,
+    Functional,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GoogleUserinfoEndpoint {
+    #[default]
+    Oauth2V2,
+    OpenidconnectV1,
+    DualFallback,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleMimicConfig {
+    #[serde(default)]
+    pub profile: GoogleMimicProfile,
+    #[serde(default = "default_true")]
+    pub trigger_on_auth_events: bool,
+    #[serde(default = "default_google_mimic_cooldown_seconds")]
+    pub cooldown_seconds: u64,
+}
+
+impl Default for GoogleMimicConfig {
+    fn default() -> Self {
+        Self {
+            profile: GoogleMimicProfile::default(),
+            trigger_on_auth_events: true,
+            cooldown_seconds: default_google_mimic_cooldown_seconds(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleHeaderOptions {
     #[serde(default)]
     pub send_host_header: bool,
+    #[serde(default)]
+    pub send_x_goog_api_client: Option<bool>,
+    #[serde(default = "default_google_x_goog_api_client")]
+    pub x_goog_api_client: String,
+    #[serde(default)]
+    pub send_x_goog_api_client_on_cloudcode: bool,
+}
+
+impl Default for GoogleHeaderOptions {
+    fn default() -> Self {
+        Self {
+            send_host_header: true,
+            send_x_goog_api_client: None,
+            x_goog_api_client: default_google_x_goog_api_client(),
+            send_x_goog_api_client_on_cloudcode: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,6 +328,10 @@ pub struct GoogleConfig {
     pub headers: GoogleHeaderOptions,
     #[serde(default)]
     pub identity_metadata: GoogleIdentityMetadata,
+    #[serde(default)]
+    pub mimic: GoogleMimicConfig,
+    #[serde(default)]
+    pub userinfo_endpoint: GoogleUserinfoEndpoint,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -524,6 +582,14 @@ fn default_google_identity_plugin_type() -> String {
     "GEMINI".to_string()
 }
 
+fn default_google_x_goog_api_client() -> String {
+    "gl-node/22.21.1".to_string()
+}
+
+fn default_google_mimic_cooldown_seconds() -> u64 {
+    300
+}
+
 impl ProxyConfig {
     pub fn get_bind_address(&self) -> &str {
         if self.allow_lan_access {
@@ -594,4 +660,47 @@ pub enum ProxySelectionStrategy {
     Priority,
     LeastConnections,
     WeightedRoundRobin,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn google_mimic_defaults_are_strict_with_auth_triggers() {
+        let cfg = GoogleConfig::default();
+        assert!(matches!(cfg.mimic.profile, GoogleMimicProfile::StrictMimic));
+        assert!(cfg.mimic.trigger_on_auth_events);
+        assert_eq!(cfg.mimic.cooldown_seconds, 300);
+    }
+
+    #[test]
+    fn google_userinfo_endpoint_default_is_oauth2_v2() {
+        let cfg = GoogleConfig::default();
+        assert!(matches!(
+            cfg.userinfo_endpoint,
+            GoogleUserinfoEndpoint::Oauth2V2
+        ));
+    }
+
+    #[test]
+    fn google_mimic_config_deserializes_custom_values() {
+        let value = serde_json::json!({
+            "mode": "codeassist_compat",
+            "mimic": {
+                "profile": "functional",
+                "trigger_on_auth_events": false,
+                "cooldown_seconds": 42
+            },
+            "userinfo_endpoint": "dual_fallback"
+        });
+        let cfg: GoogleConfig = serde_json::from_value(value).expect("valid google config");
+        assert!(matches!(cfg.mimic.profile, GoogleMimicProfile::Functional));
+        assert!(!cfg.mimic.trigger_on_auth_events);
+        assert_eq!(cfg.mimic.cooldown_seconds, 42);
+        assert!(matches!(
+            cfg.userinfo_endpoint,
+            GoogleUserinfoEndpoint::DualFallback
+        ));
+    }
 }

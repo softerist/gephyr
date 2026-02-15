@@ -118,7 +118,7 @@ pub fn normalize_preview_alias(model: &str) -> String {
 }
 
 pub fn web_search_fallback_model() -> &'static str {
-    MODEL_GEMINI_30_FLASH
+    MODEL_GEMINI_3_FLASH
 }
 
 pub fn is_high_quality_grounding_candidate(model: &str) -> bool {
@@ -235,31 +235,43 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
         "claude-sonnet-4-5-20250929",
         MODEL_CLAUDE_SONNET_45_THINKING,
     );
+    // Legacy Claude 3.x aliases still used by some clients; map to supported
+    // Sonnet/Haiku families so /v1/messages does not pass unknown model IDs upstream.
+    m.insert("claude-3-5-sonnet", MODEL_CLAUDE_SONNET_45_THINKING);
+    m.insert("claude-3-5-sonnet-latest", MODEL_CLAUDE_SONNET_45_THINKING);
+    m.insert("claude-3.5-sonnet", MODEL_CLAUDE_SONNET_45_THINKING);
+    m.insert("claude-3-7-sonnet", MODEL_CLAUDE_SONNET_46_THINKING);
+    m.insert("claude-3-7-sonnet-latest", MODEL_CLAUDE_SONNET_46_THINKING);
+    m.insert("claude-3.7-sonnet", MODEL_CLAUDE_SONNET_46_THINKING);
     m.insert(MODEL_CLAUDE_HAIKU_45, MODEL_CLAUDE_HAIKU_45);
     m.insert("claude-haiku-4-5-20251001", MODEL_CLAUDE_HAIKU_45);
-    m.insert("gpt-5.3", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-chat-latest", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-preview", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-thinking", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-agent", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-mini", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-nano", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-codex-nano", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-codex-mini", MODEL_GEMINI_30_FLASH);
-    m.insert(MODEL_GPT_53_CODEX, MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-codex-pro", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.3-codex-edit", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2-chat-latest", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2-pro", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2-thinking", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.2-codex", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.1", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.1-codex", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5.1-codex-max", MODEL_GEMINI_30_FLASH);
-    m.insert(MODEL_GPT_5, MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5-mini", MODEL_GEMINI_30_FLASH);
-    m.insert("gpt-5-nano", MODEL_GEMINI_30_FLASH);
+    m.insert("claude-3-5-haiku", MODEL_CLAUDE_HAIKU_45);
+    m.insert("claude-3-5-haiku-latest", MODEL_CLAUDE_HAIKU_45);
+    m.insert("claude-3.5-haiku", MODEL_CLAUDE_HAIKU_45);
+    m.insert("gpt-5.3", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-chat-latest", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-preview", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-thinking", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-agent", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex-low", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex-medium", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex-high", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex-extra-high", MODEL_GEMINI_3_FLASH);
+    m.insert(MODEL_GPT_53_CODEX, MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex-pro", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.3-codex-edit", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.2", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.2-chat-latest", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.2-pro", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.2-thinking", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.2-codex", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.1", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.1-codex", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5.1-codex-max", MODEL_GEMINI_3_FLASH);
+    m.insert(MODEL_GPT_5, MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5-mini", MODEL_GEMINI_3_FLASH);
+    m.insert("gpt-5-nano", MODEL_GEMINI_3_FLASH);
     m.insert(MODEL_GEMINI_3_PRO_PREVIEW, MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO, MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO_LOW, MODEL_GEMINI_3_PRO_PREVIEW);
@@ -294,11 +306,11 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3.0-pro-search", MODEL_GEMINI_30_PRO);
     m.insert("claude", MODEL_CLAUDE_SONNET_45);
     m.insert(MODEL_CLAUDE_SONNET_ALIAS, MODEL_CLAUDE_SONNET_45);
-    m.insert("gpt", MODEL_GEMINI_30_FLASH);
-    m.insert("gemini", MODEL_GEMINI_30_FLASH);
-    m.insert(MODEL_GEMINI_PRO_ALIAS, MODEL_GEMINI_30_FLASH);
-    m.insert("text-model", MODEL_GEMINI_30_FLASH);
-    m.insert("chat-model", MODEL_GEMINI_30_FLASH);
+    m.insert("gpt", MODEL_GEMINI_3_FLASH);
+    m.insert("gemini", MODEL_GEMINI_3_FLASH);
+    m.insert(MODEL_GEMINI_PRO_ALIAS, MODEL_GEMINI_3_FLASH);
+    m.insert("text-model", MODEL_GEMINI_3_FLASH);
+    m.insert("chat-model", MODEL_GEMINI_3_FLASH);
 
     m
 });
@@ -307,7 +319,7 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         return mapped.to_string();
     }
     if is_openai_gpt_model(input) {
-        return MODEL_GEMINI_30_FLASH.to_string();
+        return MODEL_GEMINI_3_FLASH.to_string();
     }
     if is_gemini_model(input) || input.contains("thinking") {
         return input.to_string();
@@ -471,10 +483,22 @@ mod tests {
             "gemini-3-flash-mini-test"
         );
         assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
-        assert_eq!(map_claude_model_to_gemini("gpt-5"), "gemini-3.0-flash");
+        assert_eq!(map_claude_model_to_gemini("gpt-5"), "gemini-3-flash");
         assert_eq!(
             map_claude_model_to_gemini("GPT-5.3-CODEX-PRO"),
-            "gemini-3.0-flash"
+            "gemini-3-flash"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("claude-3-5-sonnet"),
+            "claude-sonnet-4-5-thinking"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("claude-3-7-sonnet"),
+            "claude-sonnet-4-6-thinking"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("claude-3-5-haiku"),
+            "claude-haiku-4-5"
         );
     }
 

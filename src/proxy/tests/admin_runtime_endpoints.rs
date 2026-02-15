@@ -616,7 +616,16 @@ mod tests {
         assert!(body["inputs"]["debug_logging_source"].is_string());
         assert!(body["headers"]["send_host_header_configured"].is_boolean());
         assert!(body["headers"]["send_host_header_effective"].is_boolean());
+        assert!(
+            body["headers"]["send_x_goog_api_client_configured"].is_null()
+                || body["headers"]["send_x_goog_api_client_configured"].is_boolean()
+        );
+        assert!(body["headers"]["send_x_goog_api_client_effective"].is_boolean());
+        assert!(body["headers"]["send_x_goog_api_client_on_cloudcode"].is_boolean());
+        assert!(body["headers"]["x_goog_api_client"].is_string());
+        assert!(body["headers"]["x_goog_api_client_ua_guard"].is_string());
         assert!(body["headers"]["always_set"].is_array());
+        assert!(body["headers"]["conditionally_set"].is_array());
         assert!(body["headers"]["json_request_header"].is_object());
         assert!(body["headers"]["passthrough_policy"].is_string());
         assert!(body["headers"]["allowed_passthrough_headers"].is_array());
@@ -1161,6 +1170,11 @@ mod tests {
 
         config_body["proxy"]["google"]["mode"] = Value::from("codeassist_compat");
         config_body["proxy"]["google"]["headers"]["send_host_header"] = Value::from(true);
+        config_body["proxy"]["google"]["headers"]["send_x_goog_api_client"] = Value::from(true);
+        config_body["proxy"]["google"]["headers"]["x_goog_api_client"] =
+            Value::from("gl-node/22.21.1");
+        config_body["proxy"]["google"]["headers"]["send_x_goog_api_client_on_cloudcode"] =
+            Value::from(true);
         config_body["proxy"]["google"]["identity_metadata"]["ide_type"] = Value::from("TEST_IDE");
         config_body["proxy"]["google"]["identity_metadata"]["platform"] =
             Value::from("TEST_PLATFORM");
@@ -1194,6 +1208,22 @@ mod tests {
         assert_eq!(
             policy_body["headers"]["send_host_header_effective"],
             Value::from(true)
+        );
+        assert_eq!(
+            policy_body["headers"]["send_x_goog_api_client_configured"],
+            Value::from(true)
+        );
+        assert_eq!(
+            policy_body["headers"]["send_x_goog_api_client_effective"],
+            Value::from(true)
+        );
+        assert_eq!(
+            policy_body["headers"]["send_x_goog_api_client_on_cloudcode"],
+            Value::from(true)
+        );
+        assert_eq!(
+            policy_body["headers"]["x_goog_api_client"],
+            Value::from("gl-node/22.21.1")
         );
         assert_eq!(
             policy_body["identity_metadata"]["ide_type"],

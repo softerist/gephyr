@@ -67,11 +67,9 @@ pub(crate) async fn admin_save_config(
     state
         .core
         .upstream
-        .set_google_policy(
-            crate::proxy::upstream::header_policy::GoogleOutboundHeaderPolicy::from_proxy_config(
-                new_config.proxy.google.clone(),
-                new_config.proxy.debug_logging.clone(),
-            ),
+        .set_google_runtime_config(
+            new_config.proxy.google.clone(),
+            new_config.proxy.debug_logging.clone(),
         )
         .await;
     state

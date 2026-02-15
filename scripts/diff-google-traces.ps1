@@ -3,7 +3,11 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$KnownGoodPath,
     [string]$OutJson = "output/google_trace_diff_report.json",
-    [string]$OutText = "output/google_trace_diff_report.txt"
+    [string]$OutText = "output/google_trace_diff_report.txt",
+    [string[]]$IgnoreHeaders = @("content-length"),
+    [switch]$IgnoreConnectionHeader
+    ,
+    [switch]$IgnoreDeviceHeaders
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +31,33 @@ function Is-GoogleEndpoint {
     param([string]$Endpoint)
     if (-not $Endpoint) { return $false }
     return $Endpoint -match '(?i)^https?://[^/]*(googleapis\.com|google\.com)(?::\d+)?/'
+}
+
+function Normalize-Endpoint {
+    param([string]$Endpoint)
+    if (-not $Endpoint) { return $Endpoint }
+    try {
+        $uri = [System.Uri]$Endpoint
+    } catch {
+        return $Endpoint
+    }
+
+    $normalizedHost = $uri.Host.ToLowerInvariant()
+    if ($normalizedHost -eq "daily-cloudcode-pa.googleapis.com") {
+        $normalizedHost = "cloudcode-pa.googleapis.com"
+    }
+
+    $portPart = ""
+    if (-not $uri.IsDefaultPort) {
+        $portPart = ":$($uri.Port)"
+    }
+    return "{0}://{1}{2}{3}" -f $uri.Scheme.ToLowerInvariant(), $normalizedHost, $portPart, $uri.PathAndQuery
+}
+
+function Is-NoiseEndpoint {
+    param([string]$Endpoint)
+    if (-not $Endpoint) { return $false }
+    return $Endpoint -match '(?i)^https?://oauth2\.googleapis\.com/tokeninfo(?:\?|$)'
 }
 
 function Get-HarRecords {
@@ -148,24 +179,51 @@ function Load-TraceRecords {
     return Get-JsonlRecords -Path $Path
 }
 
-function Get-HeaderSetByEndpoint {
+function New-NormalizedHeaderIgnoreSet {
+    param(
+        [string[]]$IgnoreHeaders,
+        [bool]$IncludeConnection,
+        [bool]$IncludeDevice
+    )
+    $set = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($h in $IgnoreHeaders) {
+        if (-not $h) { continue }
+        [void]$set.Add($h.Trim().ToLowerInvariant())
+    }
+    if ($IncludeConnection) {
+        [void]$set.Add("connection")
+    }
+    if ($IncludeDevice) {
+        foreach ($h in @("x-machine-id","x-mac-machine-id","x-dev-device-id","x-sqm-id")) {
+            [void]$set.Add($h)
+        }
+    }
+    return $set
+}
+
+function Get-EndpointStats {
     param([object[]]$Records)
     $byEndpoint = @{}
     foreach ($r in $Records) {
-        $endpoint = [string]$r.endpoint
+        $endpoint = Normalize-Endpoint -Endpoint ([string]$r.endpoint)
         if (-not $endpoint) { continue }
+        if (Is-NoiseEndpoint -Endpoint $endpoint) { continue }
         if (-not $byEndpoint.ContainsKey($endpoint)) {
-            $byEndpoint[$endpoint] = New-Object System.Collections.Generic.HashSet[string]
+            $byEndpoint[$endpoint] = [pscustomobject]@{
+                count = 0
+                headers = (New-Object System.Collections.Generic.HashSet[string])
+            }
         }
+        $byEndpoint[$endpoint].count += 1
 
         $headers = $r.headers
         if ($headers -is [System.Collections.IDictionary]) {
             foreach ($k in $headers.Keys) {
-                [void]$byEndpoint[$endpoint].Add(([string]$k).ToLowerInvariant())
+                [void]$byEndpoint[$endpoint].headers.Add(([string]$k).ToLowerInvariant())
             }
         } else {
             foreach ($prop in $headers.PSObject.Properties.Name) {
-                [void]$byEndpoint[$endpoint].Add(([string]$prop).ToLowerInvariant())
+                [void]$byEndpoint[$endpoint].headers.Add(([string]$prop).ToLowerInvariant())
             }
         }
     }
@@ -205,8 +263,10 @@ if ($knownIsEmpty) {
     Write-Warning "No Google HTTP requests were parsed from '$KnownGoodPath'. If this is a Fiddler SAZ, enable HTTPS decryption so requests are captured beyond CONNECT tunnels."
 }
 
-$gephyrByEndpoint = Get-HeaderSetByEndpoint -Records $gephyr
-$knownByEndpoint = Get-HeaderSetByEndpoint -Records $known
+$ignoreSet = New-NormalizedHeaderIgnoreSet -IgnoreHeaders $IgnoreHeaders -IncludeConnection:$IgnoreConnectionHeader -IncludeDevice:$IgnoreDeviceHeaders
+
+$gephyrByEndpoint = Get-EndpointStats -Records $gephyr
+$knownByEndpoint = Get-EndpointStats -Records $known
 
 $allEndpoints = @($gephyrByEndpoint.Keys + $knownByEndpoint.Keys | Sort-Object -Unique)
 $endpointComparisons = @()
@@ -214,19 +274,46 @@ $endpointComparisons = @()
 foreach ($endpoint in $allEndpoints) {
     $gephyrHeaders = @()
     $knownHeaders = @()
+    $gephyrCount = 0
+    $knownCount = 0
     if ($gephyrByEndpoint.ContainsKey($endpoint)) {
-        $gephyrHeaders = @($gephyrByEndpoint[$endpoint] | Sort-Object)
+        $gephyrCount = [int]$gephyrByEndpoint[$endpoint].count
+        $gephyrHeaders = @($gephyrByEndpoint[$endpoint].headers | Sort-Object)
     }
     if ($knownByEndpoint.ContainsKey($endpoint)) {
-        $knownHeaders = @($knownByEndpoint[$endpoint] | Sort-Object)
+        $knownCount = [int]$knownByEndpoint[$endpoint].count
+        $knownHeaders = @($knownByEndpoint[$endpoint].headers | Sort-Object)
     }
 
-    $missingInGephyr = @($knownHeaders | Where-Object { $_ -notin $gephyrHeaders } | Sort-Object)
-    $extraInGephyr = @($gephyrHeaders | Where-Object { $_ -notin $knownHeaders } | Sort-Object)
+    $knownHeadersCompared = @($knownHeaders | Where-Object { -not $ignoreSet.Contains($_) } | Sort-Object)
+    $gephyrHeadersCompared = @($gephyrHeaders | Where-Object { -not $ignoreSet.Contains($_) } | Sort-Object)
+
+    $missingInGephyr = @($knownHeadersCompared | Where-Object { $_ -notin $gephyrHeadersCompared } | Sort-Object)
+    $extraInGephyr = @($gephyrHeadersCompared | Where-Object { $_ -notin $knownHeadersCompared } | Sort-Object)
     $blockedInGephyr = Get-BlockedHeaders -HeaderNames $gephyrHeaders
+
+    $classification = "matched_or_extra_only"
+    if ($knownCount -gt 0 -and $gephyrCount -eq 0) {
+        $classification = "missing_endpoint_not_exercised"
+    } elseif ($knownCount -gt 0 -and $gephyrCount -gt 0 -and $missingInGephyr.Count -gt 0) {
+        $classification = "missing_headers_on_exercised_endpoint"
+    } elseif ($knownCount -eq 0 -and $gephyrCount -gt 0) {
+        $classification = "extra_endpoint_in_gephyr"
+    }
+
+    # If the endpoint was not present in known-good, listing "extra" headers is misleading noise
+    # (it just reflects that there was no baseline). Keep header inventories in JSON, but
+    # suppress the derived extra/missing lists for clarity.
+    if ($classification -eq "extra_endpoint_in_gephyr") {
+        $missingInGephyr = @()
+        $extraInGephyr = @()
+    }
 
     $endpointComparisons += [pscustomobject]@{
         endpoint           = $endpoint
+        classification     = $classification
+        known_request_count = $knownCount
+        gephyr_request_count = $gephyrCount
         known_header_names = $knownHeaders
         gephyr_header_names = $gephyrHeaders
         missing_in_gephyr  = $missingInGephyr
@@ -235,6 +322,16 @@ foreach ($endpoint in $allEndpoints) {
     }
 }
 
+$classificationSummary = $endpointComparisons |
+    Group-Object classification |
+    Sort-Object Name |
+    ForEach-Object {
+        [pscustomobject]@{
+            classification = $_.Name
+            count = $_.Count
+        }
+    }
+
 $report = [pscustomobject]@{
     generated_at = (Get-Date).ToString("o")
     gephyr_path = $GephyrPath
@@ -242,6 +339,8 @@ $report = [pscustomobject]@{
     gephyr_records = $gephyr.Count
     known_good_records = $known.Count
     endpoint_count = $allEndpoints.Count
+    ignored_headers = @($ignoreSet | Sort-Object)
+    classification_summary = $classificationSummary
     endpoints = $endpointComparisons
 }
 
@@ -253,6 +352,11 @@ $lines += "Generated: $($report.generated_at)"
 $lines += "Gephyr records: $($report.gephyr_records)"
 $lines += "Known-good records: $($report.known_good_records)"
 $lines += "Endpoints compared: $($report.endpoint_count)"
+$lines += "Ignored headers in diff: $((@($report.ignored_headers) -join ', '))"
+$lines += "Classification summary:"
+foreach ($c in $classificationSummary) {
+    $lines += "  $($c.classification): $($c.count)"
+}
 $lines += ""
 if ($knownIsEmpty) {
     $lines += "WARNING: No known-good Google HTTP requests were parsed."
@@ -262,8 +366,17 @@ if ($knownIsEmpty) {
 $lines += ""
 foreach ($e in $endpointComparisons) {
     $lines += "Endpoint: $($e.endpoint)"
-    $lines += "  missing_in_gephyr: $((@($e.missing_in_gephyr) -join ', '))"
-    $lines += "  extra_in_gephyr: $((@($e.extra_in_gephyr) -join ', '))"
+    $lines += "  classification: $($e.classification)"
+    $lines += "  exercised_known_good: $($e.known_request_count)"
+    $lines += "  exercised_gephyr: $($e.gephyr_request_count)"
+    if ($e.classification -eq "extra_endpoint_in_gephyr") {
+        $lines += "  missing_in_gephyr: "
+        $lines += "  extra_in_gephyr: "
+        $lines += "  note: endpoint not present in known-good capture; recapture known-good to diff headers."
+    } else {
+        $lines += "  missing_in_gephyr: $((@($e.missing_in_gephyr) -join ', '))"
+        $lines += "  extra_in_gephyr: $((@($e.extra_in_gephyr) -join ', '))"
+    }
     $lines += "  blocked_in_gephyr: $((@($e.blocked_in_gephyr) -join ', '))"
     $lines += ""
 }

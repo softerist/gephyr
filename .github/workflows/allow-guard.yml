@@ -5,6 +5,9 @@ on:
     paths:
       - 'src/**'
       - 'scripts/check-allow-attributes.sh'
+      - 'scripts/validate-google-generation-mapping.ps1'
+      - 'scripts/allowlists/google_generation_upstream_callers.txt'
+      - 'scripts/allowlists/google_generation_ingress_routes.txt'
       - '.github/workflows/allow-guard.yml'
   push:
     branches:
@@ -12,6 +15,9 @@ on:
     paths:
       - 'src/**'
       - 'scripts/check-allow-attributes.sh'
+      - 'scripts/validate-google-generation-mapping.ps1'
+      - 'scripts/allowlists/google_generation_upstream_callers.txt'
+      - 'scripts/allowlists/google_generation_ingress_routes.txt'
       - '.github/workflows/allow-guard.yml'
 
 jobs:
@@ -23,3 +29,8 @@ jobs:
 
       - name: Enforce allow-attribute policy
         run: bash scripts/check-allow-attributes.sh
+
+      - name: Enforce Google generation mapping guardrail
+        shell: pwsh
+        run: |
+          ./scripts/validate-google-generation-mapping.ps1

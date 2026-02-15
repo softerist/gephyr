@@ -1180,6 +1180,10 @@ oauth_flow() {
     exit 1
   fi
 
+  if [[ -z "${ENCRYPTION_KEY:-}" ]]; then
+    echo "WARNING: [W-CRYPTO-KEY-MISSING] ENCRYPTION_KEY is not set in your shell/.env.local. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY, restart container, then rerun login." >&2
+  fi
+
   local oauth_json oauth_url
   oauth_json="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/api/auth/url")"
   oauth_url="$(printf '%s' "$oauth_json" | sed -nE 's/.*"url"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p')"
@@ -1454,7 +1458,7 @@ assert_docker_running() {
 }
 
 # Commands that require Docker
-DOCKER_COMMANDS="start stop restart status logs health login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout accounts-signout-and-delete accounts-signout-all accounts-signout-all-and-stop accounts-delete accounts-delete-and-stop accounts-delete-all accounts-delete-all-and-stop"
+DOCKER_COMMANDS="start stop restart status logs health check canary login oauth auth accounts api-test rotate-key docker-repair rebuild update accounts-signout accounts-signout-and-delete accounts-signout-all accounts-signout-all-and-stop accounts-delete accounts-delete-and-stop accounts-delete-all accounts-delete-all-and-stop"
 
 # Check Docker for commands that need it
 if echo "$DOCKER_COMMANDS" | grep -qw "$COMMAND"; then

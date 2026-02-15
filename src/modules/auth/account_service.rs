@@ -62,6 +62,11 @@ impl AccountService {
             "[Service] Added/Updated account: {}",
             account.email
         ));
+        Self::spawn_google_mimic_flow(
+            token_res.access_token.clone(),
+            account.id.clone(),
+            account.token.project_id.clone(),
+        );
         Ok(account)
     }
     pub fn delete_account(&self, account_id: &str) -> Result<(), String> {
@@ -147,6 +152,11 @@ impl AccountService {
 
         let account = account::upsert_account(email, display_name, token_data, google_sub)?;
         self.integration.refresh_runtime_state();
+        Self::spawn_google_mimic_flow(
+            token_res.access_token,
+            account.id.clone(),
+            account.token.project_id.clone(),
+        );
 
         Ok(account)
     }
@@ -158,5 +168,20 @@ impl AccountService {
     ) -> Result<(String, Option<String>, Option<String>), String> {
         let identity = oauth::verify_identity(access_token, raw_id_token, account_id).await?;
         Ok((identity.email, identity.name, identity.google_sub))
+    }
+
+    fn spawn_google_mimic_flow(access_token: String, account_id: String, project_id: Option<String>) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = crate::proxy::google::mimic_flow::run_auth_event_mimic_flow(
+                    &access_token,
+                    Some(&account_id),
+                    project_id.as_deref(),
+                )
+                .await;
+            });
+        } else {
+            logger::log_warn("[Service] Skipping google mimic flow spawn: no async runtime");
+        }
     }
 }

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use crate::proxy::upstream::header_policy::{
     build_google_headers, build_load_code_assist_metadata, host_from_url,
-    load_policy_from_runtime_config, GoogleHeaderPolicyContext,
+    load_policy_from_runtime_config, GoogleHeaderPolicyContext, GoogleHeaderScope,
 };
 
 fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
@@ -15,12 +15,25 @@ pub async fn fetch_project_id(
     access_token: &str,
     account_id: Option<&str>,
 ) -> Result<String, String> {
-    fetch_project_id_at(
-        access_token,
-        account_id,
-        "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-    )
-    .await
+    let profile = crate::modules::system::config::load_app_config()
+        .ok()
+        .map(|cfg| cfg.proxy.google.mimic.profile)
+        .unwrap_or_default();
+    let hosts = crate::proxy::google::endpoints::cloudcode_hosts_for_profile(profile);
+    let mut last_err = String::new();
+    for host in hosts {
+        let endpoint = crate::proxy::google::endpoints::endpoint_load_code_assist(host);
+        match fetch_project_id_at(access_token, account_id, &endpoint).await {
+            Ok(project_id) => return Ok(project_id),
+            Err(e) => {
+                last_err = e;
+            }
+        }
+    }
+    if last_err.is_empty() {
+        return Err("No cloudcode hosts configured".to_string());
+    }
+    Err(last_err)
 }
 
 async fn fetch_project_id_at(
@@ -36,11 +49,13 @@ async fn fetch_project_id_at(
         GoogleHeaderPolicyContext {
             endpoint: url,
             endpoint_host: endpoint_host.as_deref(),
+            scope: GoogleHeaderScope::Cloudcode,
             user_agent: crate::constants::USER_AGENT.as_str(),
             access_token: Some(access_token),
             content_type_json: true,
             device_profile: device_profile.as_ref(),
             extra_headers: None,
+            force_connection_close: true,
         },
         &policy,
     );
@@ -178,7 +193,10 @@ mod tests {
                 .map(|(_, v)| v.clone())
         };
 
-        assert_eq!(find("accept-encoding"), Some("gzip".to_string()));
+        assert_eq!(
+            find("accept-encoding"),
+            Some("gzip, deflate, br".to_string())
+        );
         assert_eq!(find("authorization"), Some("Bearer access-token".to_string()));
         assert!(body.pointer("/metadata/ideType").is_some());
         assert!(body.pointer("/metadata/platform").is_some());

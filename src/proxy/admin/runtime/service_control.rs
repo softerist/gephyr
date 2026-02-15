@@ -395,6 +395,23 @@ pub(crate) async fn admin_get_google_outbound_policy(
         crate::proxy::config::GoogleMode::PublicGoogle => "public_google",
         crate::proxy::config::GoogleMode::CodeassistCompat => "codeassist_compat",
     };
+    let cfg = crate::modules::system::config::load_app_config().ok();
+    let google_cfg = cfg
+        .as_ref()
+        .map(|c| c.proxy.google.clone())
+        .unwrap_or_default();
+    let mimic_profile = match google_cfg.mimic.profile.clone() {
+        crate::proxy::config::GoogleMimicProfile::StrictMimic => "strict_mimic",
+        crate::proxy::config::GoogleMimicProfile::Functional => "functional",
+    };
+    let userinfo_endpoint = match google_cfg.userinfo_endpoint {
+        crate::proxy::config::GoogleUserinfoEndpoint::Oauth2V2 => "oauth2_v2",
+        crate::proxy::config::GoogleUserinfoEndpoint::OpenidconnectV1 => "openidconnect_v1",
+        crate::proxy::config::GoogleUserinfoEndpoint::DualFallback => "dual_fallback",
+    };
+    let cloudcode_host_strategy = crate::proxy::google::endpoints::cloudcode_host_strategy(
+        google_cfg.mimic.profile.clone(),
+    );
 
     Ok(Json(serde_json::json!({
         "mode": mode,
@@ -405,10 +422,18 @@ pub(crate) async fn admin_get_google_outbound_policy(
         "headers": {
             "send_host_header_configured": policy.send_host_header,
             "send_host_header_effective": policy.should_send_host_header(),
+            "send_x_goog_api_client_configured": policy.send_x_goog_api_client,
+            "send_x_goog_api_client_effective": policy.send_x_goog_api_client_effective(),
+            "send_x_goog_api_client_on_cloudcode": policy.send_x_goog_api_client_on_cloudcode,
+            "x_goog_api_client": policy.x_goog_api_client.clone(),
+            "x_goog_api_client_ua_guard": "antigravity/* or google-api-nodejs-client/*",
             "always_set": [
                 "authorization",
                 "user-agent",
                 "accept-encoding"
+            ],
+            "conditionally_set": [
+                "x-goog-api-client"
             ],
             "json_request_header": {
                 "content-type": "application/json"
@@ -441,6 +466,13 @@ pub(crate) async fn admin_get_google_outbound_policy(
                 "*api-key*",
                 "cookie"
             ]
+        },
+        "mimic": {
+            "profile": mimic_profile,
+            "trigger_on_auth_events": google_cfg.mimic.trigger_on_auth_events,
+            "cooldown_seconds": google_cfg.mimic.cooldown_seconds,
+            "userinfo_endpoint": userinfo_endpoint,
+            "cloudcode_host_strategy": cloudcode_host_strategy
         }
     })))
 }

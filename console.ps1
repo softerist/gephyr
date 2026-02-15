@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Position = 0)]
     [string]$Command = "start",
     [switch]$Help,
@@ -315,6 +315,9 @@ function Start-Container {
     }
     if ($env:STARTUP_HEALTH_DELAY_MAX_SECONDS) {
         $runtimeArgs += @("-e", "STARTUP_HEALTH_DELAY_MAX_SECONDS=$($env:STARTUP_HEALTH_DELAY_MAX_SECONDS)")
+    }
+    if ($env:GEPHYR_DISABLE_PROMPT_ROUTES) {
+        $runtimeArgs += @("-e", "GEPHYR_DISABLE_PROMPT_ROUTES=$($env:GEPHYR_DISABLE_PROMPT_ROUTES)")
     }
 
     $containerId = docker run --rm -d --name $ContainerName `

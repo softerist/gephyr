@@ -23,6 +23,51 @@ use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use tokio::time::Duration;
 
+fn is_capacity_unavailable_error(status_code: u16, error_text: &str) -> bool {
+    if status_code != 503 {
+        return false;
+    }
+    let lower = error_text.to_ascii_lowercase();
+    lower.contains("no capacity available for model") || lower.contains("model_capacity")
+}
+
+fn model_capacity_fallback(model: &str) -> Option<&'static str> {
+    let lower = model.to_ascii_lowercase();
+    if lower == crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH {
+        return None;
+    }
+
+    if lower.starts_with("gemini-") || lower.starts_with("gpt-") {
+        return Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH);
+    }
+
+    None
+}
+
+fn model_not_found_fallback(model: &str) -> Option<&'static str> {
+    let lower = model.to_ascii_lowercase();
+
+    if lower.starts_with("gemini-3.0-flash-thinking") {
+        return Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH);
+    }
+    if lower == crate::proxy::common::model_mapping::MODEL_GEMINI_30_FLASH
+        || lower.starts_with("gemini-3.0-flash")
+    {
+        return Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH);
+    }
+    if lower.starts_with("gemini-3.0-pro-thinking") {
+        return Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO_HIGH);
+    }
+    if lower == crate::proxy::common::model_mapping::MODEL_GEMINI_30_PRO
+        || lower == crate::proxy::common::model_mapping::MODEL_GEMINI_30_ULTRA
+        || lower.starts_with("gemini-3.0-pro")
+    {
+        return Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO_HIGH);
+    }
+
+    None
+}
+
 pub async fn handle_chat_completions(
     State(state): State<OpenAIHandlerState>,
     headers: HeaderMap,
@@ -117,16 +162,24 @@ pub async fn handle_chat_completions(
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let base_max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
-    let max_attempts = token_manager
+    let mut max_attempts = token_manager
         .effective_retry_attempts(base_max_attempts)
         .await;
 
     let mut last_error = String::new();
     let mut last_email: Option<String> = None;
-    let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
+    let mut mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
         &openai_req.model,
         &*state.custom_mapping.read().await,
     );
+    let mut attempted_capacity_fallback = false;
+    let mut attempted_not_found_fallback = false;
+    if model_capacity_fallback(&mapped_model).is_some() {
+        max_attempts = max_attempts.saturating_add(1);
+    }
+    if model_not_found_fallback(&mapped_model).is_some() {
+        max_attempts = max_attempts.saturating_add(1);
+    }
 
     for attempt in 0..max_attempts {
         let tools_val: Option<Vec<Value>> = openai_req.tools.as_ref().map(|list| list.to_vec());
@@ -154,11 +207,26 @@ pub async fn handle_chat_completions(
         {
             Ok(t) => t,
             Err(e) => {
+                let token_error = e.to_string();
+                if token_error.contains("All accounts limited") && !attempted_capacity_fallback {
+                    if let Some(fallback) = model_capacity_fallback(&mapped_model) {
+                        tracing::warn!(
+                            "[{}] Token selection reports all accounts limited for model '{}', falling back to '{}'",
+                            trace_id,
+                            mapped_model,
+                            fallback
+                        );
+                        mapped_model = fallback.to_string();
+                        attempted_capacity_fallback = true;
+                        last_error = format!("Token error: {}", token_error);
+                        continue;
+                    }
+                }
                 return Ok(super::errors::text_error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    &format!("Token error: {}", e),
+                    &format!("Token error: {}", token_error),
                     None,
-                    Some(&mapped_model),
+                    Some(mapped_model.as_str()),
                 ));
             }
         };
@@ -371,6 +439,23 @@ pub async fn handle_chat_completions(
             .await
             .unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
+        if status_code == 404
+            && error_text.contains("NOT_FOUND")
+            && !attempted_not_found_fallback
+            && model_not_found_fallback(&mapped_model).is_some()
+        {
+            if let Some(fallback) = model_not_found_fallback(&mapped_model) {
+                tracing::warn!(
+                    "[{}] Upstream model '{}' returned NOT_FOUND, falling back to '{}'",
+                    trace_id,
+                    mapped_model,
+                    fallback
+                );
+                mapped_model = fallback.to_string();
+                attempted_not_found_fallback = true;
+                continue;
+            }
+        }
         tracing::error!(
             "[OpenAI-Upstream] Error Response {}: {}",
             status_code,
@@ -400,7 +485,26 @@ pub async fn handle_chat_completions(
             .await;
         }
         let strategy = determine_retry_strategy(status_code, &error_text, false);
-        if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
+        let is_capacity_error = is_capacity_unavailable_error(status_code, &error_text);
+        if is_capacity_error && !attempted_capacity_fallback {
+            if let Some(fallback) = model_capacity_fallback(&mapped_model) {
+                tracing::warn!(
+                    "[{}] Upstream capacity exhausted for model '{}', falling back to '{}'",
+                    trace_id,
+                    mapped_model,
+                    fallback
+                );
+                mapped_model = fallback.to_string();
+                attempted_capacity_fallback = true;
+                continue;
+            }
+        }
+
+        if status_code == 429
+            || status_code == 529
+            || status_code == 500
+            || (status_code == 503 && !is_capacity_error)
+        {
             token_manager
                 .mark_rate_limited_async(
                     &email,
@@ -528,13 +632,13 @@ pub async fn handle_chat_completions(
             status,
             &error_text,
             Some(&email),
-            Some(&mapped_model),
+            Some(mapped_model.as_str()),
         ));
     }
     Ok(super::errors::accounts_exhausted_text_response(
         &last_error,
         last_email.as_deref(),
-        Some(&mapped_model),
+        Some(mapped_model.as_str()),
     ))
 }
 pub async fn handle_completions(
@@ -872,16 +976,24 @@ pub async fn handle_completions(
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let base_max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
-    let max_attempts = token_manager
+    let mut max_attempts = token_manager
         .effective_retry_attempts(base_max_attempts)
         .await;
 
     let mut last_error = String::new();
     let mut last_email: Option<String> = None;
-    let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
+    let mut mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
         &openai_req.model,
         &*state.custom_mapping.read().await,
     );
+    let mut attempted_capacity_fallback = false;
+    let mut attempted_not_found_fallback = false;
+    if model_capacity_fallback(&mapped_model).is_some() {
+        max_attempts = max_attempts.saturating_add(1);
+    }
+    if model_not_found_fallback(&mapped_model).is_some() {
+        max_attempts = max_attempts.saturating_add(1);
+    }
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
     for attempt in 0..max_attempts {
@@ -913,10 +1025,25 @@ pub async fn handle_completions(
         {
             Ok(t) => t,
             Err(e) => {
+                let token_error = e.to_string();
+                if token_error.contains("All accounts limited") && !attempted_capacity_fallback {
+                    if let Some(fallback) = model_capacity_fallback(&mapped_model) {
+                        tracing::warn!(
+                            "[{}] Token selection reports all accounts limited for model '{}', falling back to '{}'",
+                            trace_id,
+                            mapped_model,
+                            fallback
+                        );
+                        mapped_model = fallback.to_string();
+                        attempted_capacity_fallback = true;
+                        last_error = format!("Token error: {}", token_error);
+                        continue;
+                    }
+                }
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     [("X-Mapped-Model", mapped_model)],
-                    format!("Token error: {}", e),
+                    format!("Token error: {}", token_error),
                 )
                     .into_response()
             }
@@ -1177,6 +1304,23 @@ pub async fn handle_completions(
             .await
             .unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
+        if status_code == 404
+            && error_text.contains("NOT_FOUND")
+            && !attempted_not_found_fallback
+            && model_not_found_fallback(&mapped_model).is_some()
+        {
+            if let Some(fallback) = model_not_found_fallback(&mapped_model) {
+                tracing::warn!(
+                    "[{}] Upstream model '{}' returned NOT_FOUND, falling back to '{}'",
+                    trace_id,
+                    mapped_model,
+                    fallback
+                );
+                mapped_model = fallback.to_string();
+                attempted_not_found_fallback = true;
+                continue;
+            }
+        }
 
         tracing::error!(
             "[Codex-Upstream] Error Response {}: {}",
@@ -1186,7 +1330,26 @@ pub async fn handle_completions(
         token_manager
             .mark_compliance_risk_signal(&account_id, status_code)
             .await;
-        if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
+        let is_capacity_error = is_capacity_unavailable_error(status_code, &error_text);
+        if is_capacity_error && !attempted_capacity_fallback {
+            if let Some(fallback) = model_capacity_fallback(&mapped_model) {
+                tracing::warn!(
+                    "[{}] Upstream capacity exhausted for model '{}', falling back to '{}'",
+                    trace_id,
+                    mapped_model,
+                    fallback
+                );
+                mapped_model = fallback.to_string();
+                attempted_capacity_fallback = true;
+                continue;
+            }
+        }
+
+        if status_code == 429
+            || status_code == 529
+            || status_code == 500
+            || (status_code == 503 && !is_capacity_error)
+        {
             token_manager
                 .mark_rate_limited_async(
                     &email,
@@ -1219,4 +1382,65 @@ pub async fn handle_completions(
 
 pub async fn handle_list_models(State(state): State<ModelCatalogState>) -> impl IntoResponse {
     build_models_list_response(&state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_capacity_unavailable_503() {
+        assert!(is_capacity_unavailable_error(
+            503,
+            "No capacity available for model gemini-2.5-pro on the server"
+        ));
+        assert!(is_capacity_unavailable_error(
+            503,
+            "reason: model_capacity exceeded"
+        ));
+        assert!(!is_capacity_unavailable_error(503, "generic unavailable"));
+        assert!(!is_capacity_unavailable_error(
+            429,
+            "No capacity available for model gemini-2.5-pro on the server"
+        ));
+    }
+
+    #[test]
+    fn selects_capacity_fallback_only_for_gemini_or_gpt() {
+        assert_eq!(
+            model_capacity_fallback("gemini-2.5-pro"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH)
+        );
+        assert_eq!(
+            model_capacity_fallback("gpt-5.3-codex"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH)
+        );
+        assert_eq!(model_capacity_fallback("gemini-3-flash"), None);
+        assert_eq!(model_capacity_fallback("claude-sonnet-4-6"), None);
+    }
+
+    #[test]
+    fn maps_not_found_30_aliases_to_3_family() {
+        assert_eq!(
+            model_not_found_fallback("gemini-3.0-flash"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH)
+        );
+        assert_eq!(
+            model_not_found_fallback("gemini-3.0-flash-thinking-0121"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_FLASH)
+        );
+        assert_eq!(
+            model_not_found_fallback("gemini-3.0-pro"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO_HIGH)
+        );
+        assert_eq!(
+            model_not_found_fallback("gemini-3.0-pro-thinking"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO_HIGH)
+        );
+        assert_eq!(
+            model_not_found_fallback("gemini-3.0-ultra"),
+            Some(crate::proxy::common::model_mapping::MODEL_GEMINI_3_PRO_HIGH)
+        );
+        assert_eq!(model_not_found_fallback("gemini-3-flash"), None);
+    }
 }

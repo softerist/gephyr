@@ -163,7 +163,7 @@ impl TokenManager {
     }
 
     pub async fn mark_compliance_risk_signal(&self, account_id: &str, status: u16) {
-        if !matches!(status, 401 | 403 | 429 | 500 | 503 | 529) {
+        if !matches!(status, 401 | 403 | 429 | 529) {
             return;
         }
 

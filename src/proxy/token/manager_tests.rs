@@ -1086,3 +1086,27 @@ fn test_p2c_all_attempted() {
         crate::proxy::token::pool::select_with_p2c(&candidates, &attempted, "claude-sonnet", false);
     assert!(result.is_none());
 }
+
+#[tokio::test]
+async fn test_compliance_risk_signal_503_does_not_trigger_cooldown() {
+    let manager = TokenManager::new(std::env::temp_dir());
+    manager
+        .update_compliance_config(crate::proxy::config::ComplianceConfig {
+            enabled: true,
+            max_global_requests_per_minute: 120,
+            max_account_requests_per_minute: 20,
+            max_account_concurrency: 2,
+            risk_cooldown_seconds: 60,
+            max_retry_attempts: 2,
+        })
+        .await;
+
+    manager
+        .mark_compliance_risk_signal("acc-503-no-cooldown", 503)
+        .await;
+    let allowed = manager
+        .try_acquire_compliance_guard("acc-503-no-cooldown")
+        .await
+        .expect("503 should not trigger compliance cooldown");
+    assert!(allowed.is_some());
+}

@@ -7,7 +7,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const USERINFO_URL: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+const USERINFO_URL_OAUTH2_V2: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
+const USERINFO_URL_OPENIDCONNECT_V1: &str = "https://openidconnect.googleapis.com/v1/userinfo";
 const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -157,16 +158,29 @@ fn apply_google_identity_headers(
         crate::proxy::upstream::header_policy::GoogleHeaderPolicyContext {
             endpoint,
             endpoint_host: endpoint_host.as_deref(),
+            scope: crate::proxy::upstream::header_policy::GoogleHeaderScope::OAuth,
             user_agent: user_agent.as_str(),
             access_token: None,
             content_type_json: false,
             device_profile: device_profile.as_ref(),
             extra_headers: None,
+            force_connection_close: true,
         },
         &policy,
     );
 
     request.headers(headers)
+}
+
+fn configured_userinfo_endpoints() -> Vec<&'static str> {
+    if let Ok(cfg) = crate::modules::system::config::load_app_config() {
+        let endpoints =
+            crate::proxy::google::endpoints::userinfo_endpoints(cfg.proxy.google.userinfo_endpoint);
+        if !endpoints.is_empty() {
+            return endpoints;
+        }
+    }
+    vec![USERINFO_URL_OAUTH2_V2, USERINFO_URL_OPENIDCONNECT_V1]
 }
 
 fn refresh_jitter_seconds(account_id: Option<&str>) -> i64 {
@@ -471,7 +485,16 @@ pub async fn get_user_info(
     access_token: &str,
     account_id: Option<&str>,
 ) -> Result<UserInfo, String> {
-    get_user_info_at(access_token, account_id, USERINFO_URL).await
+    let mut last_err = "No configured userinfo endpoints".to_string();
+    for endpoint in configured_userinfo_endpoints() {
+        match get_user_info_at(access_token, account_id, endpoint).await {
+            Ok(info) => return Ok(info),
+            Err(e) => {
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
 }
 
 async fn get_user_info_at(
@@ -549,9 +572,24 @@ pub async fn verify_identity(
     raw_id_token: Option<&str>,
     account_id: Option<&str>,
 ) -> Result<VerifiedIdentity, String> {
-    verify_identity_at(access_token, raw_id_token, account_id, USERINFO_URL).await
+    if raw_id_token.is_some() {
+        return verify_identity_at(access_token, raw_id_token, account_id, USERINFO_URL_OAUTH2_V2)
+            .await;
+    }
+
+    let mut last_err = "No configured userinfo endpoints".to_string();
+    for endpoint in configured_userinfo_endpoints() {
+        match verify_identity_at(access_token, None, account_id, endpoint).await {
+            Ok(identity) => return Ok(identity),
+            Err(e) => {
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
 }
 
+#[cfg(test)]
 async fn refresh_and_verify_identity_at(
     refresh_token: &str,
     account_id: Option<&str>,
@@ -573,7 +611,14 @@ pub async fn refresh_and_verify_identity(
     refresh_token: &str,
     account_id: Option<&str>,
 ) -> Result<(TokenResponse, VerifiedIdentity), String> {
-    refresh_and_verify_identity_at(refresh_token, account_id, TOKEN_URL, USERINFO_URL).await
+    let token_res = refresh_access_token_at(refresh_token, account_id, TOKEN_URL).await?;
+    let identity = verify_identity(
+        &token_res.access_token,
+        token_res.id_token.as_deref(),
+        account_id,
+    )
+    .await?;
+    Ok((token_res, identity))
 }
 
 pub async fn ensure_fresh_token(
@@ -875,12 +920,14 @@ mod tests {
         assert!(
             captured
                 .iter()
-                .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
-            "expected OAuth refresh call to carry default User-Agent"
+                .any(|ua| ua == "google-api-nodejs-client/10.3.0"),
+            "expected OAuth refresh call to carry google-api-nodejs-client User-Agent"
         );
         assert!(
-            captured_accept_encoding.iter().any(|value| value == "gzip"),
-            "expected OAuth refresh call to carry Accept-Encoding: gzip"
+            captured_accept_encoding
+                .iter()
+                .any(|value| value == "gzip, deflate, br"),
+            "expected OAuth refresh call to carry Accept-Encoding: gzip, deflate, br"
         );
     }
 
@@ -905,8 +952,10 @@ mod tests {
         assert_eq!(token.access_token, "access-test-token");
         assert_eq!(token.expires_in, 3600);
         assert!(
-            captured_accept_encoding.iter().any(|value| value == "gzip"),
-            "expected OAuth refresh call to carry Accept-Encoding: gzip"
+            captured_accept_encoding
+                .iter()
+                .any(|value| value == "gzip, deflate, br"),
+            "expected OAuth refresh call to carry Accept-Encoding: gzip, deflate, br"
         );
     }
 
@@ -929,12 +978,14 @@ mod tests {
         assert!(
             captured
                 .iter()
-                .any(|ua| ua == crate::constants::USER_AGENT.as_str()),
-            "expected OAuth userinfo call to carry default User-Agent"
+                .any(|ua| ua == "google-api-nodejs-client/10.3.0"),
+            "expected OAuth userinfo call to carry google-api-nodejs-client User-Agent"
         );
         assert!(
-            captured_accept_encoding.iter().any(|value| value == "gzip"),
-            "expected OAuth userinfo call to carry Accept-Encoding: gzip"
+            captured_accept_encoding
+                .iter()
+                .any(|value| value == "gzip, deflate, br"),
+            "expected OAuth userinfo call to carry Accept-Encoding: gzip, deflate, br"
         );
     }
 
@@ -962,8 +1013,10 @@ mod tests {
         server.abort();
 
         assert!(
-            captured_accept_encoding.iter().any(|value| value == "gzip"),
-            "expected OAuth token exchange call to carry Accept-Encoding: gzip"
+            captured_accept_encoding
+                .iter()
+                .any(|value| value == "gzip, deflate, br"),
+            "expected OAuth token exchange call to carry Accept-Encoding: gzip, deflate, br"
         );
     }
 
