@@ -1,100 +1,99 @@
 # Google Trace Validation Runbook
 
-Use this runbook to validate Gephyr's Google-bound request shape against known-good client traces in staging.
+Use this runbook to validate Gephyr Google outbound behavior against known-good traces with minimal false drift.
 
 ## Goal
 
-1. Confirm effective runtime policy is what you intended.
-2. Capture outbound header sets from Gephyr (redacted).
-3. Diff Gephyr captures against known-good traces.
-4. Turn debug capture back off after validation.
+1. Validate endpoint and header parity for exercised flows.
+2. Use scoped known-good baselines to avoid mixed-client noise.
+3. Detect early auth/rate/quota regression signals.
 
-## Prerequisites
+## Recommended Commands
 
-1. Admin API enabled (`ENABLE_ADMIN_API=true`).
-2. Staging environment (not production).
-3. A known-good trace set (from your baseline client/environment).
+### Interactive launcher (recommended)
 
-## Step 1: Verify effective runtime policy
-
-```bash
-curl -s http://127.0.0.1:8045/api/proxy/google/outbound-policy \
-  -H "Authorization: Bearer YOUR_API_KEY" | jq
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-google-parity-verify-interactive.ps1
 ```
 
-Validate:
+Select:
 
-1. `mode` is expected (`public_google` or `codeassist_compat`).
-2. `headers.send_host_header_effective` matches intent.
-3. `identity_metadata` values are correct.
-4. `headers.passthrough_policy` is `deny_by_default`.
+1. `Gephyr scope` for day-to-day parity checks.
+2. `Antigravity scope` for strict default Agent Window endpoint allowlist checks.
+3. `Raw` only for broad investigation, not pass/fail parity gating.
 
-## Step 2: Enable outbound header debug capture (staging only)
+### Non-interactive Gephyr scope
 
-1. Read current config:
-
-```bash
-curl -s http://127.0.0.1:8045/api/config \
-  -H "Authorization: Bearer YOUR_API_KEY" > /tmp/gephyr-config.json
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-google-parity-verify.ps1 `
+  -ConfigPath "$env:USERPROFILE\.gephyr\config.json" `
+  -Scope Gephyr `
+  -KnownGoodSourcePath output/known_good.jsonl `
+  -KnownGoodPath output/known_good.gephyr_scope.jsonl `
+  -OutGephyrPath output/gephyr_google_outbound_headers.jsonl `
+  -StartupTimeoutSeconds 60 `
+  -RequireOAuthRelink `
+  -NoClaudeProbes
 ```
 
-2. Set:
-   - `proxy.debug_logging.log_google_outbound_headers=true`
-   - (optional for payload files) `proxy.debug_logging.enabled=true`
+### Non-interactive Antigravity scope
 
-3. Save config:
-
-```bash
-jq '.config.proxy.debug_logging.log_google_outbound_headers=true' /tmp/gephyr-config.json \
-| curl -s -X POST http://127.0.0.1:8045/api/config \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d @-
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-google-parity-verify-antigravity.ps1 `
+  -ConfigPath "$env:USERPROFILE\.gephyr\config.json" `
+  -KnownGoodPath output/known_good.jsonl `
+  -OutGephyrPath output/gephyr_google_outbound_headers.jsonl `
+  -RequireOAuthRelink
 ```
 
-Runtime note: `POST /api/config` hot-applies Google outbound policy.
+## Scope Guidance
 
-## Step 3: Generate representative traffic
+1. `Gephyr` scope: builds a scoped known-good baseline from endpoints actually exercised by Gephyr in the run.
+2. `Antigravity` scope: filters known-good by Antigravity endpoint allowlist plus Antigravity user-agent family.
+3. `Raw` scope: compares against full known-good file and often reports non-actionable misses.
 
-Run the same request mix you want to validate:
+## Operational Guardrails
 
-1. OAuth token refresh path.
-2. `loadCodeAssist` path.
-3. `fetchAvailableModels` path.
-4. Normal upstream generate/stream calls.
+1. Run in scoped mode (`Gephyr` or `Antigravity`) for pass/fail confidence.
+2. Keep `-NoClaudeProbes` unless Claude `/v1/messages` parity is explicitly in scope.
+3. Keep request rate/concurrency conservative and human-like; avoid stress patterns.
+4. Re-run parity validation after any Gephyr code/config change touching routing, auth, headers, or token lifecycle.
+5. Track early warning patterns continuously: `401`, `403`, `429`, `invalid_grant`, `unauthorized`, `forbidden`, `quota`, `rate`.
 
-## Step 4: Collect Gephyr outbound-header captures
+## Post-Run Checks
 
-Search logs for the `google_outbound_headers` event:
+### 1) Confirm diff classification
 
-```bash
-rg -n "google_outbound_headers" /path/to/gephyr-logs
+Check `output/google_trace_diff_report.txt` and confirm scoped runs classify exercised endpoints as `matched_or_extra_only`.
+
+### 2) Scan latest app log for warning/error signals
+
+```powershell
+$log = Get-ChildItem "$env:USERPROFILE\.gephyr\logs\app.log*" -File |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1 -ExpandProperty FullName
+Select-String -Path $log -Pattern '401|403|429|invalid_grant|unauthorized|forbidden|quota|rate' |
+  Select-Object -Last 120
 ```
 
-Each event includes:
+### 3) Re-run static route/caller mapping guardrail
 
-1. endpoint
-2. mode
-3. redacted header map
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-google-generation-mapping.ps1
+```
 
-## Step 5: Diff against known-good traces
+This enforces:
 
-Compare, per endpoint:
-
-1. Presence/absence of critical headers.
-2. Stable values (`user-agent`, metadata fields).
-3. Policy behavior (`Host` only in compat mode when enabled).
-4. Absence of blocked categories (`sec-*`, `origin`, `referer`, `cookie`, `x-forwarded-*`).
-
-## Step 6: Disable debug capture
-
-Set `proxy.debug_logging.log_google_outbound_headers=false` and save config via `POST /api/config`.
+1. Non-test `call_v1_internal*` callers are only from allowlisted handler files.
+2. Expected ingress generation route paths still exist.
 
 ## Troubleshooting
 
-1. Effective policy mismatch:
-   - Re-check `GET /api/proxy/google/outbound-policy` immediately after saving config.
-2. No capture events:
-   - Ensure runtime log level includes debug events.
-3. Unexpected headers:
-   - Check caller-provided extras and verify they are in the explicit allowlist path only.
+1. `Known-good source trace not found`:
+   - Generate or restore `output/known_good.jsonl` first.
+2. OAuth relink errors:
+   - Ensure `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` are set (or present in `.env.local`).
+3. Empty outbound capture:
+   - Confirm Gephyr is started with debug outbound header logging and run produced request traffic after cutoff.
+4. Raw mode reports many missing endpoints:
+   - Use `-Scope Gephyr` or `-Scope Antigravity`; raw includes non-exercised baseline traffic.

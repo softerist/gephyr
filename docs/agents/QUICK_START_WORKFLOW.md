@@ -4,7 +4,7 @@ Use this when starting a new task quickly and safely.
 
 ## Triage Order
 
-1. Read `docs/agents/EDGE_CASES_DEFECTS.md` first to avoid known breakpoints/regressions (currently none open).
+1. Read `docs/agents/EDGE_CASES_DEFECTS.md` first to avoid known breakpoints/regressions.
 2. Read `docs/agents/RUNTIME_ROUTING.md` to understand request flow and middleware order.
 3. Read `docs/agents/API_SURFACE.md` for endpoint coverage and handler ownership.
 4. Read `docs/agents/SECURITY_AUTH.md` before touching auth, tokens, IP rules, or admin exposure.

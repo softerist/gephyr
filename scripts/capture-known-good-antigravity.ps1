@@ -8,6 +8,7 @@ param(
     [switch]$TrustCert,
     [switch]$SelfTestProxy,
     [switch]$RequireStream,
+    [switch]$AllowMissingStream,
     [switch]$StopExistingAntigravity,
     # Default behavior: manage + restore Windows proxy settings to maximize capture fidelity.
     # Use -NoManage* to opt out.
@@ -44,6 +45,7 @@ if ($CaptureNoise) { $args += "-CaptureNoise" }
 if ($TrustCert) { $args += "-TrustCert" }
 if ($SelfTestProxy) { $args += "-SelfTestProxy" }
 if ($RequireStream) { $args += "-RequireStream" }
+if ($AllowMissingStream) { $args += "-AllowMissingStream" }
 if ($StopExistingAntigravity) { $args += "-StopExistingAntigravity" }
 
 if ($ManageSystemProxy -and $NoManageSystemProxy) { throw "Conflicting switches: -ManageSystemProxy and -NoManageSystemProxy" }
@@ -57,6 +59,8 @@ if ($shouldManageWinHttpProxy) { $args += "-ManageWinHttpProxy" }
 
 if (-not $CaptureAll) {
     Write-Host "Capture mode: strict Google targets (default). Use -CaptureAll to inspect all hosts."
+} else {
+    Write-Warning "Capture mode is ALL HOSTS (-CaptureAll). 'target' counts in diagnostics will include non-Google hosts."
 }
 Write-Host ("Proxy management: system={0}, winhttp={1}, ide={2}" -f $shouldManageSystemProxy, $shouldManageWinHttpProxy, $true)
 

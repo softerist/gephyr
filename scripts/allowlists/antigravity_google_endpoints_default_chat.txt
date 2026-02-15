@@ -1,0 +1,9 @@
+# Antigravity default Agent Window observed Google endpoints (2026-02-15 baseline).
+# daily-cloudcode-pa.googleapis.com normalizes to cloudcode-pa.googleapis.com in validation.
+https://cloudcode-pa.googleapis.com/v1internal/cascadeNuxes
+https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels
+https://cloudcode-pa.googleapis.com/v1internal:fetchUserInfo
+https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist
+https://cloudcode-pa.googleapis.com/v1internal:onboardUser
+https://oauth2.googleapis.com/token
+https://www.googleapis.com/oauth2/v2/userinfo

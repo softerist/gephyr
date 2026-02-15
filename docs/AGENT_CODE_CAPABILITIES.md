@@ -263,7 +263,7 @@ Main admin groups include:
 
 ## Open Edge Cases / Defects
 
-- None currently open (as of 2026-02-11).
+- See `docs/agents/EDGE_CASES_DEFECTS.md` for the active open-defect list.
 - Deferred follow-up items are tracked in `docs/agents/FOLLOW_UP_TICKETS.md`.
 
 ## Notable Implementation Limits

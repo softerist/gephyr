@@ -1,11 +1,16 @@
 param(
     [string]$ConfigPath = "$env:USERPROFILE\.gephyr\config.json",
-    [string]$KnownGoodPath = "output/known_good.jsonl",
+    [string]$KnownGoodPath = "output/known_good.gephyr_scope.jsonl",
+    [string]$KnownGoodSourcePath = "output/known_good.jsonl",
+    [ValidateSet("Gephyr", "Antigravity", "Raw")]
+    [string]$Scope = "Gephyr",
     [string]$OutGephyrPath = "output/gephyr_google_outbound_headers.jsonl",
     [int]$StartupTimeoutSeconds = 60,
     [switch]$RequireOAuthRelink,
     [switch]$SkipExtendedFlow,
-    [switch]$SkipBulkQuotaRefresh
+    [switch]$SkipBulkQuotaRefresh,
+    [switch]$NoClaudeProbes,
+    [string]$AntigravityAllowlistPath = "scripts/allowlists/antigravity_google_endpoints_default_chat.txt"
 )
 
 $ErrorActionPreference = "Stop"
@@ -140,11 +145,142 @@ function Write-GoogleOutboundRecordsFromLines {
     }
 }
 
+function Is-GoogleEndpoint {
+    param([string]$Endpoint)
+    if (-not $Endpoint) { return $false }
+    return $Endpoint -match '(?i)^https?://[^/]*(googleapis\.com|google\.com)(?::\d+)?/'
+}
+
+function Normalize-Endpoint {
+    param([string]$Endpoint)
+    if (-not $Endpoint) { return $Endpoint }
+    try {
+        $uri = [System.Uri]$Endpoint
+    } catch {
+        return $Endpoint
+    }
+
+    $normalizedHost = $uri.Host.ToLowerInvariant()
+    if ($normalizedHost -eq "daily-cloudcode-pa.googleapis.com") {
+        $normalizedHost = "cloudcode-pa.googleapis.com"
+    }
+
+    $portPart = ""
+    if (-not $uri.IsDefaultPort) {
+        $portPart = ":$($uri.Port)"
+    }
+    return "{0}://{1}{2}{3}" -f $uri.Scheme.ToLowerInvariant(), $normalizedHost, $portPart, $uri.PathAndQuery
+}
+
+function Is-AntigravityUserAgent {
+    param([string]$UserAgent)
+    if (-not $UserAgent) { return $false }
+    return ($UserAgent -match '(?i)^antigravity/') -or ($UserAgent -match '(?i)^google-api-nodejs-client/10\.3\.0$')
+}
+
+function Build-GephyrScopedKnownGood {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$GephyrTracePath,
+        [Parameter(Mandatory = $true)][string]$OutPath
+    )
+
+    if (-not (Test-Path $SourcePath)) {
+        throw "Known-good source not found: $SourcePath"
+    }
+    if (-not (Test-Path $GephyrTracePath)) {
+        throw "Gephyr trace not found for Gephyr scope build: $GephyrTracePath"
+    }
+
+    $gephyrEndpoints = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($line in Get-Content $GephyrTracePath) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        try {
+            $obj = $trim | ConvertFrom-Json
+        } catch {
+            continue
+        }
+        $ep = [string]$obj.endpoint
+        if (-not (Is-GoogleEndpoint -Endpoint $ep)) { continue }
+        [void]$gephyrEndpoints.Add((Normalize-Endpoint -Endpoint $ep))
+    }
+
+    $selected = New-Object System.Collections.Generic.List[string]
+    foreach ($line in Get-Content $SourcePath) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        try {
+            $obj = $trim | ConvertFrom-Json
+        } catch {
+            continue
+        }
+        $ep = [string]$obj.endpoint
+        if (-not (Is-GoogleEndpoint -Endpoint $ep)) { continue }
+        $normalized = Normalize-Endpoint -Endpoint $ep
+        if ($gephyrEndpoints.Contains($normalized)) {
+            $selected.Add($trim)
+        }
+    }
+
+    $selected | Set-Content -Path $OutPath -Encoding UTF8
+    return $selected.Count
+}
+
+function Build-AntigravityScopedKnownGood {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$AllowlistPath,
+        [Parameter(Mandatory = $true)][string]$OutPath
+    )
+
+    if (-not (Test-Path $SourcePath)) {
+        throw "Known-good source not found: $SourcePath"
+    }
+    if (-not (Test-Path $AllowlistPath)) {
+        throw "Antigravity allowlist not found: $AllowlistPath"
+    }
+
+    $allowSet = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($line in Get-Content $AllowlistPath) {
+        $trim = $line.Trim()
+        if (-not $trim -or $trim.StartsWith("#")) { continue }
+        [void]$allowSet.Add((Normalize-Endpoint -Endpoint $trim))
+    }
+
+    $selected = New-Object System.Collections.Generic.List[string]
+    foreach ($line in Get-Content $SourcePath) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        try {
+            $obj = $trim | ConvertFrom-Json
+        } catch {
+            continue
+        }
+        $ep = [string]$obj.endpoint
+        if (-not (Is-GoogleEndpoint -Endpoint $ep)) { continue }
+        $normalized = Normalize-Endpoint -Endpoint $ep
+        if (-not $allowSet.Contains($normalized)) { continue }
+
+        $ua = $null
+        try { $ua = [string]$obj.headers.'user-agent' } catch {}
+        if (Is-AntigravityUserAgent -UserAgent $ua) {
+            $selected.Add($trim)
+        }
+    }
+
+    $selected | Set-Content -Path $OutPath -Encoding UTF8
+    return $selected.Count
+}
+
 if (-not (Test-Path $ConfigPath)) {
     throw "Config not found: $ConfigPath"
 }
-if (-not (Test-Path $KnownGoodPath)) {
+if ($Scope -eq "Raw" -and -not (Test-Path $KnownGoodPath)) {
     throw "Known-good trace not found: $KnownGoodPath"
+}
+if ($Scope -ne "Raw" -and -not (Test-Path $KnownGoodSourcePath)) {
+    throw "Known-good source trace not found for Scope '$Scope': $KnownGoodSourcePath"
 }
 
 Ensure-EnvFromEnvLocal -Name "ENCRYPTION_KEY" -Required
@@ -253,6 +389,7 @@ try {
 
     $cutoff = [DateTimeOffset]::UtcNow
     Write-Host "Cutoff UTC: $($cutoff.ToString("o"))"
+    Write-Host "Diff scope: $Scope"
 
     if ($RequireOAuthRelink) {
         Write-Host "Preparing OAuth relink URL ..."
@@ -344,6 +481,9 @@ try {
 
     if (-not $SkipExtendedFlow) {
         Write-Host "Running extended parity probes across ingress routes ..."
+        if ($NoClaudeProbes) {
+            Write-Host "Claude probes disabled (-NoClaudeProbes)."
+        }
 
         if (-not $SkipBulkQuotaRefresh) {
             try {
@@ -393,17 +533,6 @@ try {
             input = "ping from live parity verify (responses)"
             max_output_tokens = 32
         }
-        $messagesBody = @{
-            model = "claude-opus-4-6-thinking"
-            max_tokens = 64
-            messages = @(
-                @{
-                    role = "user"
-                    content = "ping from live parity verify (messages)"
-                }
-            )
-        }
-
         $probeSpecs = @(
             @{
                 Name = "/v1/chat/completions"
@@ -424,13 +553,6 @@ try {
                 Uri = "$apiBase/v1/responses"
                 Method = "POST"
                 Body = $responsesBody
-                Raw = $false
-            },
-            @{
-                Name = "/v1/messages"
-                Uri = "$apiBase/v1/messages"
-                Method = "POST"
-                Body = $messagesBody
                 Raw = $false
             },
             @{
@@ -455,6 +577,26 @@ try {
                 Raw = $true
             }
         )
+
+        if (-not $NoClaudeProbes) {
+            $messagesBody = @{
+                model = "claude-opus-4-6-thinking"
+                max_tokens = 64
+                messages = @(
+                    @{
+                        role = "user"
+                        content = "ping from live parity verify (messages)"
+                    }
+                )
+            }
+            $probeSpecs += @{
+                Name = "/v1/messages"
+                Uri = "$apiBase/v1/messages"
+                Method = "POST"
+                Body = $messagesBody
+                Raw = $false
+            }
+        }
 
         $probeTotal = 0
         $probeOk = 0
@@ -502,10 +644,27 @@ try {
     Get-Content $OutGephyrPath | ForEach-Object { ($_ | ConvertFrom-Json).endpoint } |
         Sort-Object -Unique | ForEach-Object { Write-Host "  endpoint: $_" }
 
+    if ($Scope -eq "Gephyr") {
+        $scopedCount = Build-GephyrScopedKnownGood -SourcePath $KnownGoodSourcePath -GephyrTracePath $OutGephyrPath -OutPath $KnownGoodPath
+        Write-Host "Gephyr-scoped known-good saved: $KnownGoodPath ($scopedCount lines)"
+        if ($scopedCount -eq 0) {
+            throw "Gephyr-scoped known-good is empty. Source: $KnownGoodSourcePath"
+        }
+    } elseif ($Scope -eq "Antigravity") {
+        $scopedCount = Build-AntigravityScopedKnownGood -SourcePath $KnownGoodSourcePath -AllowlistPath $AntigravityAllowlistPath -OutPath $KnownGoodPath
+        Write-Host "Antigravity-scoped known-good saved: $KnownGoodPath ($scopedCount lines)"
+        if ($scopedCount -eq 0) {
+            throw "Antigravity-scoped known-good is empty. Source: $KnownGoodSourcePath"
+        }
+    } else {
+        Write-Host "Using raw known-good path for diff: $KnownGoodPath"
+    }
+
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/diff-google-traces.ps1 `
         -KnownGoodPath $KnownGoodPath `
         -GephyrPath $OutGephyrPath `
-        -IgnoreConnectionHeader | Out-Null
+        -IgnoreConnectionHeader `
+        -IgnoreDeviceHeaders | Out-Null
 
     $txt = "output/google_trace_diff_report.txt"
     if (Test-Path $txt) {

@@ -1,0 +1,132 @@
+{
+    "generated_at":  "2026-02-15T22:16:54.7482140+02:00",
+    "gephyr_path":  "output/gephyr_google_outbound_headers.jsonl",
+    "known_good_path":  "output/known_good.gephyr_scope.jsonl",
+    "gephyr_records":  14,
+    "known_good_records":  5,
+    "endpoint_count":  3,
+    "ignored_headers":  [
+                            "connection",
+                            "content-length",
+                            "x-dev-device-id",
+                            "x-machine-id",
+                            "x-mac-machine-id",
+                            "x-sqm-id"
+                        ],
+    "classification_summary":  [
+                                   {
+                                       "classification":  "extra_endpoint_in_gephyr",
+                                       "count":  1
+                                   },
+                                   {
+                                       "classification":  "matched_or_extra_only",
+                                       "count":  2
+                                   }
+                               ],
+    "endpoints":  [
+                      {
+                          "endpoint":  "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+                          "classification":  "matched_or_extra_only",
+                          "known_request_count":  2,
+                          "gephyr_request_count":  4,
+                          "known_header_names":  [
+                                                     "accept",
+                                                     "accept-encoding",
+                                                     "authorization",
+                                                     "connection",
+                                                     "content-length",
+                                                     "content-type",
+                                                     "host",
+                                                     "user-agent",
+                                                     "x-goog-api-client"
+                                                 ],
+                          "gephyr_header_names":  [
+                                                      "accept",
+                                                      "accept-encoding",
+                                                      "authorization",
+                                                      "connection",
+                                                      "content-type",
+                                                      "host",
+                                                      "user-agent",
+                                                      "x-dev-device-id",
+                                                      "x-goog-api-client",
+                                                      "x-machine-id",
+                                                      "x-sqm-id"
+                                                  ],
+                          "missing_in_gephyr":  [
+
+                                                ],
+                          "extra_in_gephyr":  [
+
+                                              ],
+                          "blocked_in_gephyr":  "connection"
+                      },
+                      {
+                          "endpoint":  "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+                          "classification":  "matched_or_extra_only",
+                          "known_request_count":  3,
+                          "gephyr_request_count":  4,
+                          "known_header_names":  [
+                                                     "accept",
+                                                     "accept-encoding",
+                                                     "authorization",
+                                                     "connection",
+                                                     "content-length",
+                                                     "content-type",
+                                                     "host",
+                                                     "user-agent",
+                                                     "x-goog-api-client"
+                                                 ],
+                          "gephyr_header_names":  [
+                                                      "accept",
+                                                      "accept-encoding",
+                                                      "authorization",
+                                                      "connection",
+                                                      "content-type",
+                                                      "host",
+                                                      "user-agent",
+                                                      "x-dev-device-id",
+                                                      "x-goog-api-client",
+                                                      "x-machine-id",
+                                                      "x-sqm-id"
+                                                  ],
+                          "missing_in_gephyr":  [
+
+                                                ],
+                          "extra_in_gephyr":  [
+
+                                              ],
+                          "blocked_in_gephyr":  "connection"
+                      },
+                      {
+                          "endpoint":  "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+                          "classification":  "extra_endpoint_in_gephyr",
+                          "known_request_count":  0,
+                          "gephyr_request_count":  6,
+                          "known_header_names":  [
+
+                                                 ],
+                          "gephyr_header_names":  [
+                                                      "accept",
+                                                      "accept-encoding",
+                                                      "authorization",
+                                                      "content-type",
+                                                      "host",
+                                                      "user-agent",
+                                                      "x-dev-device-id",
+                                                      "x-goog-api-client",
+                                                      "x-machine-id",
+                                                      "x-sqm-id"
+                                                  ],
+                          "missing_in_gephyr":  [
+
+                                                ],
+                          "extra_in_gephyr":  [
+
+                                              ],
+                          "blocked_in_gephyr":  {
+
+                                                }
+                      }
+                  ]
+}

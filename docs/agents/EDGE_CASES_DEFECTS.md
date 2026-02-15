@@ -4,7 +4,19 @@ Fixed defects were removed from this list after code updates on 2026-02-09. This
 
 ## Open Defects
 
-- None currently open (as of 2026-02-09).
+1. `/api/zai/models/fetch` route/handler extractor mismatch:
+   - Route has no path param: `src/proxy/routes/admin.rs`
+   - Handler expects `Path<String>`: `src/proxy/admin/runtime/service_control.rs`
+2. Service-disabled gating bypasses `/health` but not `/healthz`:
+   - `src/proxy/middleware/service_status.rs`
+   - `src/proxy/routes/mod.rs`
+3. Blacklist/whitelist clear handlers likely ineffective (`ip_pattern` vs `id` removal mismatch):
+   - `src/proxy/admin/security.rs`
+   - `src/modules/persistence/security_db.rs`
+4. User token `enabled` flag is not enforced in token validation:
+   - `src/modules/persistence/user_token_db.rs`
+5. Monitor can record token usage before/without monitor enabled and may double-record when enabled:
+   - `src/proxy/monitor.rs`
 
 ## Operational Limitations
 

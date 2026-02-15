@@ -53,19 +53,14 @@ if ($CommandArgs -and $CommandArgs.Count -gt 0) {
 
 if (-not (Test-DockerAvailable)) {
     Write-Host ""
-    Write-Host "╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Red
-    Write-Host "║                     DOCKER IS NOT RUNNING                        ║" -ForegroundColor Red
-    Write-Host "╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Red
-    Write-Host "║  The Docker daemon is not accessible.                            ║" -ForegroundColor Yellow
-    Write-Host "║                                                                  ║" -ForegroundColor Yellow
-    Write-Host "║  Please ensure:                                                  ║" -ForegroundColor Yellow
-    Write-Host "║    1. Docker Desktop is installed                                ║" -ForegroundColor Yellow
-    Write-Host "║    2. Docker Desktop is running (check system tray)              ║" -ForegroundColor Yellow
-    Write-Host "║    3. Docker engine has finished starting up                     ║" -ForegroundColor Yellow
-    Write-Host "║                                                                  ║" -ForegroundColor Yellow
-    Write-Host "║  On Windows, look for the Docker whale icon in your system tray. ║" -ForegroundColor Yellow
-    Write-Host "║  If it's animating, Docker is still starting up.                 ║" -ForegroundColor Yellow
-    Write-Host "╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
+    Write-Host "Docker is not running." -ForegroundColor Red
+    Write-Host "The Docker daemon is not accessible." -ForegroundColor Yellow
+    Write-Host "Please ensure:" -ForegroundColor Yellow
+    Write-Host "  1. Docker Desktop is installed" -ForegroundColor Yellow
+    Write-Host "  2. Docker Desktop is running (check system tray)" -ForegroundColor Yellow
+    Write-Host "  3. Docker engine has finished starting up" -ForegroundColor Yellow
+    Write-Host "On Windows, check the Docker whale icon in the system tray." -ForegroundColor Yellow
+    Write-Host "If it is animating, Docker is still starting up." -ForegroundColor Yellow
     Write-Host ""
     exit 1
 }
@@ -111,7 +106,7 @@ function Wait-OAuthAccountLink {
             foreach ($raw in Get-Content $envPath) {
                 $line = $raw.Trim()
                 if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("API_KEY=")) {
-                    $apiKey = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
+                    $apiKey = $line.Split("=", 2)[1].Trim().Trim([char]34).Trim([char]39)
                     break
                 }
             }
@@ -289,7 +284,7 @@ if (-not $SkipLogin) {
             foreach ($raw in Get-Content $envPath) {
                 $line = $raw.Trim()
                 if ($line -and -not $line.StartsWith("#") -and $line.StartsWith("ENCRYPTION_KEY=")) {
-                    $value = $line.Split("=", 2)[1].Trim().Trim('"').Trim("'")
+                    $value = $line.Split("=", 2)[1].Trim().Trim([char]34).Trim([char]39)
                     if ($value) {
                         $hasEncryptionKey = $true
                     }

@@ -14,6 +14,7 @@ param(
     [switch]$TrustCert,
     [switch]$SkipDiff,
     [switch]$RequireStream,
+    [switch]$AllowMissingStream,
     [switch]$SelfTestProxy,
     [switch]$LaunchAntigravityProxied,
     [string]$AntigravityExe = "",
@@ -408,6 +409,7 @@ try {
     }
     if ($env:GEPHYR_MITM_CAPTURE_ALL) {
         Write-Host "Capture mode: ALL HOSTS (wide open)"
+        Write-Warning "capture_all=true: diagnostics 'target' counters include all captured hosts (not Google-only)."
         if ($env:GEPHYR_MITM_CAPTURE_NOISE) {
             Write-Host "Capture noise: enabled (includes tokeninfo, etc.)"
         }
@@ -635,6 +637,13 @@ if (-not (Test-Path $captureTempAbs)) {
 			$topDroppedUas = @($diagObj.top_dropped_user_agents | Select-Object -First 8 | ForEach-Object { "$($_.user_agent) ($($_.count))" })
 			$diagSummary = @(
 				"Capture diagnostics: total requests seen=$($diagObj.total_requests_seen), target requests seen=$($diagObj.total_target_requests_seen)"
+				$(
+					if ($diagObj.capture_all -eq $true) {
+						"NOTE: capture_all=true; 'target requests/hosts' include all captured hosts."
+					} else {
+						$null
+					}
+				)
 				"Top observed hosts: $($top -join ', ')"
 				"Top user-agents: $($topUas -join ' | ')"
 				$(
@@ -694,8 +703,23 @@ if ($lineCount -eq 0) {
 }
 
 if ($RequireStream) {
-    $hasStream = Select-String -Path $captureTempAbs -Pattern "streamGenerateContent" -Quiet
-    if (-not $hasStream) {
+    $capturedEndpoints = @(
+        Get-Content -Path $captureTempAbs | ForEach-Object {
+            try {
+                (ConvertFrom-Json $_).endpoint
+            } catch {
+                $null
+            }
+        } | Where-Object { $_ }
+    )
+    $generationEndpoints = @(
+        $capturedEndpoints | Where-Object {
+            $_ -match "streamGenerateContent|:generateContent(\?|$)|:completeCode(\?|$)"
+        } | Sort-Object -Unique
+    )
+    $hasRequiredGeneration = $generationEndpoints.Count -gt 0
+
+    if (-not $hasRequiredGeneration) {
         $diagSummary = $null
         if (Test-Path $diagAbs) {
             try {
@@ -705,6 +729,13 @@ if ($RequireStream) {
                 $topTargetUas = @($diag.top_target_user_agents | Select-Object -First 6 | ForEach-Object { "$($_.user_agent) ($($_.count))" })
                 $diagSummary = @(
                     "Capture diagnostics: total requests seen=$($diag.total_requests_seen), target requests seen=$($diag.total_target_requests_seen)"
+                    $(
+                        if ($diag.capture_all -eq $true) {
+                            "NOTE: capture_all=true; 'target requests/hosts' include all captured hosts."
+                        } else {
+                            $null
+                        }
+                    )
                     "Top observed hosts: $($top -join ', ')"
                     "Top target hosts: $($topTargets -join ', ')"
                     "Top target user-agents: $($topTargetUas -join ' | ')"
@@ -720,8 +751,12 @@ if ($RequireStream) {
             $failedPath = $captureTempAbs
         }
 
-        throw @"
-Known-good capture did not include a streaming prompt call (streamGenerateContent).
+        $missingStreamMessage = @"
+Known-good capture did not include a generation endpoint.
+Accepted endpoints for -RequireStream validation:
+  - streamGenerateContent
+  - generateContent
+  - completeCode
 The capture was saved for inspection at:
   $failedPath
 $(
@@ -732,10 +767,35 @@ $(
     }
 )
 
-Re-run capture and ensure you trigger an actual generate/stream action in the baseline client while the proxy is enabled.
+Re-run capture and ensure you trigger an actual generation action in the baseline client while the proxy is enabled.
 If you did generate and got a response, it may have gone to a non-Google provider/host; check the 'Top observed hosts' above.
 Tip: wait until you see tokens streaming for a few seconds, then stop capture.
 "@
+        if ($AllowMissingStream) {
+            Write-Warning $missingStreamMessage
+            if (Test-Path $knownGoodAbs) {
+                $backupPath = "{0}.bak-{1}" -f $knownGoodAbs, (Get-Date -Format "yyyyMMdd-HHmmss")
+                Move-Item -Path $knownGoodAbs -Destination $backupPath -Force
+                Write-Host "Backed up previous known-good trace to: $backupPath"
+            }
+            Copy-Item -Path $failedPath -Destination $knownGoodAbs -Force
+            Write-Warning "AllowMissingStream enabled: proceeding with baseline lacking generation endpoints at $knownGoodAbs"
+            if ($SkipDiff) {
+                return
+            }
+            Write-Host "Running diff against Gephyr capture ..."
+            & "$PSScriptRoot\diff-google-traces.ps1" -GephyrPath $gephyrAbs -KnownGoodPath $knownGoodAbs
+            Write-Host "Done. See:"
+            Write-Host "  output/google_trace_diff_report.txt"
+            Write-Host "  output/google_trace_diff_report.json"
+            return
+        }
+        throw $missingStreamMessage
+    } else {
+        $streamEndpoints = @($generationEndpoints | Where-Object { $_ -match "streamGenerateContent" })
+        if ($streamEndpoints.Count -eq 0) {
+            Write-Host "RequireStream satisfied by non-stream generation endpoint(s): $($generationEndpoints -join ', ')"
+        }
     }
 }
 
@@ -751,6 +811,9 @@ Write-Host "Known-good trace saved: $knownGoodAbs ($lineCount lines)"
 if (Test-Path $diagAbs) {
     try {
         $diag = Get-Content $diagAbs -Raw | ConvertFrom-Json
+        if ($diag.capture_all -eq $true) {
+            Write-Warning "capture_all=true in this run. 'target' stats below include non-Google hosts."
+        }
         if ($diag -and $diag.top_target_user_agents) {
             $top = @($diag.top_target_user_agents | Select-Object -First 6 | ForEach-Object { "$($_.user_agent) ($($_.count))" })
             if ($top.Count -gt 0) {

@@ -58,21 +58,7 @@ pub fn endpoint_cascade_nuxes(host: &str) -> String {
     format!("https://{}/v1internal/cascadeNuxes", host)
 }
 
-#[allow(dead_code)]
-pub fn endpoint_generate_content(host: &str) -> String {
-    build_cloudcode_colon_method_endpoint(host, "generateContent", None)
-}
-
-#[allow(dead_code)]
-pub fn endpoint_stream_generate_content(host: &str) -> String {
-    build_cloudcode_colon_method_endpoint(host, "streamGenerateContent", Some("alt=sse"))
-}
-
-fn build_cloudcode_colon_method_endpoint(
-    host: &str,
-    method: &str,
-    query: Option<&str>,
-) -> String {
+fn build_cloudcode_colon_method_endpoint(host: &str, method: &str, query: Option<&str>) -> String {
     match query {
         Some(qs) if !qs.trim().is_empty() => {
             format!("https://{}/v1internal:{}?{}", host, method, qs)
@@ -89,10 +75,7 @@ mod tests {
     fn strict_profile_prefers_daily_cloudcode_host() {
         let hosts =
             cloudcode_hosts_for_profile(crate::proxy::config::GoogleMimicProfile::StrictMimic);
-        assert_eq!(
-            hosts,
-            vec![CLOUDCODE_HOST_DAILY, CLOUDCODE_HOST_PUBLIC]
-        );
+        assert_eq!(hosts, vec![CLOUDCODE_HOST_DAILY, CLOUDCODE_HOST_PUBLIC]);
     }
 
     #[test]

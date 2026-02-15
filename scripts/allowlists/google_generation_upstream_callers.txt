@@ -1,0 +1,5 @@
+# Non-test files allowed to call UpstreamClient call_v1_internal*
+# Keep this list minimal and update alongside validate-google-generation-mapping.ps1 changes.
+src/proxy/handlers/openai.rs
+src/proxy/handlers/claude.rs
+src/proxy/handlers/gemini.rs

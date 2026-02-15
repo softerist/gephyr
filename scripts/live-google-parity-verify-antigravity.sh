@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CONFIG_PATH="$HOME/.gephyr/config.json"
-KNOWN_GOOD_PATH="output/known_good_antigravity.jsonl"
+KNOWN_GOOD_PATH="output/known_good.jsonl"
 OUT_GEPHYR_PATH="output/gephyr_google_outbound_headers.jsonl"
 STARTUP_TIMEOUT_SECONDS=60
 REQUIRE_OAUTH_RELINK=false
@@ -20,7 +20,7 @@ Usage:
 
 Options:
   --config-path <path>             Default: ~/.gephyr/config.json
-  --known-good-path <path>         Default: output/known_good_antigravity.jsonl
+  --known-good-path <path>         Default: output/known_good.jsonl
   --out-gephyr-path <path>         Default: output/gephyr_google_outbound_headers.jsonl
   --startup-timeout-seconds <n>    Default: 60
   --require-oauth-relink           Force OAuth relink
