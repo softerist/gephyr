@@ -278,28 +278,8 @@ impl ProxyMonitor {
 mod tests {
     use super::{ProxyMonitor, ProxyRequestLog, MAX_PERSIST_WRITE_CONCURRENCY};
 
-    #[test]
-    fn constructor_is_runtime_safe() {
-        let result = std::panic::catch_unwind(|| ProxyMonitor::new(16));
-        assert!(
-            result.is_ok(),
-            "constructor should not require Tokio runtime"
-        );
-    }
-
-    #[tokio::test]
-    async fn log_request_drops_persistence_when_write_concurrency_is_saturated() {
-        let monitor = ProxyMonitor::new(16);
-        monitor.set_enabled(true);
-
-        let _all_permits = monitor
-            .persist_write_semaphore
-            .clone()
-            .acquire_many_owned(MAX_PERSIST_WRITE_CONCURRENCY as u32)
-            .await
-            .expect("acquire all permits");
-
-        let log = ProxyRequestLog {
+    fn sample_log() -> ProxyRequestLog {
+        ProxyRequestLog {
             id: "log-1".to_string(),
             timestamp: chrono::Utc::now().timestamp_millis(),
             method: "POST".to_string(),
@@ -319,9 +299,45 @@ mod tests {
             output_tokens: Some(20),
             protocol: Some("anthropic".to_string()),
             username: Some("tester".to_string()),
-        };
+        }
+    }
 
-        monitor.log_request(log).await;
+    #[test]
+    fn constructor_is_runtime_safe() {
+        let result = std::panic::catch_unwind(|| ProxyMonitor::new(16));
+        assert!(
+            result.is_ok(),
+            "constructor should not require Tokio runtime"
+        );
+    }
+
+    #[tokio::test]
+    async fn log_request_is_noop_when_monitor_disabled() {
+        let monitor = ProxyMonitor::new(16);
+        monitor.log_request(sample_log()).await;
+
+        let stats = monitor.stats.read().await.clone();
+        let logs = monitor.logs.read().await;
+        assert_eq!(stats.total_requests, 0);
+        assert_eq!(stats.success_count, 0);
+        assert_eq!(stats.error_count, 0);
+        assert!(logs.is_empty(), "disabled monitor must not buffer logs");
+        assert_eq!(monitor.dropped_persist_writes(), 0);
+    }
+
+    #[tokio::test]
+    async fn log_request_drops_persistence_when_write_concurrency_is_saturated() {
+        let monitor = ProxyMonitor::new(16);
+        monitor.set_enabled(true);
+
+        let _all_permits = monitor
+            .persist_write_semaphore
+            .clone()
+            .acquire_many_owned(MAX_PERSIST_WRITE_CONCURRENCY as u32)
+            .await
+            .expect("acquire all permits");
+
+        monitor.log_request(sample_log()).await;
         assert_eq!(monitor.dropped_persist_writes(), 1);
     }
 }
