@@ -270,5 +270,4 @@ Main admin groups include:
 
 - No non-headless runtime mode in current boot path
 - No mounted `/internal/*` endpoints found in router definitions
-- Middleware logging module is placeholder test-only (`src/proxy/middleware/logging.rs`)
 - Warmup config exists in app config model but runtime scheduler states warmup disabled in headless mode

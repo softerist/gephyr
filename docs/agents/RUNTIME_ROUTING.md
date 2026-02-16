@@ -127,6 +127,8 @@ Pool strategies:
 - if every healthy proxy is already account-bound, unbound traffic can still be routed through a shared healthy proxy only when `proxy_pool.allow_shared_proxy_fallback=true`; otherwise selection returns no proxy: `src/proxy/proxy_pool.rs`
 - if `proxy_pool.require_proxy_for_account_requests=true`, account requests fail closed when no eligible proxy is available (no app-upstream/direct fallback): `src/proxy/proxy_pool.rs`, `src/proxy/upstream/client.rs`
 - `max_accounts` enforcement applies to explicit persistent bindings (`bind_account_to_proxy`), while shared fallback selection is request-scoped routing for unbound accounts: `src/proxy/proxy_pool.rs`
+- observability counters are exposed via `GET /api/proxy/metrics` as `proxy_pool.shared_fallback_selections_total` and `proxy_pool.strict_rejections_total`: `src/proxy/admin/runtime/service_control.rs`
+- runtime logs emit explicit proxy-pool events for shared fallback usage and strict account-routing rejections, including cumulative totals: `src/proxy/proxy_pool.rs`
 - default health-check URL (`http://cp.cloudflare.com/generate_204`) now requires `204` specifically; custom health-check URLs accept any `2xx`: `src/proxy/proxy_pool.rs`
 
 Claude-specific runtime notes:

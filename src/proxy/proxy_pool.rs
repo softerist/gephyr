@@ -126,10 +126,9 @@ impl ProxyPoolManager {
 
         if !config.enabled || config.proxies.is_empty() {
             if config.require_proxy_for_account_requests {
-                self.strict_rejections_total.fetch_add(1, Ordering::Relaxed);
-                tracing::warn!(
-                    "[ProxyPool] Strict account routing rejection for {}: pool disabled or no proxies configured",
-                    account_id
+                self.note_strict_rejection(
+                    account_id,
+                    "pool disabled or no proxies configured",
                 );
                 return Err(
                     "Proxy routing rejected: proxy pool is disabled or has no proxies configured"
@@ -155,11 +154,7 @@ impl ProxyPoolManager {
             );
         }
         if res.is_none() && config.require_proxy_for_account_requests {
-            self.strict_rejections_total.fetch_add(1, Ordering::Relaxed);
-            tracing::warn!(
-                "[ProxyPool] Strict account routing rejection for {}: no eligible proxy available",
-                account_id
-            );
+            self.note_strict_rejection(account_id, "no eligible proxy available");
             return Err(format!(
                 "Proxy routing rejected for account {}: no eligible proxy available",
                 account_id
@@ -239,8 +234,7 @@ impl ProxyPoolManager {
             );
             let selected = self.select_and_build_proxy(config, &shared_healthy)?;
             if selected.is_some() {
-                self.shared_fallback_selections_total
-                    .fetch_add(1, Ordering::Relaxed);
+                self.note_shared_fallback_selection(config, shared_healthy.len());
             }
             return Ok(selected);
         }
@@ -255,6 +249,29 @@ impl ProxyPoolManager {
                 .load(Ordering::Relaxed),
             strict_rejections_total: self.strict_rejections_total.load(Ordering::Relaxed),
         }
+    }
+
+    fn note_shared_fallback_selection(&self, config: &ProxyPoolConfig, candidate_count: usize) {
+        let total = self
+            .shared_fallback_selections_total
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        tracing::warn!(
+            "[ProxyPool] Shared fallback selection used (total={}, strategy={:?}, candidates={})",
+            total,
+            config.strategy,
+            candidate_count
+        );
+    }
+
+    fn note_strict_rejection(&self, account_id: &str, reason: &str) {
+        let total = self.strict_rejections_total.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::warn!(
+            "[ProxyPool] Strict account routing rejection for {}: {} (total={})",
+            account_id,
+            reason,
+            total
+        );
     }
 
     fn select_and_build_proxy(

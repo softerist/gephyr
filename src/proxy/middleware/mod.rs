@@ -2,7 +2,6 @@ pub mod auth;
 pub mod client_ip;
 pub mod cors;
 pub mod ip_filter;
-pub mod logging;
 pub mod monitor;
 pub mod request_context;
 

@@ -10,5 +10,4 @@ None currently confirmed in this pass.
 
 - Runtime is effectively headless-only in current startup path (`src/lib.rs`)
 - No mounted `/internal/*` routes in router definitions (only middleware checks)
-- Logging middleware module is placeholder test-only (`src/proxy/middleware/logging.rs`)
 - Warmup config exists, but scheduler indicates warmup disabled in headless mode (`src/modules/system/scheduler.rs`)
