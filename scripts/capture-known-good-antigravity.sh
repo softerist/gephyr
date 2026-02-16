@@ -12,6 +12,7 @@ CAPTURE_NOISE=false
 TRUST_CERT=false
 SELF_TEST_PROXY=false
 REQUIRE_STREAM=false
+ALLOW_MISSING_STREAM=false
 STOP_EXISTING_ANTIGRAVITY=false
 MANAGE_ENV_PROXY=false
 TARGET_HOSTS=()
@@ -31,7 +32,8 @@ Options:
   --capture-noise             Include noise endpoints
   --trust-cert                Install mitmproxy CA
   --self-test-proxy           Send proxy self-test
-  --require-stream            Require streamGenerateContent
+  --require-stream            Require generation endpoint (streamGenerateContent | generateContent | completeCode)
+  --allow-missing-stream      Do not fail if required generation endpoint is missing
   --stop-existing-antigravity Kill existing Antigravity
   --manage-env-proxy          Set env proxy vars during capture
   -h, --help                  Show help
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
     --trust-cert) TRUST_CERT=true; shift ;;
     --self-test-proxy) SELF_TEST_PROXY=true; shift ;;
     --require-stream) REQUIRE_STREAM=true; shift ;;
+    --allow-missing-stream) ALLOW_MISSING_STREAM=true; shift ;;
     --stop-existing-antigravity) STOP_EXISTING_ANTIGRAVITY=true; shift ;;
     --manage-env-proxy) MANAGE_ENV_PROXY=true; shift ;;
     -h|--help) show_usage; exit 0 ;;
@@ -76,6 +79,7 @@ done
 [[ "$TRUST_CERT" == "true" ]] && args+=(--trust-cert)
 [[ "$SELF_TEST_PROXY" == "true" ]] && args+=(--self-test-proxy)
 [[ "$REQUIRE_STREAM" == "true" ]] && args+=(--require-stream)
+[[ "$ALLOW_MISSING_STREAM" == "true" ]] && args+=(--allow-missing-stream)
 [[ "$STOP_EXISTING_ANTIGRAVITY" == "true" ]] && args+=(--stop-existing-antigravity)
 [[ "$MANAGE_ENV_PROXY" == "true" ]] && args+=(--manage-env-proxy)
 

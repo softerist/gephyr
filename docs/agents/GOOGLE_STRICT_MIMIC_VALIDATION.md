@@ -28,6 +28,7 @@ Notes:
 1. `daily-cloudcode-pa.googleapis.com` and `cloudcode-pa.googleapis.com` are normalized as equivalent.
 2. `content-length` and `connection` are transport-derived and ignored in parity diff.
 3. Proxy self-test noise (for example `tokeninfo`) must be excluded from known-good parity scope.
+4. Generation endpoint observed in baseline may vary (`streamGenerateContent`, `generateContent`, or `completeCode`) depending exercised UI path.
 
 ## Validation Flow
 
@@ -62,3 +63,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-google-gene
 3. Runtime outbound policy reports strict mimic settings in effect.
 4. No 401/403/429 or `invalid_grant` spikes in run-window logs.
 5. End-user chat behavior remains functional (with strict mimic fail-open only where intended).
+
+Scoped diff interpretation:
+
+1. `extra_endpoint_in_gephyr` on `streamGenerateContent` is acceptable when known-good did not include a stream endpoint in that capture window.
+2. Treat this as informational unless stream-specific header parity is explicitly required.

@@ -17,6 +17,7 @@ CAPTURE_NOISE=false
 TRUST_CERT=false
 SKIP_DIFF=false
 REQUIRE_STREAM=false
+ALLOW_MISSING_STREAM=false
 SELF_TEST_PROXY=false
 LAUNCH_ANTIGRAVITY_PROXIED=false
 ANTIGRAVITY_EXE=""
@@ -49,7 +50,8 @@ Options:
   --capture-noise                  Include noise endpoints
   --trust-cert                     Install mitmproxy CA into system trust
   --skip-diff                      Skip diff report
-  --require-stream                 Require streamGenerateContent in capture
+  --require-stream                 Require generation endpoint in capture (streamGenerateContent | generateContent | completeCode)
+  --allow-missing-stream           Do not fail if required generation endpoint is missing
   --self-test-proxy                Send self-test request through proxy
   --launch-antigravity-proxied     Launch Antigravity with proxy env
   --antigravity-exe <path>         Antigravity binary path
@@ -80,6 +82,7 @@ while [[ $# -gt 0 ]]; do
     --trust-cert) TRUST_CERT=true; shift ;;
     --skip-diff) SKIP_DIFF=true; shift ;;
     --require-stream) REQUIRE_STREAM=true; shift ;;
+    --allow-missing-stream) ALLOW_MISSING_STREAM=true; shift ;;
     --self-test-proxy) SELF_TEST_PROXY=true; shift ;;
     --launch-antigravity-proxied) LAUNCH_ANTIGRAVITY_PROXIED=true; shift ;;
     --antigravity-exe) ANTIGRAVITY_EXE="$2"; shift 2 ;;
@@ -292,6 +295,7 @@ else
 fi
 if [[ "$REQUIRE_STREAM" == "true" ]]; then
   echo "3) Trigger baseline flows: login/refresh + loadCodeAssist + fetch models + generate/stream"
+  echo "   (-require-stream accepts streamGenerateContent, generateContent, or completeCode.)"
 else
   echo "3) Trigger baseline flows: login/refresh + loadCodeAssist + fetch models"
   echo "   (If you want to capture chat/prompt traffic too, do a generate/stream action before stopping capture.)"
@@ -408,13 +412,44 @@ if [[ "$line_count" -eq 0 ]]; then
 fi
 
 if [[ "$REQUIRE_STREAM" == "true" ]]; then
-  if ! grep -q "streamGenerateContent" "$capture_temp" 2>/dev/null; then
+  generation_matches="$(grep -E "streamGenerateContent|:generateContent([?]|$)|:completeCode([?]|$)" "$capture_temp" 2>/dev/null || true)"
+  if [[ -z "$generation_matches" ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"
     failed_path="$known_good_abs.missing-stream-$stamp.jsonl"
     mv "$capture_temp" "$failed_path" 2>/dev/null || failed_path="$capture_temp"
-    echo "ERROR: Known-good capture did not include streamGenerateContent." >&2
+    echo "ERROR: Known-good capture did not include a generation endpoint." >&2
+    echo "Accepted by --require-stream: streamGenerateContent | generateContent | completeCode" >&2
     echo "Saved for inspection at: $failed_path" >&2
-    exit 1
+    if [[ "$ALLOW_MISSING_STREAM" == "true" ]]; then
+      echo "WARNING: --allow-missing-stream enabled; continuing with non-generation baseline." >&2
+      if [[ -f "$known_good_abs" ]]; then
+        stamp="$(date +%Y%m%d-%H%M%S)"
+        backup_path="$known_good_abs.bak-$stamp"
+        mv "$known_good_abs" "$backup_path"
+        echo "Backed up previous known-good trace to: $backup_path"
+      fi
+      cp "$failed_path" "$known_good_abs"
+      line_count="$(wc -l < "$known_good_abs")"
+      echo "Known-good trace saved: $known_good_abs ($line_count lines)"
+      if [[ "$SKIP_DIFF" != "true" ]]; then
+        [[ -f "$gephyr_abs" ]] || { echo "ERROR: Gephyr capture JSONL missing: $gephyr_abs" >&2; exit 1; }
+        echo "Running diff against Gephyr capture ..."
+        bash "$SCRIPT_DIR/diff-google-traces.sh" --gephyr "$gephyr_abs" --known-good "$known_good_abs"
+        echo "Done. See:"
+        echo "  output/google_trace_diff_report.txt"
+        echo "  output/google_trace_diff_report.json"
+      fi
+      exit 0
+    else
+      exit 1
+    fi
+  fi
+
+  if ! grep -q "streamGenerateContent" "$capture_temp" 2>/dev/null; then
+    endpoints_seen="$(printf '%s\n' "$generation_matches" | sed -E 's/.*"endpoint":"([^"]+)".*/\1/' | sort -u | tr '\n' ',' | sed 's/,$//')"
+    if [[ -n "$endpoints_seen" ]]; then
+      echo "RequireStream satisfied by non-stream generation endpoint(s): $endpoints_seen"
+    fi
   fi
 fi
 

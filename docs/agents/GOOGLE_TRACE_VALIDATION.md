@@ -10,6 +10,26 @@ Use this runbook to validate Gephyr Google outbound behavior against known-good 
 
 ## Recommended Commands
 
+### Capture known-good baseline (PowerShell)
+
+Use this before parity verification when you need a fresh baseline:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/capture-known-good-antigravity.ps1 `
+  -Port 8879 `
+  -KnownGoodPath output/known_good.jsonl `
+  -TrustCert `
+  -SelfTestProxy `
+  -RequireStream `
+  -AllowMissingStream `
+  -StopExistingAntigravity
+```
+
+Notes:
+
+1. `-RequireStream` now accepts any generation endpoint: `streamGenerateContent`, `generateContent`, or `completeCode`.
+2. `-AllowMissingStream` keeps the run non-blocking by saving baseline even when no generation endpoint is observed.
+
 ### Interactive launcher (recommended)
 
 ```powershell
@@ -65,6 +85,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-google-parity-v
 ### 1) Confirm diff classification
 
 Check `output/google_trace_diff_report.txt` and confirm scoped runs classify exercised endpoints as `matched_or_extra_only`.
+
+Interpretation tip:
+
+1. `extra_endpoint_in_gephyr` for `streamGenerateContent` can be expected when baseline capture exercised only non-stream generation path.
+2. This is not a blocker for scoped parity unless stream-header parity is explicitly in scope.
 
 ### 2) Scan latest app log for warning/error signals
 
