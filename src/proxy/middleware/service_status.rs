@@ -16,7 +16,6 @@ pub async fn service_status_middleware(
         || path.starts_with("/internal/")
         || path == "/auth/callback"
         || path == "/health"
-        || path == "/healthz"
     {
         return next.run(request).await;
     }
@@ -71,7 +70,6 @@ mod tests {
         let state = test_runtime_state(false);
         let app = Router::new()
             .route("/health", get(|| async { StatusCode::OK }))
-            .route("/healthz", get(|| async { StatusCode::OK }))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 service_status_middleware,
@@ -79,7 +77,6 @@ mod tests {
             .with_state(state);
 
         let health = app
-            .clone()
             .oneshot(
                 Request::builder()
                     .uri("/health")
@@ -89,17 +86,6 @@ mod tests {
             .await
             .expect("health request should succeed");
         assert_eq!(health.status(), StatusCode::OK);
-
-        let healthz = app
-            .oneshot(
-                Request::builder()
-                    .uri("/healthz")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("healthz request should succeed");
-        assert_eq!(healthz.status(), StatusCode::OK);
     }
 
     #[tokio::test]

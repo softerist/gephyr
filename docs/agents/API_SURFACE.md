@@ -5,9 +5,7 @@
 Defined in `src/proxy/routes/mod.rs`.
 
 - `GET /health`
-- `GET /healthz`
 - `GET /internal/health`
-- `GET /internal/healthz`
 - `GET /internal/status`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
@@ -32,7 +30,7 @@ Primary groups:
 - logout (revoke + local token clear/disable)
 - bind device/profile, version list/restore/delete
 - clear bound device profile
-- import v1/db/custom-db, sync-db
+- import v1/custom-db
 - bulk delete, export, reorder
 - fetch quota, toggle proxy status
 - `POST /api/accounts/:accountId/logout` revokes the refresh token (default) and clears local tokens, disabling the account.

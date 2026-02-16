@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Smoke-test compliance counters in Gephyr.
 
@@ -179,7 +179,7 @@ function Wait-ServiceReady {
     $headers = Get-AuthHeaders
     for ($i = 0; $i -lt $Attempts; $i++) {
         try {
-            $resp = Invoke-WebRequest -Uri "$BaseUrl/healthz" -Headers $headers -UseBasicParsing -TimeoutSec 3
+            $resp = Invoke-WebRequest -Uri "$BaseUrl/health" -Headers $headers -UseBasicParsing -TimeoutSec 3
             if ($resp.StatusCode -eq 200) {
                 return $true
             }

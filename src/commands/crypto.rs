@@ -132,7 +132,7 @@ mod tests {
     use super::reencrypt_all_secrets_from_data_dir;
     use crate::models::{Account, TokenData};
     use crate::proxy::config::{ProxyAuth, ProxyEntry, ProxySelectionStrategy};
-    use crate::test_utils::ScopedEnvVar;
+    use crate::test_utils::{lock_env, ScopedEnvVar};
     use std::sync::{Mutex, OnceLock};
 
     static REENCRYPT_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -150,8 +150,9 @@ mod tests {
     }
 
     #[test]
-    fn reencrypt_command_rewrites_mixed_legacy_and_v2_records() {
+    fn reencrypt_command_rewrites_mixed_legacy_and_v3_records() {
         let _security_guard = crate::proxy::tests::acquire_security_test_lock();
+        let _env_guard = lock_env();
         let _guard = REENCRYPT_TEST_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -226,15 +227,15 @@ mod tests {
         let rewritten_config =
             std::fs::read_to_string(&config_path).expect("read rewritten config");
         assert!(
-            rewritten_config.contains("v2:"),
-            "config secrets should be stored in v2 format"
+            rewritten_config.contains("v3:"),
+            "config secrets should be stored in v3 format"
         );
 
         let rewritten_account =
             std::fs::read_to_string(&legacy_account_path).expect("read rewritten legacy account");
         assert!(
-            rewritten_account.contains("v2:"),
-            "account secrets should be stored in v2 format"
+            rewritten_account.contains("v3:"),
+            "account secrets should be stored in v3 format"
         );
 
         let loaded_account: Account = serde_json::from_str(

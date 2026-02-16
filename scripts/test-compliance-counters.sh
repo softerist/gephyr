@@ -88,7 +88,7 @@ ensure_api_key() { [[ -n "${API_KEY:-}" ]] || die "Missing API_KEY."; }
 wait_service_ready() {
   local attempts="${1:-50}" delay="${2:-0.5}"; ensure_api_key
   for _ in $(seq 1 "$attempts"); do
-    local code; code="$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${API_KEY}" "${BASE_URL}/healthz" 2>/dev/null || true)"
+    local code; code="$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer ${API_KEY}" "${BASE_URL}/health" 2>/dev/null || true)"
     [[ "$code" == "200" ]] && return 0; sleep "$delay"
   done; return 1
 }

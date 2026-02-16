@@ -1,0 +1,7 @@
+﻿{
+    "exists":  true,
+    "ProxyEnable":  1,
+    "ProxyServer":  "http://127.0.0.1:8879",
+    "ProxyOverride":  "localhost;127.0.0.1;\u003clocal\u003e",
+    "AutoConfigURL":  null
+}

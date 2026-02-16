@@ -1,5 +1,5 @@
 use super::accounts_core::{to_account_response, AccountResponse};
-use crate::modules::{auth::account, system::migration};
+use crate::modules::system::migration;
 use crate::proxy::admin::ErrorResponse;
 use crate::proxy::state::AdminState;
 use axum::{
@@ -31,26 +31,6 @@ pub(crate) async fn admin_import_v1_accounts(
         .map(|a| to_account_response(a, &current_id))
         .collect();
     Ok(Json(responses))
-}
-
-pub(crate) async fn admin_import_from_db(
-    State(state): State<AdminState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let account = migration::import_from_db().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    let _ = state.core.token_manager.load_accounts().await;
-
-    let current_id = state.core.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(to_account_response(&account, &current_id)))
 }
 
 #[derive(Deserialize)]
@@ -88,45 +68,6 @@ pub(crate) async fn admin_import_custom_db(
         )
     })?;
     Ok(Json(to_account_response(&account, &current_id)))
-}
-
-pub(crate) async fn admin_sync_account_from_db(
-    State(state): State<AdminState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let db_refresh_token = match migration::get_refresh_token_from_db() {
-        Ok(token) => token,
-        Err(_e) => {
-            return Ok(Json(None));
-        }
-    };
-    let curr_account = account::get_current_account().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-
-    if let Some(acc) = curr_account {
-        if acc.token.refresh_token == db_refresh_token {
-            return Ok(Json(None));
-        }
-    }
-
-    let account = migration::import_from_db().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    let _ = state.core.token_manager.load_accounts().await;
-
-    let current_id = state.core.account_service.get_current_id().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(Json(Some(to_account_response(&account, &current_id))))
 }
 
 #[derive(Deserialize)]

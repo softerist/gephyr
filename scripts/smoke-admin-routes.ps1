@@ -1,4 +1,4 @@
-param(
+﻿param(
     [int]$Port = 8045,
     [string]$Image = "gephyr:latest"
 )
@@ -51,7 +51,7 @@ function Ensure-ApiKey {
 Write-Host "==> Restarting container (admin API enabled)"
 & $console restart -EnableAdminApi -Port $Port -Image $Image | Out-Null
 
-Write-Host "==> Health check (/healthz)"
+Write-Host "==> Health check (/health)"
 & $console health -Port $Port -Quiet | Out-Null
 
 Write-Host "==> Fetching /api/version/routes"

@@ -1,0 +1,36 @@
+Google Trace Diff Report
+Generated: 2026-02-16T22:14:22.4497437+02:00
+Gephyr records: 10
+Known-good records: 5
+Endpoints compared: 3
+Ignored headers in diff: connection, content-length, x-dev-device-id, x-machine-id, x-mac-machine-id, x-sqm-id
+Classification summary:
+  extra_endpoint_in_gephyr: 1
+  matched_or_extra_only: 2
+
+
+Endpoint: https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels
+  classification: matched_or_extra_only
+  exercised_known_good: 2
+  exercised_gephyr: 2
+  missing_in_gephyr: 
+  extra_in_gephyr: 
+  blocked_in_gephyr: connection
+
+Endpoint: https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist
+  classification: matched_or_extra_only
+  exercised_known_good: 3
+  exercised_gephyr: 2
+  missing_in_gephyr: 
+  extra_in_gephyr: 
+  blocked_in_gephyr: connection
+
+Endpoint: https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse
+  classification: extra_endpoint_in_gephyr
+  exercised_known_good: 0
+  exercised_gephyr: 6
+  missing_in_gephyr: 
+  extra_in_gephyr: 
+  note: endpoint not present in known-good capture; recapture known-good to diff headers.
+  blocked_in_gephyr: 
+

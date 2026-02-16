@@ -33,7 +33,7 @@ Commands:
   restart      Restart container
   status       Show container status
   logs         Show container logs
-  health       Call /healthz with API key
+  health       Call /health with API key
   check        Run account token health check (refresh expiring tokens)
   canary       Show/Run TLS stealth canary probe (use --run to trigger)
   login        Start with admin API, fetch /api/auth/url, open browser
@@ -294,7 +294,7 @@ wait_service_ready() {
   for _ in $(seq 1 40); do
     code="$(curl -s -o /dev/null -w "%{http_code}" \
       -H "Authorization: Bearer ${API_KEY}" \
-      "http://127.0.0.1:${PORT}/healthz" || true)"
+      "http://127.0.0.1:${PORT}/health" || true)"
     [[ "$code" == "200" ]] && return 0
     if [[ "$code" == "401" ]]; then
       echo "Health check failed with 401 (API key mismatch). Run restart or rotate-key." >&2
@@ -355,7 +355,7 @@ show_status() {
     local health_json="" health_ok="false"
     if [[ -n "${API_KEY:-}" ]]; then
       health_json="$(curl -sS -H "Authorization: Bearer ${API_KEY}" \
-        "http://127.0.0.1:${PORT}/healthz" 2>/dev/null || true)"
+        "http://127.0.0.1:${PORT}/health" 2>/dev/null || true)"
       if [[ -n "$health_json" ]] && echo "$health_json" | grep -q '"status"'; then
         health_ok="true"
         echo -e "  ${G}Health:     ${GR}OK${W}"
@@ -559,7 +559,7 @@ show_logs() {
 show_health() {
   ensure_api_key
   local result
-  result="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/healthz")"
+  result="$(curl -sS -H "Authorization: Bearer ${API_KEY}" "http://127.0.0.1:${PORT}/health")"
   if [[ "$JSON_OUTPUT" == "true" ]]; then
     echo "$result"
   else
@@ -1311,7 +1311,7 @@ update_gephyr() {
         local hcode
         hcode="$(curl -s -o /dev/null -w "%{http_code}" \
           -H "Authorization: Bearer ${API_KEY}" \
-          "http://127.0.0.1:${PORT}/healthz" || true)"
+          "http://127.0.0.1:${PORT}/health" || true)"
         if [[ "$hcode" == "200" ]]; then
           echo -e "  Health: \033[32mOK\033[0m"
         else

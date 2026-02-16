@@ -17,7 +17,7 @@ From `src/proxy/middleware/auth.rs`:
 
 - `OPTIONS` bypasses auth.
 - Health endpoints can bypass depending on mode.
-- `/internal/*` bypass logic exists (non-force-strict path) and internal probe routes are mounted (`/internal/health`, `/internal/healthz`, `/internal/status`).
+- `/internal/*` bypass logic exists (non-force-strict path) and internal probe routes are mounted (`/internal/health`, `/internal/status`).
 - API key sources:
 - `Authorization: Bearer ...`
 - `x-api-key`
@@ -77,8 +77,8 @@ From `src/utils/crypto.rs`:
 - No constant/default shared fallback key
 - Startup emits warning when `ENCRYPTION_KEY` is weak/short (recommend `>= 32` high-entropy characters)
 - Encrypted payloads fail closed when no key source is available (plaintext compatibility remains for non-encrypted values)
-- New encrypted writes use versioned ciphertext format (`v2:<base64>`).
-- Legacy unversioned ciphertext remains decryptable for backward compatibility.
+- New encrypted writes use PBKDF2-based versioned ciphertext format (`v3:<base64>`).
+- Backward compatibility remains for existing `v2:` and legacy unversioned ciphertext payloads.
 
 ## Secret Re-encryption Migration
 
@@ -86,7 +86,7 @@ From `src/commands/crypto.rs` and `src/lib.rs`:
 
 - One-time migration command: run the binary with `--reencrypt-secrets`.
 - Flow:
-- load + save app config to rewrite encrypted fields to v2 format
+- load + save app config to rewrite encrypted fields to current versioned format
 - iterate account JSON files and load + save each account to rewrite encrypted fields
 - startup exits after migration completes (service does not stay running in this mode)
 - Migration requires a valid key source (`ENCRYPTION_KEY` recommended).

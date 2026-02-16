@@ -42,7 +42,7 @@ Commands:
   restart      Restart container
   status       Show container status
   logs         Show container logs
-  health       Call /healthz with API key
+  health       Call /health with API key
   check        Run account token health check (refresh expiring tokens)
   canary       Show/Run TLS stealth canary probe (use --run to trigger)
   login        Start container with admin API, fetch /api/auth/url, open browser
@@ -358,7 +358,7 @@ function Wait-ServiceReady {
     $headers = Get-AuthHeaders
     for ($i = 0; $i -lt $Attempts; $i++) {
         try {
-            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -UseBasicParsing -TimeoutSec 2
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" -Headers $headers -UseBasicParsing -TimeoutSec 2
             if ($resp.StatusCode -eq 200) {
                 return $true
             }
@@ -428,7 +428,7 @@ function Show-Status {
         Write-Host "┌─ Service Health ───────────────────────────────────────────────" -ForegroundColor DarkGray
         try {
             $headers = Get-AuthHeaders
-            $healthData = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 5
+            $healthData = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -Headers $headers -Method Get -TimeoutSec 5
             Write-Host "  Health:     " -NoNewline -ForegroundColor Gray
             Write-Host "OK" -ForegroundColor Green
             if ($healthData.version) {
@@ -633,7 +633,7 @@ function Show-Health {
     param([switch]$AsJson)
     $headers = Get-AuthHeaders
     try {
-        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 10
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -Headers $headers -Method Get -TimeoutSec 10
         if ($AsJson) {
             $health | ConvertTo-Json -Depth 5
         } else {
@@ -1240,7 +1240,7 @@ function Update-Gephyr {
             Write-Host "Container is running. Checking health before update..." -ForegroundColor Cyan
             try {
                 $headers = Get-AuthHeaders
-                $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/healthz" -Headers $headers -Method Get -TimeoutSec 5
+                $null = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -Headers $headers -Method Get -TimeoutSec 5
                 Write-Host "  Health: OK" -ForegroundColor Green
             } catch {
                 Write-Host "  Health: FAILED — proceeding anyway" -ForegroundColor Yellow

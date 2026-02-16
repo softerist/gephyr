@@ -51,7 +51,7 @@ pub async fn monitor_middleware(
     let method = request.method().to_string();
     let uri = request.uri().to_string();
 
-    if uri == "/healthz"
+    if uri == "/health"
         || uri.contains("event_logging")
         || uri.contains("/api/")
         || uri.starts_with("/internal/")

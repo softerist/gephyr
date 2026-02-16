@@ -1,5 +1,4 @@
 use crate::models::DeviceProfile;
-use crate::modules::system::process;
 use rand::Rng;
 use serde_json::Value;
 use std::fs;
@@ -29,59 +28,7 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
             return Err("storage_json_override_not_found".to_string());
         }
     }
-
-    if let Some(user_data_dir) = process::get_user_data_dir_from_process() {
-        let path = user_data_dir
-            .join("User")
-            .join("globalStorage")
-            .join("storage.json");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    if let Some(exe_path) = process::get_antigravity_executable_path() {
-        if let Some(parent) = exe_path.parent() {
-            let portable = parent
-                .join("data")
-                .join("user-data")
-                .join("User")
-                .join("globalStorage")
-                .join("storage.json");
-            if portable.exists() {
-                return Ok(portable);
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-        let path =
-            home.join("Library/Application Support/Antigravity/User/globalStorage/storage.json");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let appdata =
-            std::env::var("APPDATA").map_err(|_| "failed_to_get_appdata_env".to_string())?;
-        let path = PathBuf::from(appdata).join("Antigravity\\User\\globalStorage\\storage.json");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-        let path = home.join(".config/Antigravity/User/globalStorage/storage.json");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    Err("storage_json_not_found".to_string())
+    Err("storage_json_auto_discovery_disabled".to_string())
 }
 pub fn read_profile(storage_path: &Path) -> Result<DeviceProfile, String> {
     let content = fs::read_to_string(storage_path)

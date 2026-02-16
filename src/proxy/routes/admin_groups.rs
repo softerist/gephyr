@@ -65,12 +65,10 @@ pub(super) fn add_account_routes(router: Router<AppState>) -> Router<AppState> {
             delete(admin::admin_delete_device_version),
         )
         .route("/accounts/import/v1", post(admin::admin_import_v1_accounts))
-        .route("/accounts/import/db", post(admin::admin_import_from_db))
         .route(
             "/accounts/import/db-custom",
             post(admin::admin_import_custom_db),
         )
-        .route("/accounts/sync/db", post(admin::admin_sync_account_from_db))
         .route(
             "/accounts/oauth/prepare",
             post(admin::admin_prepare_oauth_url),

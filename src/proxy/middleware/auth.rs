@@ -68,7 +68,7 @@ async fn auth_middleware_internal(
 ) -> Result<Response, StatusCode> {
     let method = request.method().clone();
     let path = request.uri().path().to_string();
-    let is_health_check = path == "/healthz" || path == "/api/health" || path == "/health";
+    let is_health_check = path == "/api/health" || path == "/health";
     let is_internal_endpoint = path.starts_with("/internal/");
     if !path.contains("event_logging") && !is_health_check {
         crate::modules::system::logger::log_info(&format!("Request: {} {}", method, path));

@@ -355,7 +355,7 @@ mod security_db_tests {
             client_ip: "normal.access.ip".to_string(),
             timestamp: now_timestamp(),
             method: Some("GET".to_string()),
-            path: Some("/healthz".to_string()),
+            path: Some("/health".to_string()),
             user_agent: None,
             status: Some(200),
             duration: Some(10),

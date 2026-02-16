@@ -24,13 +24,7 @@ This agent guide is derived from `src/` code analysis, not from markdown docs as
 
 ## High-Impact Warnings
 
-- `/api/zai/models/fetch` route/handler extractor mismatch likely breaks endpoint:
-- Route has no path param: `src/proxy/routes/admin.rs`
-- Handler expects `Path<String>`: `src/proxy/admin/runtime/service_control.rs`
-- Service disabled gating bypasses `/health` but not `/healthz`: `src/proxy/middleware/service_status.rs`, `src/proxy/routes/mod.rs`
-- Blacklist/whitelist clear handlers likely ineffective (remove by `ip_pattern` while DB removes by `id`): `src/proxy/admin/security.rs`, `src/modules/persistence/security_db.rs`
-- User token `enabled` flag is not enforced in token validation: `src/modules/persistence/user_token_db.rs`
-- Monitor can record token usage before/without monitor enabled and may double-record when enabled: `src/proxy/monitor.rs`
+- None currently confirmed in this pass.
 
 ## Operational Facts
 

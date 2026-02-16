@@ -48,9 +48,7 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
 
     let mut router = Router::new()
         .route("/health", get(health::health_check_handler))
-        .route("/healthz", get(health::health_check_handler))
         .route("/internal/health", get(health::health_check_handler))
-        .route("/internal/healthz", get(health::health_check_handler))
         .route(
             "/internal/status",
             get(handlers::common::handle_internal_status),

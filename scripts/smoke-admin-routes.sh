@@ -52,7 +52,7 @@ command -v curl >/dev/null 2>&1 || die "curl is required"
 echo "==> Restarting container (admin API enabled)"
 "$CONSOLE_SCRIPT" restart --admin-api --port "$PORT" --image "$IMAGE" >/dev/null
 
-echo "==> Health check (/healthz)"
+echo "==> Health check (/health)"
 "$CONSOLE_SCRIPT" health --port "$PORT" --quiet >/dev/null
 
 ensure_api_key

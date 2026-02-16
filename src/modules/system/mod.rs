@@ -4,7 +4,6 @@ pub mod integration;
 pub mod log_bridge;
 pub mod logger;
 pub mod migration;
-pub mod process;
 pub mod quota;
 pub mod request_context;
 pub mod scheduler;

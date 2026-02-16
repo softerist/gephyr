@@ -1,5 +1,5 @@
 use crate::models::{Account, TokenData};
-use crate::modules::{auth::account, persistence::db};
+use crate::modules::auth::account;
 use crate::utils::protobuf;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
@@ -230,10 +230,6 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
     );
     account::upsert_account(email.clone(), name, token_data, google_sub)
 }
-pub async fn import_from_db() -> Result<Account, String> {
-    let db_path = db::get_db_path()?;
-    import_from_custom_db_path(db_path.to_string_lossy().to_string()).await
-}
 pub fn extract_refresh_token_from_file(db_path: &PathBuf) -> Result<String, String> {
     if !db_path.exists() {
         return Err(format!("Database file not found: {:?}", db_path));
@@ -260,8 +256,4 @@ pub fn extract_refresh_token_from_file(db_path: &PathBuf) -> Result<String, Stri
         .ok_or("Refresh Token not included in data (Field 3)")?;
 
     String::from_utf8(refresh_bytes).map_err(|_| "Refresh Token is not UTF-8 encoded".to_string())
-}
-pub fn get_refresh_token_from_db() -> Result<String, String> {
-    let db_path = db::get_db_path()?;
-    extract_refresh_token_from_file(&db_path)
 }

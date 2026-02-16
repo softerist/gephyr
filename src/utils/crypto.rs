@@ -3,16 +3,21 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose, Engine as _};
+use pbkdf2::pbkdf2_hmac_array;
 use rand::RngCore;
 use sha2::Digest;
 use std::collections::HashSet;
 
 const NONCE_LEN: usize = 12;
+const KDF_SALT_LEN: usize = 16;
 const GCM_TAG_LEN: usize = 16;
 const LEGACY_NONCE_BYTES: &[u8] = b"antigravity_salt";
 const CIPHERTEXT_V2_PREFIX: &str = "v2:";
+const CIPHERTEXT_V3_PREFIX: &str = "v3:";
 const MIN_ENCRYPTED_BYTES: usize = NONCE_LEN + GCM_TAG_LEN;
+const MIN_V3_ENCRYPTED_BYTES: usize = KDF_SALT_LEN + NONCE_LEN + GCM_TAG_LEN;
 const RECOMMENDED_ENV_KEY_MIN_LEN: usize = 32;
+const PBKDF2_ITERATIONS_V3: u32 = 210_000;
 
 fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
@@ -20,21 +25,25 @@ fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     nonce
 }
 
-fn derive_key_material(source: &str) -> [u8; 32] {
+fn derive_key_material_sha256(source: &str) -> [u8; 32] {
     let mut key = [0u8; 32];
     let hash = sha2::Sha256::digest(source.as_bytes());
     key.copy_from_slice(&hash);
     key
 }
 
-fn resolve_encryption_key_from_sources(
+fn derive_key_material_pbkdf2(source: &str, salt: &[u8]) -> [u8; 32] {
+    pbkdf2_hmac_array::<sha2::Sha256, 32>(source.as_bytes(), salt, PBKDF2_ITERATIONS_V3)
+}
+
+fn resolve_encryption_key_source_from_sources(
     env_key: Option<&str>,
     machine_uid_result: Result<String, String>,
-) -> Result<[u8; 32], String> {
+) -> Result<String, String> {
     if let Some(raw) = env_key {
         let key = raw.trim();
         if !key.is_empty() {
-            return Ok(derive_key_material(key));
+            return Ok(key.to_string());
         }
     }
 
@@ -43,13 +52,22 @@ fn resolve_encryption_key_from_sources(
     if machine_uid.is_empty() {
         return Err("machine_uid_empty".to_string());
     }
-    Ok(derive_key_material(machine_uid))
+    Ok(machine_uid.to_string())
 }
 
-fn get_encryption_key() -> Result<[u8; 32], String> {
+#[cfg(test)]
+fn resolve_encryption_key_from_sources(
+    env_key: Option<&str>,
+    machine_uid_result: Result<String, String>,
+) -> Result<[u8; 32], String> {
+    let source = resolve_encryption_key_source_from_sources(env_key, machine_uid_result)?;
+    Ok(derive_key_material_sha256(&source))
+}
+
+fn get_encryption_key_source() -> Result<String, String> {
     let env_key = std::env::var("ENCRYPTION_KEY").ok();
     let machine_uid = machine_uid::get().map_err(|e| format!("machine_uid_unavailable: {}", e));
-    resolve_encryption_key_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
+    resolve_encryption_key_source_from_sources(env_key.as_deref(), machine_uid).map_err(|e| {
         format!(
             "ERROR [E-CRYPTO-KEY-UNAVAILABLE] {}. In Docker/container environments machine UID may be unavailable. Remediation: set ENCRYPTION_KEY, restart Gephyr, then retry the failed operation (rerun OAuth login if account linking failed).",
             e
@@ -57,11 +75,16 @@ fn get_encryption_key() -> Result<[u8; 32], String> {
     })
 }
 
+fn get_encryption_key() -> Result<[u8; 32], String> {
+    let source = get_encryption_key_source()?;
+    Ok(derive_key_material_sha256(&source))
+}
+
 fn validate_encryption_key_from_sources(
     env_key: Option<&str>,
     machine_uid_result: Result<String, String>,
 ) -> Result<(), String> {
-    resolve_encryption_key_from_sources(env_key, machine_uid_result).map(|_| ())
+    resolve_encryption_key_source_from_sources(env_key, machine_uid_result).map(|_| ())
 }
 
 pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
@@ -130,7 +153,9 @@ pub fn warn_if_weak_encryption_key() {
 }
 
 pub fn is_probably_encrypted_secret(raw: &str) -> bool {
-    raw.starts_with(CIPHERTEXT_V2_PREFIX) || looks_like_encrypted_payload(raw)
+    raw.starts_with(CIPHERTEXT_V3_PREFIX)
+        || raw.starts_with(CIPHERTEXT_V2_PREFIX)
+        || looks_like_encrypted_payload(raw)
 }
 
 pub fn preflight_verify_decryptable_secret(raw: &str) -> Result<(), String> {
@@ -141,7 +166,10 @@ pub fn preflight_verify_decryptable_secret(raw: &str) -> Result<(), String> {
 }
 
 fn looks_like_encrypted_payload(raw: &str) -> bool {
-    let encoded = raw.strip_prefix(CIPHERTEXT_V2_PREFIX).unwrap_or(raw);
+    let encoded = raw
+        .strip_prefix(CIPHERTEXT_V3_PREFIX)
+        .or_else(|| raw.strip_prefix(CIPHERTEXT_V2_PREFIX))
+        .unwrap_or(raw);
     general_purpose::STANDARD
         .decode(encoded)
         .map(|decoded| decoded.len() >= MIN_ENCRYPTED_BYTES)
@@ -192,11 +220,12 @@ where
 }
 
 pub fn decrypt_secret_or_plaintext(raw: &str) -> Result<String, String> {
-    let has_v2_prefix = raw.starts_with(CIPHERTEXT_V2_PREFIX);
+    let has_versioned_prefix =
+        raw.starts_with(CIPHERTEXT_V3_PREFIX) || raw.starts_with(CIPHERTEXT_V2_PREFIX);
     match decrypt_string(raw) {
         Ok(v) => Ok(v),
         Err(e) => {
-            if has_v2_prefix || looks_like_encrypted_payload(raw) {
+            if has_versioned_prefix || looks_like_encrypted_payload(raw) {
                 Err(e)
             } else {
                 Ok(raw.to_string())
@@ -206,7 +235,10 @@ pub fn decrypt_secret_or_plaintext(raw: &str) -> Result<String, String> {
 }
 
 pub fn encrypt_string(password: &str) -> Result<String, String> {
-    let key = get_encryption_key()?;
+    let key_source = get_encryption_key_source()?;
+    let mut salt_bytes = [0u8; KDF_SALT_LEN];
+    rand::thread_rng().fill_bytes(&mut salt_bytes);
+    let key = derive_key_material_pbkdf2(&key_source, &salt_bytes);
     let cipher = Aes256Gcm::new(&key.into());
 
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -217,24 +249,45 @@ pub fn encrypt_string(password: &str) -> Result<String, String> {
         .encrypt(nonce, password.as_bytes())
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
-    let mut packed = Vec::with_capacity(NONCE_LEN + ciphertext.len());
+    let mut packed = Vec::with_capacity(KDF_SALT_LEN + NONCE_LEN + ciphertext.len());
+    packed.extend_from_slice(&salt_bytes);
     packed.extend_from_slice(&nonce_bytes);
     packed.extend_from_slice(&ciphertext);
     Ok(format!(
         "{}{}",
-        CIPHERTEXT_V2_PREFIX,
+        CIPHERTEXT_V3_PREFIX,
         general_purpose::STANDARD.encode(packed)
     ))
 }
 
 pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
+    if encrypted.starts_with(CIPHERTEXT_V3_PREFIX) {
+        let key_source = get_encryption_key_source()?;
+        let encoded_payload = encrypted
+            .strip_prefix(CIPHERTEXT_V3_PREFIX)
+            .unwrap_or(encrypted);
+        let decoded = general_purpose::STANDARD
+            .decode(encoded_payload)
+            .map_err(|e| format!("Base64 decode failed: {}", e))?;
+        if decoded.len() < MIN_V3_ENCRYPTED_BYTES {
+            return Err("Decryption failed: invalid v3 payload".to_string());
+        }
+        let (salt_bytes, nonce_and_ciphertext) = decoded.split_at(KDF_SALT_LEN);
+        let (nonce_bytes, ciphertext) = nonce_and_ciphertext.split_at(NONCE_LEN);
+        let key = derive_key_material_pbkdf2(&key_source, salt_bytes);
+        let cipher = Aes256Gcm::new(&key.into());
+        let nonce = Nonce::from_slice(nonce_bytes);
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| "Decryption failed: invalid v3 payload or mismatched key".to_string())?;
+        return String::from_utf8(plaintext).map_err(|e| format!("UTF-8 conversion failed: {}", e));
+    }
+
     let key = get_encryption_key()?;
     let cipher = Aes256Gcm::new(&key.into());
 
     let is_v2 = encrypted.starts_with(CIPHERTEXT_V2_PREFIX);
-    let encoded_payload = encrypted
-        .strip_prefix(CIPHERTEXT_V2_PREFIX)
-        .unwrap_or(encrypted);
+    let encoded_payload = encrypted.strip_prefix(CIPHERTEXT_V2_PREFIX).unwrap_or(encrypted);
 
     let decoded = general_purpose::STANDARD
         .decode(encoded_payload)
@@ -261,25 +314,42 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::ScopedEnvVar;
+    use crate::test_utils::{lock_env, ScopedEnvVar};
     use serde::Deserialize;
-    use std::sync::{Mutex, OnceLock};
 
-    static CRYPTO_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    fn encrypt_v2_ciphertext_for_tests(plaintext: &str) -> String {
+        let key = get_encryption_key().expect("legacy v2 key");
+        let cipher = Aes256Gcm::new(&key.into());
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext.as_bytes())
+            .expect("legacy v2 encrypt");
+
+        let mut packed = Vec::with_capacity(NONCE_LEN + ciphertext.len());
+        packed.extend_from_slice(&nonce_bytes);
+        packed.extend_from_slice(&ciphertext);
+        format!(
+            "{}{}",
+            CIPHERTEXT_V2_PREFIX,
+            general_purpose::STANDARD.encode(packed)
+        )
+    }
 
     #[test]
     fn resolve_key_prefers_env_var_over_machine_uid() {
         let env = Some("env-secret-key");
         let machine_uid = Ok("machine-id-123".to_string());
         let resolved = resolve_encryption_key_from_sources(env, machine_uid).expect("resolve key");
-        assert_eq!(resolved, derive_key_material("env-secret-key"));
+        assert_eq!(resolved, derive_key_material_sha256("env-secret-key"));
     }
 
     #[test]
     fn resolve_key_uses_machine_uid_when_env_missing() {
         let resolved = resolve_encryption_key_from_sources(None, Ok("machine-id-xyz".to_string()))
             .expect("resolve key");
-        assert_eq!(resolved, derive_key_material("machine-id-xyz"));
+        assert_eq!(resolved, derive_key_material_sha256("machine-id-xyz"));
     }
 
     #[test]
@@ -334,6 +404,12 @@ mod tests {
     }
 
     #[test]
+    fn v3_prefixed_invalid_payload_does_not_fallback_to_plaintext() {
+        let err = decrypt_secret_or_plaintext("v3:abc").expect_err("should fail closed");
+        assert!(!err.is_empty());
+    }
+
+    #[test]
     fn base64_payload_below_encrypted_threshold_falls_back_to_plaintext() {
         let raw = general_purpose::STANDARD.encode(vec![7u8; MIN_ENCRYPTED_BYTES - 1]);
         let decrypted = decrypt_secret_or_plaintext(&raw).expect("fallback plaintext");
@@ -342,10 +418,7 @@ mod tests {
 
     #[test]
     fn encrypted_values_decrypt_with_configured_key_source() {
-        let _guard = CRYPTO_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("crypto env lock");
+        let _env_guard = lock_env();
         let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-migration-key");
 
         let encrypted = encrypt_string("persisted-secret").expect("encrypt");
@@ -355,29 +428,33 @@ mod tests {
     }
 
     #[test]
-    fn encrypt_string_uses_v2_prefix() {
-        let _guard = CRYPTO_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("crypto env lock");
-        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-v2-prefix-key");
+    fn encrypt_string_uses_v3_prefix() {
+        let _env_guard = lock_env();
+        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-v3-prefix-key");
 
         let encrypted = encrypt_string("secret").expect("encrypt");
         assert!(
-            encrypted.starts_with(CIPHERTEXT_V2_PREFIX),
-            "new ciphertext should use v2 prefix"
+            encrypted.starts_with(CIPHERTEXT_V3_PREFIX),
+            "new ciphertext should use v3 prefix"
         );
     }
 
     #[test]
-    fn decrypt_string_supports_unversioned_legacy_ciphertext() {
-        let _guard = CRYPTO_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("crypto env lock");
+    fn decrypt_string_supports_versioned_v2_ciphertext() {
+        let _env_guard = lock_env();
         let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-legacy-key");
 
-        let v2_encrypted = encrypt_string("legacy-plaintext").expect("encrypt");
+        let v2_ciphertext = encrypt_v2_ciphertext_for_tests("legacy-v2-plaintext");
+        let decrypted = decrypt_string(&v2_ciphertext).expect("decrypt versioned v2");
+        assert_eq!(decrypted, "legacy-v2-plaintext");
+    }
+
+    #[test]
+    fn decrypt_string_supports_unversioned_legacy_ciphertext() {
+        let _env_guard = lock_env();
+        let _key = ScopedEnvVar::set("ENCRYPTION_KEY", "test-legacy-key");
+
+        let v2_encrypted = encrypt_v2_ciphertext_for_tests("legacy-plaintext");
         let legacy_unversioned = v2_encrypted
             .strip_prefix(CIPHERTEXT_V2_PREFIX)
             .expect("v2 prefix")

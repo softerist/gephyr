@@ -768,13 +768,6 @@ pub fn get_current_account_id() -> Result<Option<String>, String> {
     let index = load_account_index()?;
     Ok(index.current_account_id)
 }
-pub fn get_current_account() -> Result<Option<Account>, String> {
-    if let Some(id) = get_current_account_id()? {
-        Ok(Some(load_account(&id)?))
-    } else {
-        Ok(None)
-    }
-}
 pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), String> {
     let mut account = load_account(account_id)?;
     account.update_quota(quota);

@@ -124,13 +124,14 @@ pub(crate) fn get_quota_reset_time(data_dir: &Path, account_id: &str) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::ScopedEnvVar;
+    use crate::test_utils::{lock_env, ScopedEnvVar};
     use std::sync::{Mutex, OnceLock};
 
     static TOKEN_PERSIST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[test]
     fn save_refreshed_token_persists_encrypted_access_token() {
+        let _env_guard = lock_env();
         let _guard = TOKEN_PERSIST_ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -182,8 +183,8 @@ mod tests {
             "access token should not be stored in plaintext"
         );
         assert!(
-            saved_access.starts_with("v2:"),
-            "access token should be saved in v2 ciphertext format"
+            saved_access.starts_with("v3:"),
+            "access token should be saved in v3 ciphertext format"
         );
 
         let _ = std::fs::remove_dir_all(&temp_dir);

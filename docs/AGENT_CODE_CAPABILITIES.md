@@ -23,9 +23,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 Defined in `src/proxy/routes/mod.rs`:
 
 - `GET /health`
-- `GET /healthz`
 - `GET /internal/health`
-- `GET /internal/healthz`
 - `GET /internal/status`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
@@ -72,15 +70,15 @@ Main admin groups include:
 - Auth modes: `Off`, `Strict`, `AllExceptHealth` in `src/proxy/config.rs`, `src/proxy/security.rs`
 - Legacy compatibility: `auto` auth mode values are coerced to `strict` during env/config load in headless runtime
 - `OPTIONS` requests bypass auth in middleware: `src/proxy/middleware/auth.rs`
-- `/internal/*` bypass exists in auth/monitor middleware logic and internal probe routes are mounted at `/internal/health`, `/internal/healthz`, and `/internal/status`
+- `/internal/*` bypass exists in auth/monitor middleware logic and internal probe routes are mounted at `/internal/health` and `/internal/status`
 - API key sources:
 - `Authorization: Bearer ...`
 - `x-api-key`
 - `x-goog-api-key`
 - Admin strict auth checks admin password first (if configured), then API key fallback: `src/proxy/middleware/auth.rs`
 - API/admin secret comparison uses a constant-time helper in auth middleware: `src/proxy/middleware/auth.rs`
-- Secret encryption writes are versioned (`v2:<base64>`), while decrypt path remains backward-compatible with legacy unversioned payloads: `src/utils/crypto.rs`
-- `decrypt_secret_or_plaintext` fails closed for explicit `v2:` and encrypted-looking payloads; malformed/undecryptable prefixed ciphertext no longer silently falls back to plaintext: `src/utils/crypto.rs`
+- Secret encryption writes are versioned (`v3:<base64>`, PBKDF2-derived key material), while decrypt path remains backward-compatible with existing `v2:` and legacy unversioned payloads: `src/utils/crypto.rs`
+- `decrypt_secret_or_plaintext` fails closed for explicit prefixed ciphertext (`v2:`/`v3:`) and encrypted-looking payloads; malformed/undecryptable prefixed ciphertext no longer silently falls back to plaintext: `src/utils/crypto.rs`
 - serde secret adapter (`deserialize_secret`) is resilient for account-management deserialization and logs decrypt failures while preserving raw value (prevents account-list/load bricking when on-disk ciphertext is malformed): `src/utils/crypto.rs`, `src/modules/auth/account.rs`
 - IP filter supports whitelist mode, whitelist-priority mode, blacklist exact/CIDR matching, blocked-request JSON responses, and blocked log persistence: `src/proxy/middleware/ip_filter.rs`, `src/modules/persistence/security_db.rs`
 - Client IP resolution trusts forwarded headers only for socket peers in `proxy.trusted_proxies` (IP/CIDR); otherwise it uses socket `ConnectInfo` only: `src/proxy/middleware/client_ip.rs`, `src/proxy/config.rs`
@@ -141,7 +139,7 @@ Main admin groups include:
 - Token manager loads account JSONs from data dir
 - Skips disabled/proxy-disabled/forbidden/validation-blocked accounts
 - Auto-clears expired validation-block flags on disk
-- Proxy token loader now hard-fails invalid encrypted token payloads during runtime account load (malformed `v2:` token fields are rejected in loader path): `src/proxy/token/loader.rs`
+- Proxy token loader now hard-fails invalid encrypted token payloads during runtime account load (malformed prefixed token fields, including `v2:`/`v3:`, are rejected in loader path): `src/proxy/token/loader.rs`
 - Token acquisition timeout: 5 seconds (`src/proxy/token/manager_runtime.rs`)
 - Selection strategy combines:
 - preferred-account mode

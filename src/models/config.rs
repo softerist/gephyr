@@ -5,8 +5,6 @@ pub struct AppConfig {
     pub auto_refresh: bool,
     #[serde(default)]
     pub proxy: ProxyConfig,
-    pub antigravity_executable: Option<String>,
-    pub antigravity_args: Option<Vec<String>>,
     #[serde(default)]
     pub scheduled_warmup: ScheduledWarmupConfig,
     #[serde(default)]
@@ -122,8 +120,6 @@ impl AppConfig {
         Self {
             auto_refresh: true,
             proxy: ProxyConfig::default(),
-            antigravity_executable: None,
-            antigravity_args: None,
             scheduled_warmup: ScheduledWarmupConfig::default(),
             quota_protection: QuotaProtectionConfig::default(),
             pinned_quota_models: PinnedQuotaModelsConfig::default(),

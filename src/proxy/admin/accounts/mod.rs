@@ -17,8 +17,7 @@ pub(crate) use device::{
 };
 pub(crate) use import_sync::{
     admin_execute_cli_restore, admin_execute_cli_sync, admin_get_cli_config_content,
-    admin_get_cli_sync_status, admin_import_custom_db, admin_import_from_db,
-    admin_import_v1_accounts, admin_sync_account_from_db,
+    admin_get_cli_sync_status, admin_import_custom_db, admin_import_v1_accounts,
 };
 #[cfg(test)]
 pub(crate) use oauth::OAuthParams;
