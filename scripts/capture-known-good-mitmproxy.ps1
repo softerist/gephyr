@@ -1,5 +1,5 @@
 param(
-    [int]$Port = 8877,
+    [int]$Port = 8879,
     [string]$KnownGoodPath = "output/known_good.jsonl",
     [string]$GephyrPath = "output/gephyr_google_outbound_headers.jsonl",
     [string]$MitmdumpPath = "",
@@ -14,6 +14,7 @@ param(
     [switch]$TrustCert,
     [switch]$SkipDiff,
     [switch]$RequireStream,
+    [switch]$RequireStrictStream,
     [switch]$AllowMissingStream,
     [switch]$SelfTestProxy,
     [switch]$LaunchAntigravityProxied,
@@ -389,8 +390,11 @@ try {
     } else {
         Write-Host "   Open http://mitm.it from the proxied client and install cert"
     }
-    if ($RequireStream) {
+    if ($RequireStream -or $RequireStrictStream) {
         Write-Host "3) Trigger baseline flows: login/refresh + loadCodeAssist + fetch models + generate/stream"
+        if ($RequireStrictStream) {
+            Write-Host "   Strict mode: streamGenerateContent must be captured."
+        }
     } else {
         Write-Host "3) Trigger baseline flows: login/refresh + loadCodeAssist + fetch models"
         Write-Host "   (If you want to capture chat/prompt traffic too, do a generate/stream action before stopping capture.)"
@@ -681,14 +685,32 @@ if (-not (Test-Path $captureTempAbs)) {
         }
     }
 
-	$message = "Known-good trace was not produced at: $knownGoodAbs"
+	$message = @"
+
+  The capture ran, but no known-good trace was produced.
+  (Expected output: $knownGoodAbs)
+
+"@
 	if ($diagObj -and $diagObj.total_requests_seen -gt 0 -and $diagObj.total_target_requests_seen -eq 0) {
 		# This commonly happens when UA allow/deny filters are configured and don't match the client being exercised.
-		$message += "`nNo target requests matched the capture filters (target host/suffix + user-agent filters)."
-		$message += "`nCheck the printed 'Top dropped user-agents' and adjust -UserAgentContains / -UserAgentExcludeContains, or exercise the intended client during the capture."
+		$message += @"
+  We saw traffic through the proxy, but none matched the target filters.
+
+  How to fix this:
+    - Check 'Top dropped user-agents' above and adjust -UserAgentContains / -UserAgentExcludeContains.
+    - Make sure you exercised the intended baseline client while the proxy was running.
+
+"@
 	} else {
-		$message += "`nNo requests to Google APIs reached the proxy."
-		$message += "`nEnsure your client is configured to use proxy 127.0.0.1:$Port and the mitmproxy CA is trusted."
+		$message += @"
+  No requests to Google APIs reached the proxy at all.
+
+  How to fix this:
+    - Confirm the baseline client is configured to use proxy 127.0.0.1:$Port.
+    - Ensure the mitmproxy CA certificate is trusted.
+    - Try launching via: scripts/start-antigravity-proxied.ps1 -Port $Port
+
+"@
 	}
 	if ($diagSummary) {
 		$message += "`n$diagSummary"
@@ -699,10 +721,20 @@ if (-not (Test-Path $captureTempAbs)) {
 $lineCount = (Get-Content -Path $captureTempAbs | Measure-Object -Line).Lines
 if ($lineCount -eq 0) {
     Remove-Item $captureTempAbs -Force -ErrorAction SilentlyContinue
-    throw "Known-good trace is empty: $knownGoodAbs. No Google requests reached mitmproxy. Ensure baseline client is actually using proxy 127.0.0.1:$Port."
+    throw @"
+
+  The capture file was created but is empty (0 lines).
+
+  This means the proxy was running, but no Google API requests were recorded.
+
+  How to fix this:
+    - Confirm the baseline client is actually routing through 127.0.0.1:$Port.
+    - Make sure TLS decryption is working (is the mitmproxy CA trusted?).
+    - Try launching via: scripts/start-antigravity-proxied.ps1 -Port $Port
+"@
 }
 
-if ($RequireStream) {
+if ($RequireStream -or $RequireStrictStream) {
     $capturedEndpoints = @(
         Get-Content -Path $captureTempAbs | ForEach-Object {
             try {
@@ -717,16 +749,34 @@ if ($RequireStream) {
             $_ -match "streamGenerateContent|:generateContent(\?|$)|:completeCode(\?|$)"
         } | Sort-Object -Unique
     )
-    $hasRequiredGeneration = $generationEndpoints.Count -gt 0
+    $streamEndpoints = @($generationEndpoints | Where-Object { $_ -match "streamGenerateContent" })
+    $hasRequiredGeneration = if ($RequireStrictStream) {
+        $streamEndpoints.Count -gt 0
+    } else {
+        $generationEndpoints.Count -gt 0
+    }
 
     if (-not $hasRequiredGeneration) {
         $diagSummary = $null
+        $nonGoogleProviderHint = $null
         if (Test-Path $diagAbs) {
             try {
                 $diag = Get-Content $diagAbs -Raw | ConvertFrom-Json
                 $top = @($diag.top_hosts | Select-Object -First 10 | ForEach-Object { "$($_.host) ($($_.count))" })
                 $topTargets = @($diag.top_target_hosts | Select-Object -First 10 | ForEach-Object { "$($_.host) ($($_.count))" })
                 $topTargetUas = @($diag.top_target_user_agents | Select-Object -First 6 | ForEach-Object { "$($_.user_agent) ($($_.count))" })
+                $topHostNames = @($diag.top_hosts | ForEach-Object { "$($_.host)" })
+                $nonGoogleProviderHosts = @(
+                    $topHostNames | Where-Object { $_ -match "chatgpt\.com|chat\.openai\.com|ab\.chatgpt\.com" } | Sort-Object -Unique
+                )
+                if ($nonGoogleProviderHosts.Count -gt 0) {
+                    $nonGoogleProviderHint = @(
+                        "Detected likely non-Google chat traffic during capture: $($nonGoogleProviderHosts -join ', ')."
+                        "This usually means prompt activity happened in a non-Google chat surface (for example Open Agent Manager/Codex chat),"
+                        "while Google Code Assist only emitted bootstrap calls (loadCodeAssist/fetchUserInfo/fetchAvailableModels)."
+                        "Use the Google Code Assist chat/prompt surface and wait for streamed output before stopping capture."
+                    ) -join "`n"
+                }
                 $diagSummary = @(
                     "Capture diagnostics: total requests seen=$($diag.total_requests_seen), target requests seen=$($diag.total_target_requests_seen)"
                     $(
@@ -752,24 +802,52 @@ if ($RequireStream) {
         }
 
         $missingStreamMessage = @"
-Known-good capture did not include a generation endpoint.
-Accepted endpoints for -RequireStream validation:
-  - streamGenerateContent
-  - generateContent
-  - completeCode
-The capture was saved for inspection at:
-  $failedPath
+
+  Almost there! The capture ran fine, but we didn't see a generation request come through.
+
+$(
+    if ($RequireStrictStream) {
+@"
+  What's missing:
+    We need at least one `streamGenerateContent` call (strict mode is on).
+"@
+    } else {
+@"
+  What's missing:
+    We need at least one of these endpoints:
+      - streamGenerateContent
+      - generateContent
+      - completeCode
+"@
+    }
+)
+
+  Your captured data was saved here (not lost!):
+    $failedPath
 $(
     if ($diagSummary) {
-        "`n`n$diagSummary"
+        "`n$diagSummary"
+    } else {
+        ""
+    }
+)
+$(
+    if ($nonGoogleProviderHint) {
+        "`n$nonGoogleProviderHint"
     } else {
         ""
     }
 )
 
-Re-run capture and ensure you trigger an actual generation action in the baseline client while the proxy is enabled.
-If you did generate and got a response, it may have gone to a non-Google provider/host; check the 'Top observed hosts' above.
-Tip: wait until you see tokens streaming for a few seconds, then stop capture.
+  How to fix this:
+    1. Re-run this capture script.
+    2. While the proxy is active, use the Google Code Assist prompt/chat surface
+       (not Open Agent Manager/Codex chat) and ask it something.
+    3. Wait until you see tokens streaming for a few seconds, then press Enter to stop.
+
+  Still not working?
+    - Your generation may have gone to a non-Google provider. Check 'Top observed hosts' above.
+    - Make sure the baseline client is actually routing through the proxy (127.0.0.1:$Port).
 "@
         if ($AllowMissingStream) {
             Write-Warning $missingStreamMessage
@@ -792,8 +870,7 @@ Tip: wait until you see tokens streaming for a few seconds, then stop capture.
         }
         throw $missingStreamMessage
     } else {
-        $streamEndpoints = @($generationEndpoints | Where-Object { $_ -match "streamGenerateContent" })
-        if ($streamEndpoints.Count -eq 0) {
+        if ((-not $RequireStrictStream) -and $streamEndpoints.Count -eq 0) {
             Write-Host "RequireStream satisfied by non-stream generation endpoint(s): $($generationEndpoints -join ', ')"
         }
     }

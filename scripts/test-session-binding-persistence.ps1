@@ -419,11 +419,13 @@ try {
 
     if (-not ($hasPersistSnake -or $hasPersistCamel)) {
         throw @"
-Current runtime does not expose proxy.persist_session_bindings in /api/config.
-This usually means the running image is older than the persistence implementation.
 
-Rebuild and run the latest local image, then rerun this script:
-  docker build -t gephyr:latest -f docker/Dockerfile .
+  The running image doesn't support session-binding persistence yet.
+  (proxy.persist_session_bindings was not found in /api/config)
+
+  This usually means you're running an older build. To fix it:
+    1. Rebuild the image:  docker build -t gephyr:latest -f docker/Dockerfile .
+    2. Restart the container, then re-run this script.
 "@
     }
 

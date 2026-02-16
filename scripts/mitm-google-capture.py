@@ -11,6 +11,13 @@ DIAG_PATH = os.environ.get(
 )
 DEFAULT_TARGET_HOSTS = {"oauth2.googleapis.com", "cloudcode-pa.googleapis.com"}
 DEFAULT_TARGET_SUFFIXES = {".googleapis.com", ".google.com"}
+TARGET_PATH_MARKERS = (
+    "streamgeneratecontent",
+    "generatecontent",
+    "completecode",
+    "/v1internal",
+    "v1internal:",
+)
 CAPTURE_ALL = os.environ.get("GEPHYR_MITM_CAPTURE_ALL", "").strip().lower() in (
     "1",
     "true",
@@ -104,6 +111,13 @@ def _is_target_host(host: str) -> bool:
     return any(lowered.endswith(suffix) for suffix in TARGET_SUFFIXES)
 
 
+def _is_target_path(path: str) -> bool:
+    lowered = (path or "").lower()
+    if not lowered:
+        return False
+    return any(marker in lowered for marker in TARGET_PATH_MARKERS)
+
+
 def _is_noise_request(host: str, path: str) -> bool:
     lowered_host = (host or "").lower()
     lowered_path = (path or "").lower()
@@ -173,6 +187,7 @@ class GoogleCapture:
 
     def requestheaders(self, flow):
         host = getattr(flow.request, "host", "")
+        path = getattr(flow.request, "path", "") or ""
         lowered_host = (host or "").lower()
         user_agent = flow.request.headers.get("user-agent", "") or ""
         ua_key = str(user_agent).strip()
@@ -183,13 +198,13 @@ class GoogleCapture:
             if ua_key:
                 UA_COUNTS[ua_key] = UA_COUNTS.get(ua_key, 0) + 1
 
-        if not _is_target_host(host):
+        if (not _is_target_host(host)) and (not _is_target_path(path)):
             # Persist host/UA counters even for non-target traffic so diagnostics remain
             # accurate when mitmdump is terminated immediately after capture.
             with LOCK:
                 _write_diag_snapshot()
             return
-        if (not CAPTURE_NOISE) and _is_noise_request(host, getattr(flow.request, "path", "")):
+        if (not CAPTURE_NOISE) and _is_noise_request(host, path):
             with LOCK:
                 _write_diag_snapshot()
             return

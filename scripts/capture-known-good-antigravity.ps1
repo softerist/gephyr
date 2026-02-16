@@ -8,6 +8,7 @@ param(
     [switch]$TrustCert,
     [switch]$SelfTestProxy,
     [switch]$RequireStream,
+    [switch]$RequireStrictStream,
     [switch]$AllowMissingStream,
     [switch]$StopExistingAntigravity,
     # Default behavior: manage + restore Windows proxy settings to maximize capture fidelity.
@@ -45,6 +46,7 @@ if ($CaptureNoise) { $args += "-CaptureNoise" }
 if ($TrustCert) { $args += "-TrustCert" }
 if ($SelfTestProxy) { $args += "-SelfTestProxy" }
 if ($RequireStream) { $args += "-RequireStream" }
+if ($RequireStrictStream) { $args += "-RequireStrictStream" }
 if ($AllowMissingStream) { $args += "-AllowMissingStream" }
 if ($StopExistingAntigravity) { $args += "-StopExistingAntigravity" }
 
