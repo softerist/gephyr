@@ -13,7 +13,6 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and can also run scheduled warmup (token health check path) when `scheduled_warmup.enabled=true`: `src/modules/system/scheduler.rs`
 - Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `5..30`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
 - Startup token health refresh now processes accounts sequentially with randomized per-account delay controlled by `STARTUP_HEALTH_DELAY_MIN_SECONDS` / `STARTUP_HEALTH_DELAY_MAX_SECONDS` (default `1..10`) to avoid simultaneous Google refresh spikes: `src/commands/proxy.rs`, `src/proxy/token/startup_health.rs`
-- Opening data folder is disabled in headless mode: `src/commands/mod.rs`
 - One-time secret migration mode is available via `--reencrypt-secrets` (rewrites config + account encrypted fields, then exits): `src/lib.rs`, `src/commands/crypto.rs`
 - Ctrl+C headless shutdown now triggers graceful proxy stop (accept-loop shutdown + bounded connection drain controlled by `SHUTDOWN_DRAIN_TIMEOUT_SECS`, default 10s); optional admin stop hook via `ADMIN_STOP_SHUTDOWN=true` + `POST /api/proxy/stop`: `src/lib.rs`, `src/commands/proxy.rs`, `src/proxy/server.rs`, `src/proxy/admin/runtime/service_control.rs`
 - HTTP/2 is currently deferred after local HTTP/1.1 concurrency benchmark (`1500` requests @ `64` concurrency, `~1676.90 req/s`): `src/proxy/server.rs`
@@ -65,7 +64,7 @@ Main admin groups include:
 - User tokens CRUD/renew/summary
 - CLI sync status/sync/restore/config (Claude/Codex/Gemini)
 - OpenCode sync status/sync/restore/config
-- System data-dir/update settings/check/cache clear/debug console controls
+- System data-dir and log-cache clear controls, plus debug console controls
 - OAuth callback route `/auth/callback` (only mounted with admin API enabled)
 
 ## Auth and Security Behavior

@@ -21,7 +21,7 @@ pub(crate) use accounts::{
     admin_fetch_account_quota, admin_get_cli_config_content, admin_get_cli_sync_status,
     admin_get_current_account, admin_get_device_profiles, admin_get_oauth_flow_status,
     admin_import_custom_db, admin_import_from_db, admin_import_v1_accounts, admin_list_accounts,
-    admin_list_device_versions, admin_logout_account, admin_logout_all_accounts, admin_open_folder,
+    admin_list_device_versions, admin_logout_account, admin_logout_all_accounts,
     admin_prepare_oauth_url, admin_prepare_oauth_url_web, admin_preview_generate_profile,
     admin_refresh_all_quotas, admin_reorder_accounts, admin_restore_device_version,
     admin_restore_original_device, admin_run_health_check, admin_start_oauth_login,
@@ -30,12 +30,11 @@ pub(crate) use accounts::{
 };
 
 pub(crate) use runtime::{
-    admin_bind_account_proxy, admin_clear_all_rate_limits, admin_clear_antigravity_cache,
-    admin_clear_log_cache, admin_clear_proxy_logs, admin_clear_proxy_session_bindings,
-    admin_clear_rate_limit, admin_create_user_token, admin_delete_user_token,
-    admin_fetch_zai_models, admin_generate_api_key, admin_get_account_proxy_binding,
-    admin_get_all_account_bindings, admin_get_antigravity_args, admin_get_antigravity_cache_paths,
-    admin_get_antigravity_path, admin_get_config, admin_get_data_dir_path, admin_get_google_outbound_policy,
+    admin_bind_account_proxy, admin_clear_all_rate_limits, admin_clear_log_cache,
+    admin_clear_proxy_logs, admin_clear_proxy_session_bindings, admin_clear_rate_limit,
+    admin_create_user_token, admin_delete_user_token, admin_fetch_zai_models,
+    admin_generate_api_key, admin_get_account_proxy_binding, admin_get_all_account_bindings,
+    admin_get_config, admin_get_data_dir_path, admin_get_google_outbound_policy,
     admin_get_operator_status, admin_get_preferred_account, admin_get_proxy_compliance_debug,
     admin_get_proxy_log_detail, admin_get_proxy_logs_count_filtered, admin_get_proxy_logs_filtered,
     admin_get_proxy_metrics, admin_get_proxy_pool_config, admin_get_proxy_pool_runtime,
@@ -44,9 +43,9 @@ pub(crate) use runtime::{
     admin_get_proxy_sticky_config, admin_get_tls_canary_status, admin_get_user_token_summary,
     admin_get_version_routes, admin_list_user_tokens, admin_renew_user_token,
     admin_run_tls_canary_probe, admin_save_config, admin_set_preferred_account,
-    admin_set_proxy_monitor_enabled, admin_should_check_updates, admin_start_proxy_service,
-    admin_stop_proxy_service, admin_trigger_proxy_health_check, admin_unbind_account_proxy,
-    admin_update_model_mapping, admin_update_proxy_compliance, admin_update_proxy_pool_runtime,
+    admin_set_proxy_monitor_enabled, admin_start_proxy_service, admin_stop_proxy_service,
+    admin_trigger_proxy_health_check, admin_unbind_account_proxy, admin_update_model_mapping,
+    admin_update_proxy_compliance, admin_update_proxy_pool_runtime,
     admin_update_proxy_pool_strategy, admin_update_proxy_request_timeout,
     admin_update_proxy_sticky_config, admin_update_user_token,
 };
@@ -60,12 +59,11 @@ pub(crate) use security::{
 };
 
 pub(crate) use stats::{
-    admin_check_for_updates, admin_clear_token_stats, admin_get_token_stats_account_trend_daily,
+    admin_clear_token_stats, admin_get_token_stats_account_trend_daily,
     admin_get_token_stats_account_trend_hourly, admin_get_token_stats_by_account,
     admin_get_token_stats_by_model, admin_get_token_stats_daily, admin_get_token_stats_hourly,
     admin_get_token_stats_model_trend_daily, admin_get_token_stats_model_trend_hourly,
-    admin_get_token_stats_summary, admin_get_token_stats_weekly, admin_get_update_settings,
-    admin_save_update_settings, admin_update_last_check_time,
+    admin_get_token_stats_summary, admin_get_token_stats_weekly,
 };
 
 pub(crate) use system::{

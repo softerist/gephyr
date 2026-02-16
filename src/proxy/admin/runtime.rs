@@ -19,9 +19,7 @@ pub(crate) use logs::{
     admin_get_proxy_logs_filtered, admin_get_proxy_stats,
 };
 pub(crate) use maintenance::{
-    admin_clear_antigravity_cache, admin_clear_log_cache, admin_get_antigravity_args,
-    admin_get_antigravity_cache_paths, admin_get_antigravity_path, admin_get_data_dir_path,
-    admin_should_check_updates,
+    admin_clear_log_cache, admin_get_data_dir_path,
 };
 pub(crate) use operator_status::admin_get_operator_status;
 pub(crate) use service_control::{

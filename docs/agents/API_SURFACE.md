@@ -6,6 +6,9 @@ Defined in `src/proxy/routes/mod.rs`.
 
 - `GET /health`
 - `GET /healthz`
+- `GET /internal/health`
+- `GET /internal/healthz`
+- `GET /internal/status`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 - `POST /v1/completions`
@@ -96,8 +99,7 @@ Primary groups:
 - User tokens:
 - list/create/update/delete/renew/summary
 - System and integrations:
-- data dir, update settings/check/touch/save
-- antigravity path/args/cache paths/cache clear
+- data dir
 - log cache clear
 - debug console enable/disable/logs/clear
 - CLI sync status/sync/restore/config

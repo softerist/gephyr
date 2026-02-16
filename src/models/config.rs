@@ -2,19 +2,11 @@ use crate::proxy::ProxyConfig;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub language: String,
-    pub theme: String,
     pub auto_refresh: bool,
-    pub refresh_interval: i32,
-    pub auto_sync: bool,
-    pub sync_interval: i32,
-    pub default_export_path: Option<String>,
     #[serde(default)]
     pub proxy: ProxyConfig,
     pub antigravity_executable: Option<String>,
     pub antigravity_args: Option<Vec<String>>,
-    #[serde(default)]
-    pub auto_launch: bool,
     #[serde(default)]
     pub scheduled_warmup: ScheduledWarmupConfig,
     #[serde(default)]
@@ -23,8 +15,6 @@ pub struct AppConfig {
     pub pinned_quota_models: PinnedQuotaModelsConfig,
     #[serde(default)]
     pub circuit_breaker: CircuitBreakerConfig,
-    #[serde(default)]
-    pub hidden_menu_items: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledWarmupConfig {
@@ -130,22 +120,14 @@ impl Default for CircuitBreakerConfig {
 impl AppConfig {
     pub fn new() -> Self {
         Self {
-            language: "en".to_string(),
-            theme: "system".to_string(),
             auto_refresh: true,
-            refresh_interval: 15,
-            auto_sync: false,
-            sync_interval: 5,
-            default_export_path: None,
             proxy: ProxyConfig::default(),
             antigravity_executable: None,
             antigravity_args: None,
-            auto_launch: false,
             scheduled_warmup: ScheduledWarmupConfig::default(),
             quota_protection: QuotaProtectionConfig::default(),
             pinned_quota_models: PinnedQuotaModelsConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),
-            hidden_menu_items: Vec::new(),
         }
     }
 }

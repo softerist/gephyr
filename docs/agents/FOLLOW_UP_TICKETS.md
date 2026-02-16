@@ -4,37 +4,42 @@ This file tracks non-critical deferred work that is intentionally outside the cu
 
 ## Open Deferred Tickets
 
-### TICKET-001: KDF Hardening + Migration Plan
+### TICKET-001: KDF Algorithm Upgrade (SHA-256 -> PBKDF2/Argon2)
 
 - Priority: Low-Medium
-- Status: Partially Completed (near-term guardrails done on 2026-02-16; migration deferred)
+- Status: Partially Completed (migration mechanics delivered on 2026-02-16; algorithm upgrade deferred)
 - Area: `src/utils/crypto.rs`, `src/commands/crypto.rs`
 
 Problem:
 
 - Current key derivation uses raw SHA-256 over key source material.
-- Moving to PBKDF2/Argon2 requires a versioned migration path for existing ciphertext records.
+- Stronger KDF options (PBKDF2/Argon2) are not yet used for key derivation.
 
-Delivered (Near-term):
+Delivered:
 
 - startup warning for weak/short `ENCRYPTION_KEY` is implemented
 - key-strength requirement documented (`>= 32` high-entropy characters)
+- versioned ciphertext writes are implemented (`v2:<base64>`)
+- legacy unversioned ciphertext remains decryptable
+- one-time migration command exists (`--reencrypt-secrets`) and rewrites persisted secrets
 
 Deferred Scope:
 
-- add versioned KDF metadata for new writes
-- preserve legacy decrypt compatibility during migration window
-- extend re-encryption flow to upgrade legacy records
+- introduce PBKDF2/Argon2-based key derivation for new writes
+- encode/track KDF version metadata to allow multi-KDF decrypt compatibility
+- keep existing decrypt compatibility during migration and rollout
 
 Acceptance Criteria:
 
 - Met: weak-key startup warning is emitted with clear remediation guidance
 - Met: operator docs state key-strength expectations
 - Met: migration trigger and implementation notes are documented (see notes below)
+- Met: versioned ciphertext write path and re-encryption command are implemented
+- Pending: new writes use a stronger KDF than raw SHA-256
 
 Migration Trigger and Notes:
 
-- trigger: explicit operator command (`--reencrypt-secrets`) after introducing KDF-versioned writes
+- trigger: explicit operator command (`--reencrypt-secrets`) after introducing new KDF-versioned writes
 - rollout:
 - keep legacy decrypt compatibility during transition window
 - write new/updated secrets with new KDF version metadata

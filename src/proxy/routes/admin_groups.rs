@@ -289,52 +289,7 @@ pub(super) fn add_logs_stats_debug_routes(router: Router<AppState>) -> Router<Ap
 
 pub(super) fn add_system_routes(router: Router<AppState>) -> Router<AppState> {
     router
-        .route("/system/open-folder", post(admin::admin_open_folder))
         .route("/system/data-dir", get(admin::admin_get_data_dir_path))
-        .route(
-            "/system/updates/settings",
-            get(admin::admin_get_update_settings),
-        )
-        .route(
-            "/system/updates/check-status",
-            get(admin::admin_should_check_updates),
-        )
-        .route(
-            "/system/updates/check",
-            post(admin::admin_check_for_updates),
-        )
-        .route(
-            "/system/updates/touch",
-            post(admin::admin_update_last_check_time),
-        )
-        .route(
-            "/system/updates/save",
-            post(admin::admin_save_update_settings),
-        )
-        .route(
-            "/system/gephyr/path",
-            get(admin::admin_get_antigravity_path),
-        )
-        .route(
-            "/system/gephyr/args",
-            get(admin::admin_get_antigravity_args),
-        )
-        .route(
-            "/system/antigravity/path",
-            get(admin::admin_get_antigravity_path),
-        )
-        .route(
-            "/system/antigravity/args",
-            get(admin::admin_get_antigravity_args),
-        )
-        .route(
-            "/system/cache/clear",
-            post(admin::admin_clear_antigravity_cache),
-        )
-        .route(
-            "/system/cache/paths",
-            get(admin::admin_get_antigravity_cache_paths),
-        )
         .route(
             "/system/logs/clear-cache",
             post(admin::admin_clear_log_cache),
