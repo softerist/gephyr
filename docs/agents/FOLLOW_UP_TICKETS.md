@@ -30,7 +30,17 @@ Acceptance Criteria:
 
 - Met: weak-key startup warning is emitted with clear remediation guidance
 - Met: operator docs state key-strength expectations
-- Pending: migration trigger and implementation notes are documented
+- Met: migration trigger and implementation notes are documented (see notes below)
+
+Migration Trigger and Notes:
+
+- trigger: explicit operator command (`--reencrypt-secrets`) after introducing KDF-versioned writes
+- rollout:
+- keep legacy decrypt compatibility during transition window
+- write new/updated secrets with new KDF version metadata
+- run re-encryption utility once per environment with the intended `ENCRYPTION_KEY`
+- rollback safety:
+- if migration causes issues, keep legacy decrypt path enabled until all critical secrets are rewritten
 
 ## Completed Tickets
 

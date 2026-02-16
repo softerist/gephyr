@@ -10,7 +10,7 @@ This report is derived from **source code only** under `src/` (no `.md` docs use
 - Security DB: `src/modules/persistence/security_db.rs`
 - User token DB: `src/modules/persistence/user_token_db.rs`
 - Security hardening forces proxy auth mode to `Strict` when configured as `Off`: `src/lib.rs`
-- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and warmup is explicitly disabled in headless mode: `src/modules/system/scheduler.rs`
+- Scheduler runs quota refresh every 10 minutes when `auto_refresh=true`, with pre-run jitter window controlled by `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` / `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` (default `30..120`), and can also run scheduled warmup (token health check path) when `scheduled_warmup.enabled=true`: `src/modules/system/scheduler.rs`
 - Scheduler quota refresh now processes accounts sequentially with randomized per-account delay controlled by `SCHEDULER_ACCOUNT_REFRESH_MIN_SECONDS` / `SCHEDULER_ACCOUNT_REFRESH_MAX_SECONDS` (default `5..30`): `src/commands/mod.rs`, `src/modules/auth/account.rs`
 - Startup token health refresh now processes accounts sequentially with randomized per-account delay controlled by `STARTUP_HEALTH_DELAY_MIN_SECONDS` / `STARTUP_HEALTH_DELAY_MAX_SECONDS` (default `1..10`) to avoid simultaneous Google refresh spikes: `src/commands/proxy.rs`, `src/proxy/token/startup_health.rs`
 - Opening data folder is disabled in headless mode: `src/commands/mod.rs`
@@ -25,6 +25,9 @@ Defined in `src/proxy/routes/mod.rs`:
 
 - `GET /health`
 - `GET /healthz`
+- `GET /internal/health`
+- `GET /internal/healthz`
+- `GET /internal/status`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 - `POST /v1/completions`
@@ -70,7 +73,7 @@ Main admin groups include:
 - Auth modes: `Off`, `Strict`, `AllExceptHealth` in `src/proxy/config.rs`, `src/proxy/security.rs`
 - Legacy compatibility: `auto` auth mode values are coerced to `strict` during env/config load in headless runtime
 - `OPTIONS` requests bypass auth in middleware: `src/proxy/middleware/auth.rs`
-- `/internal/*` bypass exists in auth/monitor middleware logic (no mounted internal routes were found)
+- `/internal/*` bypass exists in auth/monitor middleware logic and internal probe routes are mounted at `/internal/health`, `/internal/healthz`, and `/internal/status`
 - API key sources:
 - `Authorization: Bearer ...`
 - `x-api-key`
@@ -269,5 +272,3 @@ Main admin groups include:
 ## Notable Implementation Limits
 
 - No non-headless runtime mode in current boot path
-- No mounted `/internal/*` endpoints found in router definitions
-- Warmup config exists in app config model but runtime scheduler states warmup disabled in headless mode

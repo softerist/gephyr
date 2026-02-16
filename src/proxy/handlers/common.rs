@@ -1,4 +1,4 @@
-use crate::proxy::state::ModelCatalogState;
+use crate::proxy::state::{ModelCatalogState, RuntimeState};
 use axum::{
     extract::State,
     http::StatusCode,
@@ -58,6 +58,17 @@ pub async fn handle_detect_model(
     }
 
     Json(response).into_response()
+}
+
+pub async fn handle_internal_status(State(state): State<RuntimeState>) -> Response {
+    let running = *state.is_running.read().await;
+    Json(json!({
+        "status": "ok",
+        "service_running": running,
+        "port": state.port,
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+    .into_response()
 }
 
 pub async fn build_models_list_response(state: &ModelCatalogState) -> Json<Value> {

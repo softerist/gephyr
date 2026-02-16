@@ -197,14 +197,3 @@ pub(crate) async fn admin_delete_device_version(
     })?;
     Ok(StatusCode::NO_CONTENT)
 }
-
-pub(crate) async fn admin_open_folder(
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::commands::open_data_folder().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(StatusCode::OK)
-}

@@ -13,8 +13,7 @@ pub(crate) use accounts_core::{
 pub(crate) use device::{
     admin_bind_device, admin_bind_device_profile_with_profile, admin_clear_device_profile,
     admin_delete_device_version, admin_get_device_profiles, admin_list_device_versions,
-    admin_open_folder, admin_preview_generate_profile, admin_restore_device_version,
-    admin_restore_original_device,
+    admin_preview_generate_profile, admin_restore_device_version, admin_restore_original_device,
 };
 pub(crate) use import_sync::{
     admin_execute_cli_restore, admin_execute_cli_sync, admin_get_cli_config_content,

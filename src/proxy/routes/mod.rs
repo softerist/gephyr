@@ -49,6 +49,12 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
     let mut router = Router::new()
         .route("/health", get(health::health_check_handler))
         .route("/healthz", get(health::health_check_handler))
+        .route("/internal/health", get(health::health_check_handler))
+        .route("/internal/healthz", get(health::health_check_handler))
+        .route(
+            "/internal/status",
+            get(handlers::common::handle_internal_status),
+        )
         .route("/v1/models", get(handlers::openai::handle_list_models))
         .route("/v1/messages", post(handlers::claude::handle_messages))
         .route(
@@ -76,7 +82,10 @@ pub fn build_proxy_routes(state: AppState) -> Router<AppState> {
                 "/v1/chat/completions",
                 post(handlers::openai::handle_chat_completions),
             )
-            .route("/v1/completions", post(handlers::openai::handle_completions))
+            .route(
+                "/v1/completions",
+                post(handlers::openai::handle_completions),
+            )
             .route("/v1/responses", post(handlers::openai::handle_completions));
     }
 

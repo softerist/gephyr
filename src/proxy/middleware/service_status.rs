@@ -13,6 +13,7 @@ pub async fn service_status_middleware(
 ) -> Response {
     let path = request.uri().path();
     if path.starts_with("/api/")
+        || path.starts_with("/internal/")
         || path == "/auth/callback"
         || path == "/health"
         || path == "/healthz"
@@ -48,10 +49,7 @@ mod tests {
         routing::get,
         Router,
     };
-    use std::sync::{
-        atomic::AtomicUsize,
-        Arc,
-    };
+    use std::sync::{atomic::AtomicUsize, Arc};
     use tokio::sync::RwLock;
     use tower::ServiceExt;
 
@@ -82,13 +80,23 @@ mod tests {
 
         let health = app
             .clone()
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .expect("health request should succeed");
         assert_eq!(health.status(), StatusCode::OK);
 
         let healthz = app
-            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .expect("healthz request should succeed");
         assert_eq!(healthz.status(), StatusCode::OK);
@@ -142,7 +150,12 @@ mod tests {
         assert_eq!(auth_callback.status(), StatusCode::OK);
 
         let api = app
-            .oneshot(Request::builder().uri("/api/test").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .expect("api request should be handled");
         assert_eq!(api.status(), StatusCode::OK);

@@ -22,6 +22,64 @@ fn scheduler_refresh_jitter_bounds() -> (u64, u64) {
     }
 }
 
+fn scheduler_models_for_log(models: &[String]) -> String {
+    if models.is_empty() {
+        "none".to_string()
+    } else {
+        models.join(",")
+    }
+}
+
+async fn run_scheduled_warmup_if_enabled(
+    proxy_state: &crate::commands::proxy::ProxyServiceState,
+    app_config: &crate::models::AppConfig,
+) {
+    if !app_config.scheduled_warmup.enabled {
+        return;
+    }
+
+    let token_manager = {
+        let instance_lock = proxy_state.instance.read().await;
+        instance_lock
+            .as_ref()
+            .map(|instance| instance.token_manager.clone())
+    };
+
+    let Some(token_manager) = token_manager else {
+        logger::log_warn("[Scheduler] Warmup skipped: proxy service instance is unavailable");
+        return;
+    };
+
+    let active_accounts = token_manager.len();
+    if active_accounts == 0 {
+        logger::log_warn("[Scheduler] Warmup skipped: no active accounts");
+        return;
+    }
+
+    logger::log_info(&format!(
+        "[Scheduler] Scheduled warmup started (accounts={}, monitored_models={})",
+        active_accounts,
+        scheduler_models_for_log(&app_config.scheduled_warmup.monitored_models)
+    ));
+
+    let summary = token_manager.run_startup_health_check().await;
+    if summary.disabled > 0 || summary.network_errors > 0 {
+        logger::log_warn(&format!(
+            "[Scheduler] Warmup completed with warnings: total={}, skipped={}, refreshed={}, disabled={}, network_errors={}",
+            summary.total,
+            summary.skipped,
+            summary.refreshed,
+            summary.disabled,
+            summary.network_errors
+        ));
+    } else {
+        logger::log_info(&format!(
+            "[Scheduler] Warmup completed: total={}, skipped={}, refreshed={}",
+            summary.total, summary.skipped, summary.refreshed
+        ));
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SchedulerRefreshObservabilitySnapshot {
     pub scheduler_refresh_runs_last_minute: usize,
@@ -100,7 +158,7 @@ fn clear_scheduler_refresh_observability_for_tests() {
 
 pub fn start_scheduler(proxy_state: crate::commands::proxy::ProxyServiceState) {
     tokio::spawn(async move {
-        logger::log_info("Quota refresh scheduler started (warmup disabled in headless mode).");
+        logger::log_info("Quota refresh scheduler started.");
         let mut interval = time::interval(Duration::from_secs(600));
         let (jitter_min, jitter_max) = scheduler_refresh_jitter_bounds();
 
@@ -110,6 +168,8 @@ pub fn start_scheduler(proxy_state: crate::commands::proxy::ProxyServiceState) {
             let Ok(app_config) = config::load_app_config() else {
                 continue;
             };
+
+            run_scheduled_warmup_if_enabled(&proxy_state, &app_config).await;
 
             if !app_config.auto_refresh {
                 continue;
@@ -162,5 +222,14 @@ mod tests {
         assert_eq!(snapshot.scheduler_refresh_accounts_attempted_last_minute, 5);
 
         clear_scheduler_refresh_observability_for_tests();
+    }
+
+    #[test]
+    fn scheduler_models_for_log_renders_empty_and_values() {
+        assert_eq!(scheduler_models_for_log(&[]), "none");
+        assert_eq!(
+            scheduler_models_for_log(&["gemini-2.5-pro".to_string(), "gemini-3-flash".to_string()]),
+            "gemini-2.5-pro,gemini-3-flash"
+        );
     }
 }

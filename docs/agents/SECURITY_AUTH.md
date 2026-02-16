@@ -17,7 +17,7 @@ From `src/proxy/middleware/auth.rs`:
 
 - `OPTIONS` bypasses auth.
 - Health endpoints can bypass depending on mode.
-- `/internal/*` bypass logic exists (non-force-strict path).
+- `/internal/*` bypass logic exists (non-force-strict path) and internal probe routes are mounted (`/internal/health`, `/internal/healthz`, `/internal/status`).
 - API key sources:
 - `Authorization: Bearer ...`
 - `x-api-key`
