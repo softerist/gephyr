@@ -6,10 +6,3 @@ pub fn generate_random_id() -> String {
         .map(char::from)
         .collect()
 }
-pub fn _deprecated_infer_quota_group(model: &str) -> String {
-    if model.to_lowercase().starts_with("claude") {
-        "claude".to_string()
-    } else {
-        "gemini".to_string()
-    }
-}

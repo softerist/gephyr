@@ -5,12 +5,14 @@ use aes_gcm::{
 use base64::{engine::general_purpose, Engine as _};
 use rand::RngCore;
 use sha2::Digest;
+use std::collections::HashSet;
 
 const NONCE_LEN: usize = 12;
 const GCM_TAG_LEN: usize = 16;
 const LEGACY_NONCE_BYTES: &[u8] = b"antigravity_salt";
 const CIPHERTEXT_V2_PREFIX: &str = "v2:";
 const MIN_ENCRYPTED_BYTES: usize = NONCE_LEN + GCM_TAG_LEN;
+const RECOMMENDED_ENV_KEY_MIN_LEN: usize = 32;
 
 fn legacy_nonce_bytes() -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
@@ -71,6 +73,60 @@ pub fn validate_encryption_key_prerequisites() -> Result<(), String> {
             e
         )
     })
+}
+
+fn classify_env_encryption_key_weakness(raw: &str) -> Option<String> {
+    let key = raw.trim();
+    if key.is_empty() {
+        return None;
+    }
+
+    if key.len() < RECOMMENDED_ENV_KEY_MIN_LEN {
+        return Some(format!("length_below_{}", RECOMMENDED_ENV_KEY_MIN_LEN));
+    }
+
+    let lowercase = key.to_ascii_lowercase();
+    let normalized: String = lowercase
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let known_weak = [
+        "password",
+        "changeme",
+        "default",
+        "secret",
+        "yourencryptionkeyhere",
+        "yourkeyhere",
+        "test",
+    ];
+    if known_weak.contains(&normalized.as_str()) {
+        return Some("known_weak_value".to_string());
+    }
+
+    let unique_count = key.chars().collect::<HashSet<_>>().len();
+    if unique_count < 10 {
+        return Some("low_character_diversity".to_string());
+    }
+
+    None
+}
+
+pub fn warn_if_weak_encryption_key() {
+    let Ok(raw) = std::env::var("ENCRYPTION_KEY") else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Some(reason) = classify_env_encryption_key_weakness(trimmed) {
+        tracing::warn!(
+            "[W-CRYPTO-WEAK-KEY] weak_or_short_encryption_key_detected reason={} len={} recommendation=use_at_least_{}_high_entropy_characters",
+            reason,
+            trimmed.len(),
+            RECOMMENDED_ENV_KEY_MIN_LEN
+        );
+    }
 }
 
 pub fn is_probably_encrypted_secret(raw: &str) -> bool {
@@ -342,5 +398,34 @@ mod tests {
         let parsed: SecretHolder = serde_json::from_str(r#"{"secret":"v2:abc"}"#)
             .expect("deserialization should not fail");
         assert_eq!(parsed.secret, "v2:abc");
+    }
+
+    #[test]
+    fn weak_key_classifier_flags_short_keys() {
+        let reason = classify_env_encryption_key_weakness("short-key").expect("weak key");
+        assert!(reason.contains("length_below_"));
+    }
+
+    #[test]
+    fn weak_key_classifier_flags_known_weak_values() {
+        let reason = classify_env_encryption_key_weakness(
+            "your_encryption_key_here________________",
+        )
+        .expect("known weak value");
+        assert_eq!(reason, "known_weak_value");
+    }
+
+    #[test]
+    fn weak_key_classifier_flags_low_diversity_values() {
+        let reason =
+            classify_env_encryption_key_weakness("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect("weak");
+        assert_eq!(reason, "low_character_diversity");
+    }
+
+    #[test]
+    fn weak_key_classifier_accepts_high_entropy_like_values() {
+        let reason =
+            classify_env_encryption_key_weakness("vM9$K2q!tL7#xP4@cN8%rD3^hS6&zQ1*");
+        assert!(reason.is_none());
     }
 }

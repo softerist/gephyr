@@ -75,6 +75,7 @@ From `src/utils/crypto.rs`:
 - Primary key source: `ENCRYPTION_KEY`
 - Fallback source: machine UID (when available)
 - No constant/default shared fallback key
+- Startup emits warning when `ENCRYPTION_KEY` is weak/short (recommend `>= 32` high-entropy characters)
 - Encrypted payloads fail closed when no key source is available (plaintext compatibility remains for non-encrypted values)
 - New encrypted writes use versioned ciphertext format (`v2:<base64>`).
 - Legacy unversioned ciphertext remains decryptable for backward compatibility.

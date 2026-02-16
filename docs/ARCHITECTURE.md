@@ -152,6 +152,7 @@ Operational snapshot endpoint:
   - account linking is only successful when OAuth flow reaches terminal `linked`
   - if token exchange/user-info/account-save fails, terminal state must be explicit (`failed`, `rejected`, or `cancelled`) and never presented as linked
   - containerized/runtime prerequisite for reliable encrypted persistence: set `ENCRYPTION_KEY` (machine UID may be unavailable in some containers)
+  - operator guidance: use a high-entropy `ENCRYPTION_KEY` (`>= 32` random characters); weak/short values produce startup warning
 - Graceful shutdown path:
   - Ctrl+C signals accept-loop shutdown
   - optional admin stop hook can also signal graceful shutdown when `ADMIN_STOP_SHUTDOWN=true` and `POST /api/proxy/stop` is called

@@ -192,6 +192,7 @@ pub fn run() {
     increase_nofile_limit();
 
     logger::init_logger();
+    crate::utils::crypto::warn_if_weak_encryption_key();
 
     if let Err(e) = modules::stats::token_stats::init_db() {
         error!(
