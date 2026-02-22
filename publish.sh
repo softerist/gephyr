@@ -7,6 +7,7 @@ SKIP_TESTS=false
 HELP=false
 NO_PUSH=false
 NEW_VERSION=""
+GHCR_PACKAGE_STATUS_SUMMARY="not checked (GHCR publish not attempted)."
 
 while [[ "$#" -gt 0 ]]; do
   case $1 in
@@ -47,6 +48,44 @@ info() {
 
 warn() {
   echo "[release] WARN: $1"
+}
+
+assert_required_tools() {
+  local require_docker="$1"
+  local require_gh_for_auth="$2"
+  local missing=()
+
+  local tool
+  for tool in git cargo; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing+=("$tool")
+    fi
+  done
+
+  if [ "$require_docker" = true ] && ! command -v docker >/dev/null 2>&1; then
+    missing+=("docker")
+  fi
+
+  if [ "$require_gh_for_auth" = true ] && ! command -v gh >/dev/null 2>&1; then
+    missing+=("gh")
+  fi
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    local missing_list
+    missing_list="$(IFS=', '; echo "${missing[*]}")"
+    local hints=(
+      "Install missing tools and ensure they are available in PATH for this shell session."
+    )
+    if [ "$require_gh_for_auth" = true ]; then
+      hints+=("Or set GHCR_TOKEN/GITHUB_TOKEN to skip interactive gh authentication for GHCR publish.")
+    fi
+
+    fail "Missing required tools in PATH: $missing_list." "${hints[@]}"
+  fi
+
+  if [ "$NO_PUSH" = false ] && ! command -v gh >/dev/null 2>&1; then
+    warn "gh CLI is not available; GitHub Release creation and package metadata checks will be skipped."
+  fi
 }
 
 fail() {
@@ -381,6 +420,75 @@ resolve_ghcr_auth() {
   fi
 }
 
+get_github_repo_slug() {
+  local ghcr_image
+  ghcr_image="$(resolve_ghcr_image 2>/dev/null || true)"
+  if [ -z "$ghcr_image" ]; then
+    return 1
+  fi
+  echo "${ghcr_image#ghcr.io/}"
+}
+
+confirm_ghcr_package_discoverability() {
+  local ghcr_image="$1"
+
+  if ! command -v gh >/dev/null 2>&1; then
+    GHCR_PACKAGE_STATUS_SUMMARY="not checked (gh CLI unavailable)."
+    return 0
+  fi
+  if ! gh auth status -h github.com >/dev/null 2>&1; then
+    GHCR_PACKAGE_STATUS_SUMMARY="not checked (gh auth unavailable)."
+    return 0
+  fi
+  if [[ ! "$ghcr_image" =~ ^ghcr\.io/([^/]+)/(.+)$ ]]; then
+    GHCR_PACKAGE_STATUS_SUMMARY="not checked (unable to parse GHCR image name)."
+    return 0
+  fi
+
+  local owner="${BASH_REMATCH[1]}"
+  local package_name="${BASH_REMATCH[2]}"
+  local encoded_package="${package_name//\//%2F}"
+  local endpoint="/users/$owner/packages/container/$encoded_package"
+
+  local package_visibility
+  package_visibility="$(gh api "$endpoint" -q .visibility 2>/dev/null || true)"
+  if [ -z "$package_visibility" ]; then
+    warn "Unable to inspect GHCR package metadata for $ghcr_image."
+    GHCR_PACKAGE_STATUS_SUMMARY="unknown (failed reading package metadata for $ghcr_image)."
+    return 0
+  fi
+
+  local package_url
+  package_url="$(gh api "$endpoint" -q .html_url 2>/dev/null || true)"
+  if [ -z "$package_url" ]; then
+    package_url="https://github.com/users/$owner/packages/container/package/$package_name"
+  fi
+
+  if [ "$package_visibility" = "private" ]; then
+    warn "GHCR package is private: $ghcr_image"
+    warn "Private package visibility can hide it from repo sidebar package listings."
+    warn "Set visibility in GitHub UI: $package_url/settings"
+  fi
+
+  local repo_slug
+  repo_slug="$(get_github_repo_slug 2>/dev/null || true)"
+  local package_repo_link
+  package_repo_link="$(gh api "$endpoint" -q .repository.nameWithOwner 2>/dev/null || true)"
+  if [ -z "$package_repo_link" ] && [ -n "$repo_slug" ]; then
+    warn "If repo sidebar still shows 'No packages published', connect this package to repository $repo_slug."
+    warn "Package settings: $package_url/settings"
+    GHCR_PACKAGE_STATUS_SUMMARY="visibility=$package_visibility, repository_link=missing (expected $repo_slug; configure: $package_url/settings)"
+  elif [ -z "$package_repo_link" ]; then
+    warn "If repo sidebar still shows 'No packages published', open package settings: $package_url/settings"
+    GHCR_PACKAGE_STATUS_SUMMARY="visibility=$package_visibility, repository_link=missing (configure: $package_url/settings)"
+  elif [ "$package_visibility" = "public" ]; then
+    info "GHCR package is public and linked for discoverability: $ghcr_image"
+    GHCR_PACKAGE_STATUS_SUMMARY="visibility=$package_visibility, repository_link=$package_repo_link"
+  else
+    GHCR_PACKAGE_STATUS_SUMMARY="visibility=$package_visibility, repository_link=$package_repo_link"
+  fi
+}
+
 publish_docker_image_to_ghcr() {
   local version="$1"
   local ghcr_image
@@ -434,7 +542,18 @@ publish_docker_image_to_ghcr() {
   done
 
   info "GHCR publish complete: $ghcr_image (tags: v$version, $version, latest)"
+  confirm_ghcr_package_discoverability "$ghcr_image"
 }
+
+require_docker=false
+if [ "$NO_PUSH" = false ]; then
+  require_docker=true
+fi
+require_gh_for_auth=false
+if [ "$NO_PUSH" = false ] && [ -z "${GHCR_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
+  require_gh_for_auth=true
+fi
+assert_required_tools "$require_docker" "$require_gh_for_auth"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fail "Current directory is not a git repository."
@@ -531,6 +650,7 @@ if [ "$NO_PUSH" = false ]; then
   publish_docker_image_to_ghcr "$NEW_VERSION"
 else
   warn "Skipping GHCR Docker publish due to -NoPush."
+  GHCR_PACKAGE_STATUS_SUMMARY="skipped (-NoPush)."
 fi
 
 if [ "$NO_PUSH" = false ]; then
@@ -555,9 +675,11 @@ if [ "$NO_PUSH" = false ]; then
   fi
 
   echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, crate published, GHCR image published, and git pushed."
+  echo "[release] Package visibility/link status: $GHCR_PACKAGE_STATUS_SUMMARY"
 else
   warn "Skipping git push due to -NoPush."
   echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, and crate published. Push + GHCR publish skipped."
+  echo "[release] Package visibility/link status: $GHCR_PACKAGE_STATUS_SUMMARY"
 fi
 
 popd > /dev/null

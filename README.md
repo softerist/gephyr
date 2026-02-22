@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)](https://www.docker.com/)
 
-Gephyr is a headless local API relay/proxy service backed by Google-linked accounts. It exposes OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible endpoints, then handles auth, routing, and protocol adaptation to Google AI upstreams.
+Gephyr is a headless local AI relay/proxy service. It exposes OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible APIs, and provides API-key auth, account routing, and protocol adaptation to Google-backed upstreams.
 
 ## Features
 

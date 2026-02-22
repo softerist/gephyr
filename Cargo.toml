@@ -1,7 +1,7 @@
 [package]
 name = "gephyr"
 version = "1.16.8"
-description = "Gephyr headless AI relay service for Google AI services"
+description = "Gephyr is a headless local AI relay/proxy API handling OpenAI, Claude, and Gemini-compatible APIs"
 authors = ["softerist"]
 license = "MIT"
 edition = "2021"

@@ -29,6 +29,7 @@ $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Push-Location $repoRoot
 
 $newVersion = $null
+$script:GhcrPackageStatusSummary = 'not checked (GHCR publish not attempted).'
 
 function Get-CargoVersion {
   $cargoToml = Join-Path $repoRoot 'Cargo.toml'
@@ -173,6 +174,49 @@ function Info {
 function Warn {
   param([string]$Message)
   Write-Host "[release] WARN: $Message" -ForegroundColor Yellow
+}
+
+function Assert-CommandAvailable {
+  param([string]$CommandName)
+  return [bool](Get-Command $CommandName -ErrorAction SilentlyContinue)
+}
+
+function Assert-RequiredTools {
+  param(
+    [switch]$RequireDocker,
+    [switch]$RequireGhForAuth
+  )
+
+  $missing = @()
+
+  foreach ($tool in @('git', 'cargo')) {
+    if (-not (Assert-CommandAvailable -CommandName $tool)) {
+      $missing += $tool
+    }
+  }
+
+  if ($RequireDocker -and -not (Assert-CommandAvailable -CommandName 'docker')) {
+    $missing += 'docker'
+  }
+
+  if ($RequireGhForAuth -and -not (Assert-CommandAvailable -CommandName 'gh')) {
+    $missing += 'gh'
+  }
+
+  if ($missing.Count -gt 0) {
+    $hints = @(
+      'Install the missing tools and ensure they are available in PATH for this PowerShell session.'
+    )
+    if ($RequireGhForAuth) {
+      $hints += 'Or set GHCR_TOKEN/GITHUB_TOKEN to skip interactive gh authentication for GHCR publish.'
+    }
+
+    Fail "Missing required tools in PATH: $($missing -join ', ')." -Hints $hints
+  }
+
+  if (-not $NoPush -and -not (Assert-CommandAvailable -CommandName 'gh')) {
+    Warn 'gh CLI is not available; GitHub Release creation and package metadata checks will be skipped.'
+  }
 }
 
 function Get-CargoHomePath {
@@ -371,6 +415,88 @@ function Resolve-GhcrAuthMaterial {
   }
 }
 
+function Get-GitHubRepoSlug {
+  $origin = (git config --get remote.origin.url 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($origin)) {
+    return $null
+  }
+
+  $origin = $origin.Trim()
+  if ($origin -match 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?$') {
+    return ("{0}/{1}" -f $Matches['owner'], $Matches['repo'])
+  }
+
+  return $null
+}
+
+function Confirm-GhcrPackageDiscoverability {
+  param(
+    [string]$GhcrImage
+  )
+
+  if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    $script:GhcrPackageStatusSummary = 'not checked (gh CLI unavailable).'
+    return
+  }
+
+  gh auth status -h github.com *> $null
+  if ($LASTEXITCODE -ne 0) {
+    $script:GhcrPackageStatusSummary = 'not checked (gh auth unavailable).'
+    return
+  }
+
+  if ($GhcrImage -notmatch '^ghcr\.io/(?<owner>[^/]+)/(?<package>.+)$') {
+    $script:GhcrPackageStatusSummary = 'not checked (unable to parse GHCR image name).'
+    return
+  }
+
+  $owner = $Matches['owner']
+  $packageName = $Matches['package']
+  $encodedPackageName = [uri]::EscapeDataString($packageName)
+  $endpoint = "/users/$owner/packages/container/$encodedPackageName"
+
+  $pkgRaw = gh api $endpoint 2>$null
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pkgRaw)) {
+    Warn "Unable to inspect GHCR package metadata for $GhcrImage."
+    $script:GhcrPackageStatusSummary = "unknown (failed reading package metadata for $GhcrImage)."
+    return
+  }
+
+  $pkg = $pkgRaw | ConvertFrom-Json
+  $packageVisibility = "$($pkg.visibility)"
+  $packageUrl = "$($pkg.html_url)"
+  if ([string]::IsNullOrWhiteSpace($packageUrl)) {
+    $packageUrl = "https://github.com/users/$owner/packages/container/package/$packageName"
+  }
+
+  if ($packageVisibility -ieq 'private') {
+    Warn "GHCR package is private: $GhcrImage"
+    Warn 'Private package visibility can hide it from repo sidebar package listings.'
+    Warn "Set visibility in GitHub UI: $packageUrl/settings"
+  }
+
+  $repoSlug = Get-GitHubRepoSlug
+  $hasRepositoryLink = ($pkg.PSObject.Properties.Name -contains 'repository') -and $pkg.repository
+  $repositoryLink = $null
+  if ($hasRepositoryLink -and $pkg.repository.PSObject.Properties.Name -contains 'nameWithOwner') {
+    $repositoryLink = "$($pkg.repository.nameWithOwner)"
+  }
+
+  if (-not $hasRepositoryLink -and -not [string]::IsNullOrWhiteSpace($repoSlug)) {
+    Warn "If repo sidebar still shows 'No packages published', connect this package to repository $repoSlug."
+    Warn "Package settings: $packageUrl/settings"
+    $script:GhcrPackageStatusSummary = "visibility=$packageVisibility, repository_link=missing (expected $repoSlug; configure: $packageUrl/settings)"
+  } elseif (-not $hasRepositoryLink) {
+    Warn "If repo sidebar still shows 'No packages published', open package settings: $packageUrl/settings"
+    $script:GhcrPackageStatusSummary = "visibility=$packageVisibility, repository_link=missing (configure: $packageUrl/settings)"
+  } elseif ($packageVisibility -ieq 'public') {
+    Info "GHCR package is public and linked for discoverability: $GhcrImage"
+    $script:GhcrPackageStatusSummary = "visibility=$packageVisibility, repository_link=$repositoryLink"
+  } else {
+    $script:GhcrPackageStatusSummary = "visibility=$packageVisibility, repository_link=$repositoryLink"
+  }
+}
+
 function Publish-DockerImageToGhcr {
   param([string]$Version)
 
@@ -438,6 +564,7 @@ function Publish-DockerImageToGhcr {
   }
 
   Info "GHCR publish complete: $ghcrImage (tags: $($tags -join ', '))"
+  Confirm-GhcrPackageDiscoverability -GhcrImage $ghcrImage
 }
 
 function Fail {
@@ -481,8 +608,8 @@ Write-Host "[release] Version bump: $Bump"
 Write-Host "[release] Release type: $ReleaseType"
 
 # Check prerequisites
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Fail 'git is not available in PATH.' }
-if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { Fail 'cargo is not available in PATH.' }
+$requireGhForAuth = (-not $NoPush) -and [string]::IsNullOrWhiteSpace($env:GHCR_TOKEN) -and [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)
+Assert-RequiredTools -RequireDocker:(-not $NoPush) -RequireGhForAuth:$requireGhForAuth
 
 git rev-parse --is-inside-work-tree *> $null
 if ($LASTEXITCODE -ne 0) { Fail 'Current directory is not a git repository.' }
@@ -582,6 +709,7 @@ if (-not $NoPush) {
   Publish-DockerImageToGhcr -Version $newVersion
 } else {
   Warn 'Skipping GHCR Docker publish due to -NoPush.'
+  $script:GhcrPackageStatusSummary = 'skipped (-NoPush).'
 }
 
 # Push
@@ -610,9 +738,11 @@ if (-not $NoPush) {
   }
 
   Write-Host "[release] SUCCESS: v$newVersion committed, tagged, crate published, GHCR image published, and git pushed."
+  Write-Host "[release] Package visibility/link status: $script:GhcrPackageStatusSummary"
 } else {
   Write-Host '[release] Skipping git push due to -NoPush.'
   Write-Host "[release] SUCCESS: v$newVersion committed, tagged, and crate published. Push + GHCR publish skipped."
+  Write-Host "[release] Package visibility/link status: $script:GhcrPackageStatusSummary"
 }
 
 Pop-Location
