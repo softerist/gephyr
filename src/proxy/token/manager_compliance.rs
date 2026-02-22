@@ -168,9 +168,15 @@ impl TokenManager {
         }
 
         let cfg = self.compliance_config.read().await.clone();
-        if !cfg.enabled || cfg.risk_cooldown_seconds == 0 {
+        if !cfg.enabled {
             return;
         }
+
+        let should_apply_cooldown = match status {
+            401 | 403 | 529 => cfg.risk_cooldown_seconds > 0,
+            429 => cfg.risk_cooldown_seconds > 0 && cfg.cooldown_on_http_429,
+            _ => false,
+        };
 
         if let Ok(mut state) = self.compliance_state.lock() {
             let now = Instant::now();
@@ -188,10 +194,14 @@ impl TokenManager {
                     .or_default()
                     .push_back(now);
             }
-            state.account_cooldown_until.insert(
-                account_id.to_string(),
-                now + Duration::from_secs(cfg.risk_cooldown_seconds),
-            );
+
+            if should_apply_cooldown {
+                state.account_cooldown_until.insert(
+                    account_id.to_string(),
+                    now + Duration::from_secs(cfg.risk_cooldown_seconds),
+                );
+            }
+
             Self::cleanup_compliance_state_locked(&mut state, now);
         }
     }

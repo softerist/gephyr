@@ -455,6 +455,7 @@ async fn test_compliance_retry_cap_applies_when_enabled() {
             max_account_requests_per_minute: 20,
             max_account_concurrency: 2,
             risk_cooldown_seconds: 60,
+            cooldown_on_http_429: false,
             max_retry_attempts: 1,
         })
         .await;
@@ -473,6 +474,7 @@ async fn test_compliance_guard_enforces_account_rpm() {
             max_account_requests_per_minute: 1,
             max_account_concurrency: 2,
             risk_cooldown_seconds: 60,
+            cooldown_on_http_429: false,
             max_retry_attempts: 2,
         })
         .await;
@@ -498,6 +500,7 @@ async fn test_compliance_guard_enforces_account_concurrency() {
             max_account_requests_per_minute: 20,
             max_account_concurrency: 1,
             risk_cooldown_seconds: 60,
+            cooldown_on_http_429: false,
             max_retry_attempts: 2,
         })
         .await;
@@ -524,6 +527,7 @@ async fn test_compliance_risk_signal_cooldown_expires() {
             max_account_requests_per_minute: 20,
             max_account_concurrency: 2,
             risk_cooldown_seconds: 1,
+            cooldown_on_http_429: false,
             max_retry_attempts: 2,
         })
         .await;
@@ -552,6 +556,7 @@ async fn test_compliance_debug_snapshot_reports_live_state() {
             max_account_requests_per_minute: 20,
             max_account_concurrency: 2,
             risk_cooldown_seconds: 60,
+            cooldown_on_http_429: true,
             max_retry_attempts: 2,
         })
         .await;
@@ -619,6 +624,7 @@ async fn test_compliance_in_flight_persists_for_stream_lifetime() {
             max_account_requests_per_minute: 20,
             max_account_concurrency: 1,
             risk_cooldown_seconds: 60,
+            cooldown_on_http_429: false,
             max_retry_attempts: 2,
         })
         .await;
@@ -1097,6 +1103,7 @@ async fn test_compliance_risk_signal_503_does_not_trigger_cooldown() {
             max_account_requests_per_minute: 20,
             max_account_concurrency: 2,
             risk_cooldown_seconds: 60,
+            cooldown_on_http_429: false,
             max_retry_attempts: 2,
         })
         .await;
@@ -1110,3 +1117,6 @@ async fn test_compliance_risk_signal_503_does_not_trigger_cooldown() {
         .expect("503 should not trigger compliance cooldown");
     assert!(allowed.is_some());
 }
+
+
+

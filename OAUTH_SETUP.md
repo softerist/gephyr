@@ -228,9 +228,9 @@ Example:
     "compliance": {
       "enabled": true,
       "max_global_requests_per_minute": 120,
-      "max_account_requests_per_minute": 10,
+      "max_account_requests_per_minute": 60,
       "max_account_concurrency": 1,
-      "risk_cooldown_seconds": 300,
+      "risk_cooldown_seconds": 2,
       "max_retry_attempts": 2
     }
   }

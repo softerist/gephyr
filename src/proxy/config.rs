@@ -101,7 +101,7 @@ impl Default for ZaiModelDefaults {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ZaiMcpConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub web_search_enabled: bool,
@@ -113,7 +113,7 @@ pub struct ZaiMcpConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZaiConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_zai_base_url")]
     pub base_url: String,
@@ -224,7 +224,7 @@ fn default_false() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DebugLoggingConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub output_dir: Option<String>,
@@ -336,7 +336,7 @@ pub struct GoogleConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpBlacklistConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_block_message")]
     pub block_message: String,
@@ -356,7 +356,7 @@ fn default_block_message() -> String {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpWhitelistConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_true")]
     pub whitelist_priority: bool,
@@ -380,7 +380,7 @@ pub struct SecurityMonitorConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_compliance_global_rpm")]
     pub max_global_requests_per_minute: u32,
@@ -390,6 +390,8 @@ pub struct ComplianceConfig {
     pub max_account_concurrency: usize,
     #[serde(default = "default_compliance_cooldown_seconds")]
     pub risk_cooldown_seconds: u64,
+    #[serde(default)]
+    pub cooldown_on_http_429: bool,
     #[serde(default = "default_compliance_retry_cap")]
     pub max_retry_attempts: usize,
 }
@@ -402,6 +404,7 @@ impl Default for ComplianceConfig {
             max_account_requests_per_minute: default_compliance_account_rpm(),
             max_account_concurrency: default_compliance_account_concurrency(),
             risk_cooldown_seconds: default_compliance_cooldown_seconds(),
+            cooldown_on_http_429: false,
             max_retry_attempts: default_compliance_retry_cap(),
         }
     }
@@ -412,19 +415,19 @@ fn default_compliance_global_rpm() -> u32 {
 }
 
 fn default_compliance_account_rpm() -> u32 {
-    10
+    60
 }
 
 fn default_compliance_account_concurrency() -> usize {
-    1
+    10
 }
 
 fn default_compliance_cooldown_seconds() -> u64 {
-    300
+    5
 }
 
 fn default_compliance_retry_cap() -> usize {
-    2
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -704,3 +707,6 @@ mod tests {
         ));
     }
 }
+
+
+
