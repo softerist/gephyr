@@ -16,6 +16,9 @@
     [switch]$Json,
     [switch]$Quiet,
     [switch]$NoCache,
+    [switch]$SingleAttempt,
+    [switch]$TestPipe,
+    [string]$ClaudeModel = "claude-haiku-4-5",
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ExtraArgs
 )
@@ -72,6 +75,7 @@ Options:
   -DataDir <path>        Host data dir (default %USERPROFILE%\.gephyr)
   -LogLines <int>        Number of log lines for logs command (default 120)
   -Model <name>          Model for api-test and OpenAI test in api-test-all (default gpt-5.3-codex)
+  -ClaudeModel <name>    Model for Claude test in api-test-all (default claude-haiku-4-5)
   -Prompt <text>         Prompt for api-test
   -NoBrowser             Do not open browser for login command
   -NoRestartAfterRotate  Rotate key without container restart
@@ -79,12 +83,19 @@ Options:
   -Json                  Output machine-readable JSON (for status, health, accounts)
   -Quiet                 Suppress non-essential output (for CI/automation)
   -NoCache               For rebuild: build without Docker cache
+  -SingleAttempt         For api-test-all: temporarily force single-attempt retry policy
+                         (proxy.compliance.enabled=true + max_retry_attempts=1)
+  -TestPipe              For api-test-all pipeline safety: applies -SingleAttempt and
+                         temporarily sets auto_refresh=false
+                         Aliases via ExtraArgs: --no-retry, --single-attempt, --test-pipe
 
 Examples:
   .\console.ps1 start
   .\console.ps1 login
   .\console.ps1 logs -LogLines 200
   .\console.ps1 api-test-all
+  .\console.ps1 api-test-all -SingleAttempt
+  .\console.ps1 api-test-all -TestPipe
   .\console.ps1 rotate-key
   .\console.ps1 rebuild
   .\console.ps1 rebuild -NoCache
@@ -1175,6 +1186,120 @@ function Write-ClaudeQuotaWarning {
     }
 }
 
+function Set-ObjectPropertyValue {
+    param(
+        [Parameter(Mandatory = $true)][object]$Object,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)]$Value
+    )
+
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($prop) {
+        $prop.Value = $Value
+    } else {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+    }
+}
+
+function Get-OrCreateObjectProperty {
+    param(
+        [Parameter(Mandatory = $true)][object]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $prop = $Object.PSObject.Properties[$Name]
+    if ($prop -and $null -ne $prop.Value) {
+        return $prop.Value
+    }
+
+    $child = [PSCustomObject]@{}
+    if ($prop) {
+        $prop.Value = $child
+    } else {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $child
+    }
+    return $child
+}
+
+function Apply-ApiTestConfigOverride {
+    param(
+        [switch]$EnableSingleAttemptMode,
+        [switch]$DisableAutoRefresh
+    )
+
+    $configPath = Join-Path $DataDir "config.json"
+    if (-not (Test-Path $configPath)) {
+        Write-Warning "[W-API-TEST-CONFIG] config.json not found at $configPath; cannot apply temporary retry/refresh overrides."
+        return $null
+    }
+
+    $rawConfig = $null
+    $config = $null
+    try {
+        $rawConfig = Get-Content $configPath -Raw
+        $config = $rawConfig | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        Write-Warning "[W-API-TEST-CONFIG] Failed to parse config.json for temporary override: $($_.Exception.Message)"
+        return $null
+    }
+
+    $changed = $false
+
+    if ($EnableSingleAttemptMode) {
+        $proxy = Get-OrCreateObjectProperty -Object $config -Name "proxy"
+        $compliance = Get-OrCreateObjectProperty -Object $proxy -Name "compliance"
+
+        if (-not $compliance.enabled) {
+            Set-ObjectPropertyValue -Object $compliance -Name "enabled" -Value $true
+            $changed = $true
+        }
+        if ($compliance.max_retry_attempts -ne 1) {
+            Set-ObjectPropertyValue -Object $compliance -Name "max_retry_attempts" -Value 1
+            $changed = $true
+        }
+    }
+
+    if ($DisableAutoRefresh -and $config.auto_refresh -ne $false) {
+        Set-ObjectPropertyValue -Object $config -Name "auto_refresh" -Value $false
+        $changed = $true
+    }
+
+    if (-not $changed) {
+        return [PSCustomObject]@{
+            applied = $false
+            path = $configPath
+            original_json = $rawConfig
+        }
+    }
+
+    $updatedJson = $config | ConvertTo-Json -Depth 25
+    Set-Content -Path $configPath -Value $updatedJson -Encoding UTF8
+
+    return [PSCustomObject]@{
+        applied = $true
+        path = $configPath
+        original_json = $rawConfig
+    }
+}
+
+function Restore-ApiTestConfigOverride {
+    param([Parameter(Mandatory = $false)]$OverrideContext)
+
+    if (-not $OverrideContext) {
+        return
+    }
+    if (-not $OverrideContext.applied) {
+        return
+    }
+
+    try {
+        Set-Content -Path $OverrideContext.path -Value $OverrideContext.original_json -Encoding UTF8
+        Write-Host "Restored config after api-test-all temporary override." -ForegroundColor DarkGray
+    } catch {
+        Write-Warning "[W-API-TEST-CONFIG-RESTORE] Failed to restore original config: $($_.Exception.Message)"
+    }
+}
+
 function Run-ApiTest {
     $body = @{
         model = $Model
@@ -1230,142 +1355,160 @@ function Run-ApiTest {
 }
 
 function Run-ApiTestAll {
-    $tests = @(
-        @{
-            Name = "OpenAI"
-            Uri = "http://127.0.0.1:$Port/v1/chat/completions"
-            Body = @{
-                model = $Model
-                max_tokens = 64
-                messages = @(
-                    @{
-                        role = "user"
-                        content = "Reply with exactly OK."
-                    }
-                )
-            }
-            Validate = {
-                param($response)
-                if ($response.choices -and $response.choices.Count -gt 0) { return $null }
-                return "missing choices in response"
-            }
-            WarnClaude = $false
-        },
-        @{
-            Name = "Claude"
-            Uri = "http://127.0.0.1:$Port/v1/messages"
-            Body = @{
-                model = "claude-sonnet-4-5"
-                max_tokens = 64
-                messages = @(
-                    @{
-                        role = "user"
-                        content = "Reply with exactly OK."
-                    }
-                )
-            }
-            Validate = {
-                param($response)
-                if ($response.content -or $response.id -or $response.type) { return $null }
-                return "missing content/id in response"
-            }
-            WarnClaude = $true
-        },
-        @{
-            Name = "Gemini"
-            Uri = "http://127.0.0.1:$Port/v1beta/models/gemini-2.5-flash:generateContent"
-            Body = @{
-                generationConfig = @{
-                    maxOutputTokens = 64
+    $extraNoRetry = $ExtraArgs -contains "--no-retry" -or $ExtraArgs -contains "--single-attempt"
+    $extraTestPipe = $ExtraArgs -contains "--test-pipe"
+    $singleAttemptMode = $SingleAttempt.IsPresent -or $extraNoRetry -or $TestPipe.IsPresent -or $extraTestPipe
+    $disableAutoRefresh = $TestPipe.IsPresent -or $extraTestPipe
+
+    $overrideContext = Apply-ApiTestConfigOverride `
+        -EnableSingleAttemptMode:$singleAttemptMode `
+        -DisableAutoRefresh:$disableAutoRefresh
+
+    if ($overrideContext -and $overrideContext.applied) {
+        $modeLabel = if ($disableAutoRefresh) { "test-pipe" } elseif ($singleAttemptMode) { "single-attempt" } else { "default" }
+        Write-Host "Applied temporary api-test-all runtime override mode: $modeLabel" -ForegroundColor DarkGray
+    }
+
+    try {
+        $tests = @(
+            @{
+                Name = "OpenAI"
+                Uri = "http://127.0.0.1:$Port/v1/chat/completions"
+                Body = @{
+                    model = $Model
+                    max_tokens = 64
+                    messages = @(
+                        @{
+                            role = "user"
+                            content = "Reply with exactly OK."
+                        }
+                    )
                 }
-                contents = @(
-                    @{
-                        role = "user"
-                        parts = @(
-                            @{
-                                text = "Reply with exactly OK."
-                            }
-                        )
+                Validate = {
+                    param($response)
+                    if ($response.choices -and $response.choices.Count -gt 0) { return $null }
+                    return "missing choices in response"
+                }
+                WarnClaude = $false
+            },
+            @{
+                Name = "Claude"
+                Uri = "http://127.0.0.1:$Port/v1/messages"
+                Body = @{
+                    model = $ClaudeModel
+                    max_tokens = 64
+                    messages = @(
+                        @{
+                            role = "user"
+                            content = "Reply with exactly OK."
+                        }
+                    )
+                }
+                Validate = {
+                    param($response)
+                    if ($response.content -or $response.id -or $response.type) { return $null }
+                    return "missing content/id in response"
+                }
+                WarnClaude = $true
+            },
+            @{
+                Name = "Gemini"
+                Uri = "http://127.0.0.1:$Port/v1beta/models/gemini-2.5-flash:generateContent"
+                Body = @{
+                    generationConfig = @{
+                        maxOutputTokens = 64
                     }
-                )
+                    contents = @(
+                        @{
+                            role = "user"
+                            parts = @(
+                                @{
+                                    text = "Reply with exactly OK."
+                                }
+                            )
+                        }
+                    )
+                }
+                Validate = {
+                    param($response)
+                    if ($response.candidates -and $response.candidates.Count -gt 0) { return $null }
+                    return "missing candidates in response"
+                }
+                WarnClaude = $false
             }
-            Validate = {
-                param($response)
-                if ($response.candidates -and $response.candidates.Count -gt 0) { return $null }
-                return "missing candidates in response"
+        )
+
+        $results = @()
+        foreach ($test in $tests) {
+            $call = Invoke-GephyrApiJson -Name $test.Name -Uri $test.Uri -Body $test.Body -TimeoutSec 60
+            if ($test.WarnClaude) {
+                Write-ClaudeQuotaWarning -CallResult $call
             }
-            WarnClaude = $false
-        }
-    )
 
-    $results = @()
-    foreach ($test in $tests) {
-        $call = Invoke-GephyrApiJson -Name $test.Name -Uri $test.Uri -Body $test.Body -TimeoutSec 60
-        if ($test.WarnClaude) {
-            Write-ClaudeQuotaWarning -CallResult $call
-        }
-
-        if ($call.ok) {
-            $validationError = & $test.Validate $call.response
-            if ([string]::IsNullOrWhiteSpace([string]$validationError)) {
-                $results += [PSCustomObject]@{
-                    provider = $test.Name
-                    pass = $true
-                    status_code = 200
-                    reason = ""
+            if ($call.ok) {
+                $validationError = & $test.Validate $call.response
+                if ([string]::IsNullOrWhiteSpace([string]$validationError)) {
+                    $results += [PSCustomObject]@{
+                        provider = $test.Name
+                        pass = $true
+                        status_code = 200
+                        reason = ""
+                    }
+                } else {
+                    $results += [PSCustomObject]@{
+                        provider = $test.Name
+                        pass = $false
+                        status_code = 200
+                        reason = [string]$validationError
+                    }
                 }
             } else {
+                $reason = if ($call.raw_error_body) { [string]$call.raw_error_body } else { [string]$call.error_message }
+                $reason = ($reason -replace '\s+', ' ').Trim()
+                if ($reason.Length -gt 220) {
+                    $reason = $reason.Substring(0, 220) + "..."
+                }
                 $results += [PSCustomObject]@{
                     provider = $test.Name
                     pass = $false
-                    status_code = 200
-                    reason = [string]$validationError
+                    status_code = $call.status_code
+                    reason = $reason
                 }
             }
-        } else {
-            $reason = if ($call.raw_error_body) { [string]$call.raw_error_body } else { [string]$call.error_message }
-            $reason = ($reason -replace '\s+', ' ').Trim()
-            if ($reason.Length -gt 220) {
-                $reason = $reason.Substring(0, 220) + "..."
-            }
-            $results += [PSCustomObject]@{
-                provider = $test.Name
-                pass = $false
-                status_code = $call.status_code
-                reason = $reason
+        }
+
+        if ($Json) {
+            [PSCustomObject]@{
+                passed = (@($results | Where-Object { $_.pass }).Count)
+                failed = (@($results | Where-Object { -not $_.pass }).Count)
+                results = $results
+            } | ConvertTo-Json -Depth 8
+            return
+        }
+
+        Write-Host ""
+        Write-Host "API test-all results:" -ForegroundColor Cyan
+        foreach ($r in $results) {
+            if ($r.pass) {
+                Write-Host ("  [PASS] {0}" -f $r.provider) -ForegroundColor Green
+            } else {
+                Write-Host ("  [FAIL] {0} (HTTP {1})" -f $r.provider, $r.status_code) -ForegroundColor Red
+                if ($r.reason) {
+                    Write-Host ("         {0}" -f $r.reason) -ForegroundColor DarkYellow
+                }
             }
         }
-    }
 
-    if ($Json) {
-        [PSCustomObject]@{
-            passed = (@($results | Where-Object { $_.pass }).Count)
-            failed = (@($results | Where-Object { -not $_.pass }).Count)
-            results = $results
-        } | ConvertTo-Json -Depth 8
-        return
-    }
-
-    Write-Host ""
-    Write-Host "API test-all results:" -ForegroundColor Cyan
-    foreach ($r in $results) {
-        if ($r.pass) {
-            Write-Host ("  [PASS] {0}" -f $r.provider) -ForegroundColor Green
+        $passCount = @($results | Where-Object { $_.pass }).Count
+        $failCount = @($results | Where-Object { -not $_.pass }).Count
+        Write-Host ""
+        if ($failCount -eq 0) {
+            Write-Host "Summary: $passCount passed, $failCount failed." -ForegroundColor Green
         } else {
-            Write-Host ("  [FAIL] {0} (HTTP {1})" -f $r.provider, $r.status_code) -ForegroundColor Red
-            if ($r.reason) {
-                Write-Host ("         {0}" -f $r.reason) -ForegroundColor DarkYellow
-            }
+            Write-Host "Summary: $passCount passed, $failCount failed." -ForegroundColor Yellow
         }
-    }
-
-    $passCount = @($results | Where-Object { $_.pass }).Count
-    $failCount = @($results | Where-Object { -not $_.pass }).Count
-    Write-Host ""
-    if ($failCount -eq 0) {
-        Write-Host "Summary: $passCount passed, $failCount failed." -ForegroundColor Green
-    } else {
-        Write-Host "Summary: $passCount passed, $failCount failed." -ForegroundColor Yellow
+    } finally {
+        Restore-ApiTestConfigOverride -OverrideContext $overrideContext
     }
 }
 
