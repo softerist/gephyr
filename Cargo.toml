@@ -1,6 +1,6 @@
 [package]
 name = "gephyr"
-version = "1.16.5"
+version = "1.16.6"
 description = "Gephyr headless AI relay service for Google AI services"
 authors = ["softerist"]
 license = "MIT"
