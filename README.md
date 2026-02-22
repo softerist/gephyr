@@ -4,13 +4,13 @@
 [![License](https://img.shields.io/badge/license-CC--BY--NC--SA--4.0-blue)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)](https://www.docker.com/)
 
-Gephyr is a headless local API relay/proxy service for Google AI services. It provides a unified OpenAI-compatible API interface for routing requests to Google's AI backends.
+Gephyr is a headless local API relay/proxy service for Google AI services. It routes multiple client-facing API surfaces, including OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible endpoints, to Google's AI backends.
 
 ## Features
 
 - 🔒 **Secure API Authentication** — Bearer token auth with configurable modes
 - 🔄 **Multi-Account Support** — Link multiple Google accounts and rotate between them
-- 🌐 **OpenAI-Compatible API** — Use with any OpenAI SDK client
+- 🌐 **Multi-Protocol API Compatibility** — OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible endpoints
 - 🐳 **Docker Native** — One-command deployment
 - ⚡ **High Performance** — Built with Rust + Axum for low latency
 
@@ -116,10 +116,11 @@ Authorization: Bearer YOUR_API_KEY
 | `/healthz` | GET | Health check |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
 | `/v1/messages` | POST | Claude-compatible messages API |
+| `/v1beta/models/:model:generateContent` | POST | Google AI (Gemini)-compatible generation API |
 | `/api/accounts` | GET | List linked accounts (admin API) |
 | `/api/auth/url` | GET | Get OAuth login URL (admin API) |
 
-### Example: Chat Completion
+### Example: OpenAI-Compatible Chat Completion
 
 ```bash
 curl http://127.0.0.1:8045/v1/chat/completions \
@@ -128,6 +129,82 @@ curl http://127.0.0.1:8045/v1/chat/completions \
   -d '{
     "model": "gpt-5.3-codex",
     "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+### Example: OpenAI-Compatible Streaming
+
+```bash
+curl -N http://127.0.0.1:8045/v1/chat/completions \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.3-codex",
+    "stream": true,
+    "messages": [{"role": "user", "content": "Stream a short response."}]
+  }'
+```
+
+### Example: Claude-Compatible Messages
+
+```bash
+curl http://127.0.0.1:8045/v1/messages \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 256,
+    "messages": [
+      { "role": "user", "content": "Write a one-line haiku about Rust." }
+    ]
+  }'
+```
+
+### Example: Claude-Compatible Streaming
+
+```bash
+curl -N http://127.0.0.1:8045/v1/messages \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "stream": true,
+    "max_tokens": 256,
+    "messages": [
+      { "role": "user", "content": "Stream a brief poem about latency." }
+    ]
+  }'
+```
+
+### Example: Google AI (Gemini)-Compatible generateContent
+
+```bash
+curl http://127.0.0.1:8045/v1beta/models/gemini-2.5-flash:generateContent \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{ "text": "Summarize what this proxy does in one sentence." }]
+      }
+    ]
+  }'
+```
+
+### Example: Google AI (Gemini)-Compatible streamGenerateContent
+
+```bash
+curl -N http://127.0.0.1:8045/v1beta/models/gemini-2.5-flash:streamGenerateContent \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{ "text": "Stream 3 short bullet points about this project." }]
+      }
+    ]
   }'
 ```
 
