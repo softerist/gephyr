@@ -31,6 +31,8 @@ if [ "$HELP" = true ]; then
   echo "- Bumps version in Cargo.toml and updates Cargo.lock."
   echo "- Runs cargo build --release and cargo test as preflight checks."
   echo "- Commits Cargo.toml and Cargo.lock, creates git tag."
+  echo "- Publishes to crates.io via cargo publish."
+  echo "- Publishes Docker image to GitHub Container Registry (ghcr.io) when pushing."
   echo "- Pushes git commit and tags (unless -NoPush) and creates GitHub Release."
   echo "- Use -SkipTests to skip the cargo test preflight step."
   exit 0
@@ -219,6 +221,179 @@ rollback_version_files() {
   if [ -f "Cargo.lock" ]; then git checkout -- Cargo.lock >/dev/null 2>&1 || true; fi
 }
 
+cargo_home_path() {
+  if [ -n "${CARGO_HOME:-}" ]; then
+    echo "$CARGO_HOME"
+  elif [ -n "${HOME:-}" ]; then
+    echo "$HOME/.cargo"
+  else
+    echo ".cargo"
+  fi
+}
+
+has_cargo_registry_token() {
+  if [ -n "${CARGO_REGISTRY_TOKEN:-}" ]; then
+    return 0
+  fi
+
+  local cargo_home
+  cargo_home="$(cargo_home_path)"
+  local credentials_path
+  for credentials_path in "$cargo_home/credentials.toml" "$cargo_home/credentials"; do
+    if [ -f "$credentials_path" ] && grep -Eq '^[[:space:]]*token[[:space:]]*=[[:space:]]*".+?"[[:space:]]*$' "$credentials_path"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_cargo_registry_token() {
+  if has_cargo_registry_token; then
+    return 0
+  fi
+
+  warn "No crates.io publish token found (cargo login credentials or CARGO_REGISTRY_TOKEN)."
+
+  if [ ! -t 0 ]; then
+    fail "Missing crates.io token for cargo publish." \
+      "Set CARGO_REGISTRY_TOKEN in environment, or run cargo login <token>." \
+      "Re-run ./publish.sh after token is configured."
+  fi
+
+  local input_token=""
+  read -rsp "[release] Enter crates.io token (input hidden): " input_token </dev/tty
+  echo
+
+  if [ -z "$input_token" ]; then
+    fail "crates.io token cannot be empty." \
+      "Run cargo login <token>, or rerun this script and provide a valid token when prompted."
+  fi
+
+  export CARGO_REGISTRY_TOKEN="$input_token"
+  info "Using CARGO_REGISTRY_TOKEN from this shell process only (not saved)."
+  info "Running cargo login to persist token for future publishes..."
+  if printf '%s\n' "$input_token" | cargo login >/dev/null 2>&1; then
+    info "cargo login succeeded; token saved to cargo credentials."
+  else
+    warn "cargo login failed; continuing with in-memory token for this run only."
+  fi
+}
+
+resolve_ghcr_image() {
+  if [ -n "${GEPHYR_GHCR_IMAGE:-}" ]; then
+    echo "${GEPHYR_GHCR_IMAGE,,}"
+    return 0
+  fi
+
+  local origin
+  origin="$(git config --get remote.origin.url 2>/dev/null || true)"
+  if [ -z "$origin" ]; then
+    return 1
+  fi
+
+  origin="${origin%.git}"
+  origin="${origin#ssh://git@github.com/}"
+  origin="${origin#git@github.com:}"
+  origin="${origin#https://github.com/}"
+  origin="${origin#http://github.com/}"
+
+  if [[ "$origin" != */* ]]; then
+    return 1
+  fi
+
+  local owner="${origin%%/*}"
+  local repo="${origin#*/}"
+  repo="${repo%%/*}"
+  if [ -z "$owner" ] || [ -z "$repo" ]; then
+    return 1
+  fi
+
+  echo "ghcr.io/${owner,,}/${repo,,}"
+}
+
+resolve_ghcr_auth() {
+  local default_user="$1"
+
+  GHCR_AUTH_TOKEN="${GHCR_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [ -z "$GHCR_AUTH_TOKEN" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    GHCR_AUTH_TOKEN="$(gh auth token 2>/dev/null || true)"
+  fi
+
+  GHCR_AUTH_USER="${GITHUB_ACTOR:-}"
+  if [ -z "$GHCR_AUTH_USER" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    GHCR_AUTH_USER="$(gh api user -q .login 2>/dev/null || true)"
+  fi
+  if [ -z "$GHCR_AUTH_USER" ]; then
+    GHCR_AUTH_USER="$default_user"
+  fi
+
+  if [ -z "$GHCR_AUTH_TOKEN" ]; then
+    fail "Missing GHCR auth token for docker publish." \
+      "Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login." \
+      "Re-run ./publish.sh after token is configured."
+  fi
+  if [ -z "$GHCR_AUTH_USER" ]; then
+    fail "Could not resolve GitHub username for GHCR login." \
+      "Set GITHUB_ACTOR, or authenticate gh CLI with gh auth login." \
+      "Re-run ./publish.sh after username is available."
+  fi
+}
+
+publish_docker_image_to_ghcr() {
+  local version="$1"
+  local ghcr_image
+  ghcr_image="$(resolve_ghcr_image)" || fail "Could not resolve GHCR image name from git remote." \
+    "Ensure origin points to GitHub, or set GEPHYR_GHCR_IMAGE (example: ghcr.io/owner/gephyr)." \
+    "Re-run ./publish.sh after GHCR image is configured."
+
+  if ! command -v docker >/dev/null 2>&1; then
+    fail "docker is required to publish container package to GHCR." \
+      "Install Docker Desktop and ensure docker is in PATH." \
+      "Re-run ./publish.sh after Docker is available."
+  fi
+
+  if ! docker info >/dev/null 2>&1; then
+    fail "Docker daemon is not available; cannot publish container package." \
+      "Start Docker Desktop and wait for engine startup to complete." \
+      "Re-run ./publish.sh after docker info succeeds."
+  fi
+
+  local image_path="${ghcr_image#ghcr.io/}"
+  local default_user="${image_path%%/*}"
+  resolve_ghcr_auth "$default_user"
+
+  info "Logging in to GHCR as $GHCR_AUTH_USER..."
+  if ! printf '%s' "$GHCR_AUTH_TOKEN" | docker login ghcr.io -u "$GHCR_AUTH_USER" --password-stdin >/dev/null 2>&1; then
+    fail "GHCR docker login failed." \
+      "Verify GHCR token scope includes packages:write." \
+      "Try: echo \$GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin"
+  fi
+
+  info "Building Docker image for GHCR: $ghcr_image"
+  if ! docker build -f docker/Dockerfile \
+    -t "$ghcr_image:v$version" \
+    -t "$ghcr_image:$version" \
+    -t "$ghcr_image:latest" \
+    .; then
+    fail "Docker build failed for GHCR publish." \
+      "Fix Docker build errors above." \
+      "Then rerun ./publish.sh to continue release publish."
+  fi
+
+  local tag
+  for tag in "v$version" "$version" "latest"; do
+    info "Pushing GHCR image tag: $ghcr_image:$tag"
+    if ! docker push "$ghcr_image:$tag"; then
+      fail "Failed pushing GHCR image tag $ghcr_image:$tag." \
+        "Verify repository permissions and token scope (packages:write)." \
+        "Retry with: docker push $ghcr_image:$tag"
+    fi
+  done
+
+  info "GHCR publish complete: $ghcr_image (tags: v$version, $version, latest)"
+}
+
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fail "Current directory is not a git repository."
 fi
@@ -292,11 +467,17 @@ if ! git tag -a "v$NEW_VERSION" -m "$RELEASE_TYPE(release): v$NEW_VERSION"; then
 fi
 
 info "Publishing to crates.io..."
+ensure_cargo_registry_token
 if ! cargo publish; then
-  warn "cargo publish failed. Commit and tag exist locally; push was skipped."
-  warn "Fix the issue and run: cargo publish && git push --follow-tags"
-  popd > /dev/null
-  exit 1
+  fail "cargo publish failed. Commit and tag exist locally; push was skipped." \
+    "Ensure crates.io token is valid: cargo login <token> or set CARGO_REGISTRY_TOKEN." \
+    "After publish succeeds, run: git push --follow-tags"
+fi
+
+if [ "$NO_PUSH" = false ]; then
+  publish_docker_image_to_ghcr "$NEW_VERSION"
+else
+  warn "Skipping GHCR Docker publish due to -NoPush."
 fi
 
 if [ "$NO_PUSH" = false ]; then
@@ -320,10 +501,10 @@ if [ "$NO_PUSH" = false ]; then
     info "Install gh from https://cli.github.com to enable this feature."
   fi
 
-  echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, published, and pushed."
+  echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, crate published, GHCR image published, and git pushed."
 else
   warn "Skipping git push due to -NoPush."
-  echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, and published. Push skipped."
+  echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, and crate published. Push + GHCR publish skipped."
 fi
 
 popd > /dev/null

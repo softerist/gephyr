@@ -18,6 +18,7 @@ if ($Help) {
   Write-Host '- Runs cargo build --release and cargo test as preflight checks.'
   Write-Host '- Commits Cargo.toml and Cargo.lock, creates git tag.'
   Write-Host '- Publishes to crates.io via cargo publish.'
+  Write-Host '- Publishes Docker image to GitHub Container Registry (ghcr.io) when pushing.'
   Write-Host '- Pushes git commit and tags (unless -NoPush).'
   Write-Host '- Use -SkipTests to skip the cargo test preflight step.'
   Write-Host ''
@@ -174,6 +175,225 @@ function Warn {
   Write-Host "[release] WARN: $Message" -ForegroundColor Yellow
 }
 
+function Get-CargoHomePath {
+  if (-not [string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
+    return $env:CARGO_HOME
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    return (Join-Path $env:USERPROFILE '.cargo')
+  }
+  return (Join-Path $HOME '.cargo')
+}
+
+function Test-CargoRegistryTokenConfigured {
+  if (-not [string]::IsNullOrWhiteSpace($env:CARGO_REGISTRY_TOKEN)) {
+    return $true
+  }
+
+  $cargoHome = Get-CargoHomePath
+  foreach ($fileName in @('credentials.toml', 'credentials')) {
+    $credentialsPath = Join-Path $cargoHome $fileName
+    if (-not (Test-Path $credentialsPath)) {
+      continue
+    }
+
+    $raw = Get-Content -Path $credentialsPath -Raw -ErrorAction SilentlyContinue
+    if ($raw -match '(?m)^\s*token\s*=\s*".+?"\s*$') {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Ensure-CargoRegistryToken {
+  if (Test-CargoRegistryTokenConfigured) {
+    return
+  }
+
+  Warn 'No crates.io publish token found (cargo login credentials or CARGO_REGISTRY_TOKEN).'
+
+  if (-not [Environment]::UserInteractive) {
+    Fail 'Missing crates.io token for cargo publish.' -Hints @(
+      'Set CARGO_REGISTRY_TOKEN in your environment, or run cargo login <token>.',
+      'Re-run ./publish.ps1 after token is configured.'
+    )
+  }
+
+  $secureToken = Read-Host '[release] Enter crates.io token (input hidden)' -AsSecureString
+  if (-not $secureToken -or $secureToken.Length -eq 0) {
+    Fail 'crates.io token cannot be empty.' -Hints @(
+      'Run cargo login <token>, or rerun this script and provide a valid token when prompted.'
+    )
+  }
+
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+  try {
+    $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+  }
+
+  if ([string]::IsNullOrWhiteSpace($plainToken)) {
+    Fail 'Failed to read crates.io token from prompt.'
+  }
+
+  $env:CARGO_REGISTRY_TOKEN = $plainToken
+  Info 'Using CARGO_REGISTRY_TOKEN from this process only (not saved).'
+  Info 'Running cargo login to persist token for future publishes...'
+  $plainToken | cargo login *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Warn 'cargo login failed; continuing with in-memory token for this run only.'
+  } else {
+    Info 'cargo login succeeded; token saved to cargo credentials.'
+  }
+}
+
+function Resolve-GhcrImage {
+  if (-not [string]::IsNullOrWhiteSpace($env:GEPHYR_GHCR_IMAGE)) {
+    return $env:GEPHYR_GHCR_IMAGE.ToLowerInvariant()
+  }
+
+  $origin = (git config --get remote.origin.url 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($origin)) {
+    return $null
+  }
+
+  $origin = $origin.Trim()
+  if ($origin -match 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/]+?)(?:\.git)?$') {
+    $owner = $Matches['owner'].ToLowerInvariant()
+    $repo = $Matches['repo'].ToLowerInvariant()
+    return "ghcr.io/$owner/$repo"
+  }
+
+  return $null
+}
+
+function Resolve-GhcrAuthMaterial {
+  param(
+    [string]$DefaultUser
+  )
+
+  $token = $null
+  if (-not [string]::IsNullOrWhiteSpace($env:GHCR_TOKEN)) {
+    $token = $env:GHCR_TOKEN
+  } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+    $token = $env:GITHUB_TOKEN
+  } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
+    gh auth status *> $null
+    if ($LASTEXITCODE -eq 0) {
+      $ghToken = (gh auth token 2>$null)
+      if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
+        $token = $ghToken.Trim()
+      }
+    }
+  }
+
+  $user = $null
+  if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTOR)) {
+    $user = $env:GITHUB_ACTOR
+  } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
+    gh auth status *> $null
+    if ($LASTEXITCODE -eq 0) {
+      $ghUser = (gh api user -q .login 2>$null)
+      if (-not [string]::IsNullOrWhiteSpace($ghUser)) {
+        $user = $ghUser.Trim()
+      }
+    }
+  }
+
+  if ([string]::IsNullOrWhiteSpace($user)) {
+    $user = $DefaultUser
+  }
+
+  if ([string]::IsNullOrWhiteSpace($token)) {
+    Fail 'Missing GHCR auth token for docker publish.' -Hints @(
+      'Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login.',
+      'Re-run ./publish.ps1 after token is configured.'
+    )
+  }
+
+  if ([string]::IsNullOrWhiteSpace($user)) {
+    Fail 'Could not resolve GitHub username for GHCR login.' -Hints @(
+      'Set GITHUB_ACTOR, or authenticate gh CLI with gh auth login.',
+      'Re-run ./publish.ps1 after username is available.'
+    )
+  }
+
+  return @{
+    User = $user
+    Token = $token
+  }
+}
+
+function Publish-DockerImageToGhcr {
+  param([string]$Version)
+
+  $ghcrImage = Resolve-GhcrImage
+  if ([string]::IsNullOrWhiteSpace($ghcrImage)) {
+    Fail 'Could not resolve GHCR image name from git remote.' -Hints @(
+      'Ensure origin points to GitHub, or set GEPHYR_GHCR_IMAGE (example: ghcr.io/owner/gephyr).',
+      'Re-run ./publish.ps1 after GHCR image is configured.'
+    )
+  }
+
+  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Fail 'docker is required to publish container package to GHCR.' -Hints @(
+      'Install Docker Desktop and ensure docker is in PATH.',
+      'Re-run ./publish.ps1 after Docker is available.'
+    )
+  }
+
+  docker info *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'Docker daemon is not available; cannot publish container package.' -Hints @(
+      'Start Docker Desktop and wait for engine startup to complete.',
+      'Re-run ./publish.ps1 after docker info succeeds.'
+    )
+  }
+
+  $imagePath = $ghcrImage -replace '^ghcr\.io/', ''
+  $defaultUser = ($imagePath -split '/')[0]
+  $auth = Resolve-GhcrAuthMaterial -DefaultUser $defaultUser
+
+  Info "Logging in to GHCR as $($auth.User)..."
+  $auth.Token | docker login ghcr.io -u $auth.User --password-stdin *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'GHCR docker login failed.' -Hints @(
+      'Verify GHCR token scope includes packages:write.',
+      'Try: echo $env:GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin'
+    )
+  }
+
+  $tags = @("v$Version", $Version, "latest")
+  $buildTagArgs = @()
+  foreach ($tag in $tags) {
+    $buildTagArgs += @('-t', "${ghcrImage}:$tag")
+  }
+
+  Info "Building Docker image for GHCR: $ghcrImage"
+  & docker build -f docker/Dockerfile @buildTagArgs .
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'Docker build failed for GHCR publish.' -Hints @(
+      'Fix Docker build errors above.',
+      'Then rerun ./publish.ps1 to continue release publish.'
+    )
+  }
+
+  foreach ($tag in $tags) {
+    Info "Pushing GHCR image tag: ${ghcrImage}:$tag"
+    docker push "${ghcrImage}:$tag"
+    if ($LASTEXITCODE -ne 0) {
+      Fail "Failed pushing GHCR image tag ${ghcrImage}:$tag." -Hints @(
+        'Verify repository permissions and token scope (packages:write).',
+        'Retry with: docker push ' + "${ghcrImage}:$tag"
+      )
+    }
+  }
+
+  Info "GHCR publish complete: $ghcrImage (tags: $($tags -join ', '))"
+}
+
 function Fail {
   param(
     [string]$Message,
@@ -290,13 +510,20 @@ git tag -a "v$newVersion" -m "$ReleaseType(release): v$newVersion"
 if ($LASTEXITCODE -ne 0) { Fail 'git tag failed.' }
 
 # Publish to crates.io
+Ensure-CargoRegistryToken
 Info 'Publishing to crates.io...'
 cargo publish
 if ($LASTEXITCODE -ne 0) {
-  Warn 'cargo publish failed. Commit and tag exist locally; push was skipped.'
-  Warn 'Fix the issue and run: cargo publish && git push --follow-tags'
-  Pop-Location
-  exit 1
+  Fail 'cargo publish failed. Commit and tag exist locally; push was skipped.' -Hints @(
+    'Ensure crates.io token is valid: cargo login <token> or set CARGO_REGISTRY_TOKEN.',
+    'After publish succeeds, run: git push --follow-tags'
+  )
+}
+
+if (-not $NoPush) {
+  Publish-DockerImageToGhcr -Version $newVersion
+} else {
+  Warn 'Skipping GHCR Docker publish due to -NoPush.'
 }
 
 # Push
@@ -324,10 +551,10 @@ if (-not $NoPush) {
     Info 'Install gh from https://cli.github.com to enable this feature.'
   }
 
-  Write-Host "[release] SUCCESS: v$newVersion committed, tagged, published, and pushed."
+  Write-Host "[release] SUCCESS: v$newVersion committed, tagged, crate published, GHCR image published, and git pushed."
 } else {
   Write-Host '[release] Skipping git push due to -NoPush.'
-  Write-Host "[release] SUCCESS: v$newVersion committed, tagged, and published. Push skipped."
+  Write-Host "[release] SUCCESS: v$newVersion committed, tagged, and crate published. Push + GHCR publish skipped."
 }
 
 Pop-Location
