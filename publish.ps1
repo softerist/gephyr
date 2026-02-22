@@ -249,6 +249,53 @@ function Ensure-CargoRegistryToken {
   }
 }
 
+function Ensure-GhCliAuthWithScopes {
+  if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+    Fail 'gh CLI is required for interactive GHCR authentication when GHCR_TOKEN is not set.' -Hints @(
+      'Install gh from https://cli.github.com, or set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope.',
+      'Re-run ./publish.ps1 after auth prerequisites are available.'
+    )
+  }
+
+  gh auth status -h github.com *> $null
+  if ($LASTEXITCODE -ne 0) {
+    if (-not [Environment]::UserInteractive) {
+      Fail 'GitHub authentication is required for GHCR publish, but this session is non-interactive.' -Hints @(
+        'Set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope for non-interactive usage.',
+        'Or run this script in an interactive terminal.'
+      )
+    }
+
+    Warn 'No active GitHub CLI auth found. Starting interactive gh auth login...'
+    gh auth login -h github.com -s repo -s write:packages -s read:packages
+    if ($LASTEXITCODE -ne 0) {
+      Fail 'gh auth login failed.' -Hints @(
+        'Retry: gh auth login -h github.com -s repo -s write:packages -s read:packages',
+        'Or set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope.'
+      )
+    }
+  }
+
+  $statusText = (gh auth status -h github.com -t 2>&1 | Out-String)
+  if (-not ($statusText -match 'write:packages')) {
+    if (-not [Environment]::UserInteractive) {
+      Fail 'GitHub token is missing write:packages scope for GHCR publish.' -Hints @(
+        'Refresh scopes interactively: gh auth refresh -h github.com -s write:packages -s read:packages -s repo',
+        'Or set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope.'
+      )
+    }
+
+    Warn 'GitHub token is missing write:packages scope. Refreshing gh auth scopes interactively...'
+    gh auth refresh -h github.com -s write:packages -s read:packages -s repo
+    if ($LASTEXITCODE -ne 0) {
+      Fail 'gh auth refresh failed; required scopes not granted.' -Hints @(
+        'Run: gh auth refresh -h github.com -s write:packages -s read:packages -s repo',
+        'Then rerun ./publish.ps1.'
+      )
+    }
+  }
+}
+
 function Resolve-GhcrImage {
   if (-not [string]::IsNullOrWhiteSpace($env:GEPHYR_GHCR_IMAGE)) {
     return $env:GEPHYR_GHCR_IMAGE.ToLowerInvariant()
@@ -279,13 +326,11 @@ function Resolve-GhcrAuthMaterial {
     $token = $env:GHCR_TOKEN
   } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
     $token = $env:GITHUB_TOKEN
-  } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
-    gh auth status *> $null
-    if ($LASTEXITCODE -eq 0) {
-      $ghToken = (gh auth token 2>$null)
-      if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
-        $token = $ghToken.Trim()
-      }
+  } else {
+    Ensure-GhCliAuthWithScopes
+    $ghToken = (gh auth token 2>$null)
+    if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
+      $token = $ghToken.Trim()
     }
   }
 
@@ -293,7 +338,7 @@ function Resolve-GhcrAuthMaterial {
   if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_ACTOR)) {
     $user = $env:GITHUB_ACTOR
   } elseif (Get-Command gh -ErrorAction SilentlyContinue) {
-    gh auth status *> $null
+    gh auth status -h github.com *> $null
     if ($LASTEXITCODE -eq 0) {
       $ghUser = (gh api user -q .login 2>$null)
       if (-not [string]::IsNullOrWhiteSpace($ghUser)) {
@@ -308,7 +353,7 @@ function Resolve-GhcrAuthMaterial {
 
   if ([string]::IsNullOrWhiteSpace($token)) {
     Fail 'Missing GHCR auth token for docker publish.' -Hints @(
-      'Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login.',
+      'Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login/refresh.',
       'Re-run ./publish.ps1 after token is configured.'
     )
   }
@@ -360,7 +405,8 @@ function Publish-DockerImageToGhcr {
   $auth.Token | docker login ghcr.io -u $auth.User --password-stdin *> $null
   if ($LASTEXITCODE -ne 0) {
     Fail 'GHCR docker login failed.' -Hints @(
-      'Verify GHCR token scope includes packages:write.',
+      'Verify GHCR token scope includes write:packages (and read:packages).',
+      'Try: gh auth refresh -h github.com -s write:packages -s read:packages -s repo',
       'Try: echo $env:GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin'
     )
   }
@@ -512,12 +558,24 @@ if ($LASTEXITCODE -ne 0) { Fail 'git tag failed.' }
 # Publish to crates.io
 Ensure-CargoRegistryToken
 Info 'Publishing to crates.io...'
-cargo publish
-if ($LASTEXITCODE -ne 0) {
-  Fail 'cargo publish failed. Commit and tag exist locally; push was skipped.' -Hints @(
+$publishOutput = & cargo publish 2>&1
+$publishExit = $LASTEXITCODE
+$publishOutput | ForEach-Object { Write-Host $_ }
+if ($publishExit -ne 0) {
+  $hints = @(
     'Ensure crates.io token is valid: cargo login <token> or set CARGO_REGISTRY_TOKEN.',
     'After publish succeeds, run: git push --follow-tags'
   )
+
+  $publishText = ($publishOutput | Out-String)
+  if ($publishText -match 'verified email address is required') {
+    $hints = @(
+      'Verify your crates.io email at https://crates.io/settings/profile, then retry cargo publish.',
+      'After publish succeeds, run: git push --follow-tags'
+    )
+  }
+
+  Fail 'cargo publish failed. Commit and tag exist locally; push was skipped.' -Hints $hints
 }
 
 if (-not $NoPush) {

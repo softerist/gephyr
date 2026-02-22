@@ -280,6 +280,46 @@ ensure_cargo_registry_token() {
   fi
 }
 
+ensure_gh_cli_auth_with_scopes() {
+  if ! command -v gh >/dev/null 2>&1; then
+    fail "gh CLI is required for interactive GHCR authentication when GHCR_TOKEN is not set." \
+      "Install gh from https://cli.github.com, or set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope." \
+      "Re-run ./publish.sh after auth prerequisites are available."
+  fi
+
+  if ! gh auth status -h github.com >/dev/null 2>&1; then
+    if [ ! -t 0 ]; then
+      fail "GitHub authentication is required for GHCR publish, but this session is non-interactive." \
+        "Set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope for non-interactive usage." \
+        "Or run this script in an interactive terminal."
+    fi
+
+    warn "No active GitHub CLI auth found. Starting interactive gh auth login..."
+    if ! gh auth login -h github.com -s repo -s write:packages -s read:packages; then
+      fail "gh auth login failed." \
+        "Retry: gh auth login -h github.com -s repo -s write:packages -s read:packages" \
+        "Or set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope."
+    fi
+  fi
+
+  local status_text
+  status_text="$(gh auth status -h github.com -t 2>&1 || true)"
+  if ! printf '%s' "$status_text" | grep -q "write:packages"; then
+    if [ ! -t 0 ]; then
+      fail "GitHub token is missing write:packages scope for GHCR publish." \
+        "Refresh scopes interactively: gh auth refresh -h github.com -s write:packages -s read:packages -s repo" \
+        "Or set GHCR_TOKEN/GITHUB_TOKEN with packages:write scope."
+    fi
+
+    warn "GitHub token is missing write:packages scope. Refreshing gh auth scopes interactively..."
+    if ! gh auth refresh -h github.com -s write:packages -s read:packages -s repo; then
+      fail "gh auth refresh failed; required scopes not granted." \
+        "Run: gh auth refresh -h github.com -s write:packages -s read:packages -s repo" \
+        "Then rerun ./publish.sh."
+    fi
+  fi
+}
+
 resolve_ghcr_image() {
   if [ -n "${GEPHYR_GHCR_IMAGE:-}" ]; then
     echo "${GEPHYR_GHCR_IMAGE,,}"
@@ -316,12 +356,13 @@ resolve_ghcr_auth() {
   local default_user="$1"
 
   GHCR_AUTH_TOKEN="${GHCR_TOKEN:-${GITHUB_TOKEN:-}}"
-  if [ -z "$GHCR_AUTH_TOKEN" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  if [ -z "$GHCR_AUTH_TOKEN" ]; then
+    ensure_gh_cli_auth_with_scopes
     GHCR_AUTH_TOKEN="$(gh auth token 2>/dev/null || true)"
   fi
 
   GHCR_AUTH_USER="${GITHUB_ACTOR:-}"
-  if [ -z "$GHCR_AUTH_USER" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  if [ -z "$GHCR_AUTH_USER" ] && command -v gh >/dev/null 2>&1 && gh auth status -h github.com >/dev/null 2>&1; then
     GHCR_AUTH_USER="$(gh api user -q .login 2>/dev/null || true)"
   fi
   if [ -z "$GHCR_AUTH_USER" ]; then
@@ -330,7 +371,7 @@ resolve_ghcr_auth() {
 
   if [ -z "$GHCR_AUTH_TOKEN" ]; then
     fail "Missing GHCR auth token for docker publish." \
-      "Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login." \
+      "Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login/refresh." \
       "Re-run ./publish.sh after token is configured."
   fi
   if [ -z "$GHCR_AUTH_USER" ]; then
@@ -366,7 +407,8 @@ publish_docker_image_to_ghcr() {
   info "Logging in to GHCR as $GHCR_AUTH_USER..."
   if ! printf '%s' "$GHCR_AUTH_TOKEN" | docker login ghcr.io -u "$GHCR_AUTH_USER" --password-stdin >/dev/null 2>&1; then
     fail "GHCR docker login failed." \
-      "Verify GHCR token scope includes packages:write." \
+      "Verify GHCR token scope includes write:packages (and read:packages)." \
+      "Try: gh auth refresh -h github.com -s write:packages -s read:packages -s repo" \
       "Try: echo \$GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin"
   fi
 
@@ -468,7 +510,18 @@ fi
 
 info "Publishing to crates.io..."
 ensure_cargo_registry_token
-if ! cargo publish; then
+set +e
+publish_output="$(cargo publish 2>&1)"
+publish_exit=$?
+set -e
+printf '%s\n' "$publish_output"
+if [ $publish_exit -ne 0 ]; then
+  if printf '%s' "$publish_output" | grep -qi "verified email address is required"; then
+    fail "cargo publish failed. Commit and tag exist locally; push was skipped." \
+      "Verify your crates.io email at https://crates.io/settings/profile, then retry cargo publish." \
+      "After publish succeeds, run: git push --follow-tags"
+  fi
+
   fail "cargo publish failed. Commit and tag exist locally; push was skipped." \
     "Ensure crates.io token is valid: cargo login <token> or set CARGO_REGISTRY_TOKEN." \
     "After publish succeeds, run: git push --follow-tags"
