@@ -523,8 +523,8 @@ publish_docker_image_to_ghcr() {
       "Try: echo \$GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin"
   fi
 
-  info "Building Docker image for GHCR: $ghcr_image"
-  if ! docker build -f docker/Dockerfile \
+  info "Building Docker image for GHCR: $ghcr_image (platform linux/amd64, provenance disabled)"
+  if ! docker build --platform linux/amd64 --provenance=false --sbom=false -f docker/Dockerfile \
     -t "$ghcr_image:v$version" \
     -t "$ghcr_image:$version" \
     -t "$ghcr_image:latest" \

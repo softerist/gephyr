@@ -547,8 +547,8 @@ function Publish-DockerImageToGhcr {
     $buildTagArgs += @('-t', "${ghcrImage}:$tag")
   }
 
-  Info "Building Docker image for GHCR: $ghcrImage"
-  & docker build -f docker/Dockerfile @buildTagArgs .
+  Info "Building Docker image for GHCR: $ghcrImage (platform linux/amd64, provenance disabled)"
+  & docker build --platform linux/amd64 --provenance=false --sbom=false -f docker/Dockerfile @buildTagArgs .
   if ($LASTEXITCODE -ne 0) {
     Fail 'Docker build failed for GHCR publish.' -Hints @(
       'Fix Docker build errors above.',
