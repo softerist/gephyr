@@ -437,6 +437,17 @@ resolve_ghcr_auth() {
   if [ -z "$GHCR_AUTH_USER" ]; then
     GHCR_AUTH_USER="$default_user"
   fi
+  if [ -z "$GHCR_AUTH_USER" ] && [ -t 0 ]; then
+    read -r -p "[release] Enter GitHub username for GHCR login: " GHCR_AUTH_USER
+  fi
+
+  if [ "${#GHCR_AUTH_TOKENS[@]}" -eq 0 ] && [ -t 0 ]; then
+    warn "No GHCR token detected in environment or gh auth. Prompting for token."
+    local prompt_token
+    read -r -s -p "[release] Enter GHCR token (input hidden): " prompt_token
+    echo ""
+    add_candidate_token "$prompt_token" "interactive prompt"
+  fi
 
   if [ "${#GHCR_AUTH_TOKENS[@]}" -eq 0 ]; then
     fail "Missing GHCR auth token for docker publish." \
@@ -570,6 +581,24 @@ publish_docker_image_to_ghcr() {
     if [ "${#login_errors[@]}" -gt 0 ]; then
       warn "GHCR login failure details: $(IFS=' | '; echo "${login_errors[*]}")"
     fi
+    if [ -t 0 ]; then
+      warn "All detected GHCR tokens failed. You can enter a fresh token now."
+      local prompt_retry_token
+      read -r -s -p "[release] Enter GHCR token (input hidden, leave blank to skip): " prompt_retry_token
+      echo ""
+      if [ -n "$prompt_retry_token" ]; then
+        info "Trying GHCR auth via interactive prompt token..."
+        if printf '%s' "$prompt_retry_token" | docker login ghcr.io -u "$GHCR_AUTH_USER" --password-stdin >/dev/null 2>&1; then
+          info "GHCR docker login succeeded via interactive prompt token."
+          login_ok=true
+        else
+          warn "Interactive GHCR token login failed."
+        fi
+      fi
+    fi
+  fi
+
+  if [ "$login_ok" = false ]; then
     fail "GHCR docker login failed." \
       "Verify GHCR token scope includes write:packages (and read:packages)." \
       "If GHCR_TOKEN/GITHUB_TOKEN is stale, clear it and rely on gh auth token." \

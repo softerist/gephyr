@@ -416,6 +416,29 @@ function Resolve-GhcrAuthMaterial {
     $user = $DefaultUser
   }
 
+  if ([string]::IsNullOrWhiteSpace($user) -and [Environment]::UserInteractive) {
+    $promptUser = (Read-Host '[release] Enter GitHub username for GHCR login').Trim()
+    if (-not [string]::IsNullOrWhiteSpace($promptUser)) {
+      $user = $promptUser
+    }
+  }
+
+  if ($candidates.Count -eq 0 -and [Environment]::UserInteractive) {
+    Warn 'No GHCR token detected in environment or gh auth. Prompting for token.'
+    $secureToken = Read-Host '[release] Enter GHCR token (input hidden)' -AsSecureString
+    if ($secureToken -and $secureToken.Length -gt 0) {
+      $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+      try {
+        $plainToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+      } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+      }
+      if (-not [string]::IsNullOrWhiteSpace($plainToken) -and $seenTokens.Add($plainToken)) {
+        [void]$candidates.Add([pscustomobject]@{ Source = 'interactive prompt'; Token = $plainToken })
+      }
+    }
+  }
+
   if ($candidates.Count -eq 0) {
     Fail 'Missing GHCR auth token for docker publish.' -Hints @(
       'Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login/refresh.',
@@ -430,9 +453,14 @@ function Resolve-GhcrAuthMaterial {
     )
   }
 
+  $candidateArray = @()
+  foreach ($candidate in $candidates) {
+    $candidateArray += $candidate
+  }
+
   return @{
     User = $user
-    Candidates = @($candidates)
+    Candidates = $candidateArray
   }
 }
 
@@ -467,6 +495,34 @@ function Try-GhcrDockerLogin {
 
   if ($errors.Count -gt 0) {
     Warn "GHCR login failure details: $($errors -join ' | ')"
+  }
+
+  if ([Environment]::UserInteractive) {
+    Warn 'All detected GHCR tokens failed. You can enter a fresh token now.'
+    $secureToken = Read-Host '[release] Enter GHCR token (input hidden, leave blank to cancel)' -AsSecureString
+    if ($secureToken -and $secureToken.Length -gt 0) {
+      $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureToken)
+      try {
+        $promptToken = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+      } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+      }
+
+      if (-not [string]::IsNullOrWhiteSpace($promptToken)) {
+        Info 'Trying GHCR auth via interactive prompt token...'
+        $loginOutput = $promptToken | docker login ghcr.io -u $User --password-stdin 2>&1
+        if ($LASTEXITCODE -eq 0) {
+          Info 'GHCR docker login succeeded via interactive prompt token.'
+          return $true
+        }
+
+        $detail = ($loginOutput | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($detail)) {
+          $detail = '(no docker error text)'
+        }
+        Warn "Interactive GHCR token login failed: $detail"
+      }
+    }
   }
 
   return $false
