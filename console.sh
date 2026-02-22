@@ -428,6 +428,70 @@ def bar(pct, width=20):
         color = "\033[31m"
     return f"{color}{'█' * filled}{'░' * empty}\033[0m"
 
+def friendly_model_name(model_id):
+    if not model_id:
+        return "-"
+
+    raw = re.sub(r'^models/', '', model_id)
+    mid = raw.lower()
+
+    known = {
+        "claude-sonnet-4-6": "Claude Sonnet 4.6 (Thinking)",
+        "claude-sonnet-4-6-thinking": "Claude Sonnet 4.6 (Thinking)",
+        "claude-opus-4-6": "Claude Opus 4.6 (Thinking)",
+        "claude-opus-4-6-thinking": "Claude Opus 4.6 (Thinking)",
+        "claude-sonnet-4-5": "Claude Sonnet 4.5 (Thinking)",
+        "claude-sonnet-4-5-thinking": "Claude Sonnet 4.5 (Thinking)",
+        "claude-opus-4-5": "Claude Opus 4.5 (Thinking)",
+        "claude-opus-4-5-thinking": "Claude Opus 4.5 (Thinking)",
+        "claude-haiku-4-5": "Claude Haiku 4.5",
+        "gemini-3.1-pro-high": "Gemini 3.1 Pro (High)",
+        "gemini-3.1-pro-low": "Gemini 3.1 Pro (Low)",
+        "gemini-3-pro-high": "Gemini 3 Pro (High)",
+        "gemini-3-pro-low": "Gemini 3 Pro (Low)",
+        "gemini-3-pro-image": "Gemini 3 Pro Image",
+        "gemini-3-flash": "Gemini 3 Flash",
+        "gemini-2.5-pro": "Gemini 2.5 Pro",
+        "gemini-2.5-flash": "Gemini 2.5 Flash",
+        "gemini-2.5-flash-thinking": "Gemini 2.5 Flash (Thinking)",
+        "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
+        "gpt-oss-120b-medium": "GPT-OSS 120B (Medium)",
+    }
+    if mid in known:
+        return known[mid]
+
+    m = re.match(r'^claude-(sonnet|opus|haiku)-(\d+)-(\d+)(-thinking)?$', mid)
+    if m:
+        family = m.group(1).title()
+        ver = f"{m.group(2)}.{m.group(3)}"
+        if m.group(4):
+            return f"Claude {family} {ver} (Thinking)"
+        return f"Claude {family} {ver}"
+
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-pro-high$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Pro (High)"
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-pro-low$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Pro (Low)"
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-pro-image$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Pro Image"
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-pro$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Pro"
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-flash-thinking$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Flash (Thinking)"
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-flash-lite$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Flash Lite"
+    m = re.match(r'^gemini-(\d+(?:\.\d+)?)-flash$', mid)
+    if m:
+        return f"Gemini {m.group(1)} Flash"
+
+    return raw
+
 # First pass: compute column widths
 max_email = max((len(a.get("email", "")) for a in accounts), default=5)
 max_name = max((len(a.get("name") or "-") for a in accounts), default=1)
@@ -436,15 +500,30 @@ for a in accounts:
     q = a.get("quota")
     if q:
         for m in q.get("models", []):
-            sn = len(re.sub(r'^models/', '', m.get("name", "")))
+            raw_model = re.sub(r'^models/', '', m.get("name", ""))
+            sn = len(friendly_model_name(raw_model))
             if sn > max_model:
                 max_model = sn
 name_pad = max_name + 2  # +2 for parens
 model_pad = max_model + 2
 
-model_order = ['claude-opus', 'claude-sonnet', 'gemini-3-pro-high', 'gemini-3-pro-low', 'gemini-3-flash']
+model_order = [
+    'claude-opus-4-6-thinking', 'claude-opus-4-6',
+    'claude-sonnet-4-6-thinking', 'claude-sonnet-4-6',
+    'claude-opus-4-5-thinking', 'claude-opus-4-5',
+    'claude-sonnet-4-5-thinking', 'claude-sonnet-4-5',
+    'claude-haiku-4-5',
+    'gemini-3.1-pro-high', 'gemini-3-pro-high',
+    'gemini-3.1-pro-low', 'gemini-3-pro-low',
+    'gemini-3-flash',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash-thinking',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-3-pro-image'
+]
 def model_sort_key(m):
-    n = re.sub(r'^models/', '', m.get("name", ""))
+    n = re.sub(r'^models/', '', m.get("name", "")).lower()
     for i, prefix in enumerate(model_order):
         if prefix in n:
             return (i, n)
@@ -495,8 +574,9 @@ for a in accounts:
             sorted_models = sorted(q.get("models", []), key=model_sort_key)
             for m in sorted_models:
                 pct = m.get("percentage", 0)
-                short = re.sub(r'^models/', '', m.get("name", "?"))
-                padded = short.ljust(model_pad)
+                raw_model = re.sub(r'^models/', '', m.get("name", "?"))
+                display_model = friendly_model_name(raw_model)
+                padded = display_model.ljust(model_pad)
                 pct_str = f"{pct}%".rjust(4)
                 reset_hint = ""
                 if pct <= 50 and m.get("reset_time"):
@@ -507,7 +587,10 @@ for a in accounts:
                         pass
                 req_count = m.get("request_count")
                 req_hint = f"  \033[36m({req_count} reqs)\033[0m" if req_count else ""
-                print(f"      \033[90m{padded} \033[0m{bar(pct)}  \033[0m{pct_str}{req_hint}{reset_hint}")
+                raw_hint = ""
+                if display_model.lower() != raw_model.lower():
+                    raw_hint = f"  \033[90m[{raw_model}]\033[0m"
+                print(f"      \033[90m{padded} \033[0m{bar(pct)}  \033[0m{pct_str}{req_hint}{raw_hint}{reset_hint}")
     else:
         print(f"      \033[90m(quota data not fetched yet, try again in a few moments...)\033[0m")
 PY
