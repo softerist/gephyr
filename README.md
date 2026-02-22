@@ -1,10 +1,10 @@
 # Gephyr
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-CC--BY--NC--SA--4.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)](https://www.docker.com/)
 
-Gephyr is a headless local API relay/proxy service for Google AI services. It routes multiple client-facing API surfaces, including OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible endpoints, to Google's AI backends.
+Gephyr is a headless local API relay/proxy service backed by Google-linked accounts. It exposes OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible endpoints, then handles auth, routing, and protocol adaptation to Google AI upstreams.
 
 ## Features
 
@@ -113,12 +113,22 @@ Authorization: Bearer YOUR_API_KEY
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/healthz` | GET | Health check |
+| `/health` | GET | Health check |
 | `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
+| `/v1/completions` | POST | OpenAI-compatible completions |
+| `/v1/responses` | POST | OpenAI-compatible Responses-style payloads |
 | `/v1/messages` | POST | Claude-compatible messages API |
+| `/v1/messages/count_tokens` | POST | Claude-compatible token counting |
+| `/v1/models` | GET | Unified model listing |
+| `/v1beta/models` | GET | Gemini-compatible model listing |
+| `/v1beta/models/:model` | GET | Gemini-compatible model metadata |
 | `/v1beta/models/:model:generateContent` | POST | Google AI (Gemini)-compatible generation API |
+| `/v1beta/models/:model:streamGenerateContent` | POST | Google AI (Gemini)-compatible streaming generation API |
+| `/v1beta/models/:model/countTokens` | POST | Google AI (Gemini)-compatible token counting |
 | `/api/accounts` | GET | List linked accounts (admin API) |
 | `/api/auth/url` | GET | Get OAuth login URL (admin API) |
+
+`/api/*` routes require `ENABLE_ADMIN_API=true`.
 
 ### Example: OpenAI-Compatible Chat Completion
 
@@ -206,6 +216,99 @@ curl -N http://127.0.0.1:8045/v1beta/models/gemini-2.5-flash:streamGenerateConte
       }
     ]
   }'
+```
+
+### PowerShell: Load API Key from Local Config and Test All 3 APIs (Non-Stream + Stream)
+
+Use `curl.exe` in PowerShell to avoid alias issues.
+
+```powershell
+$apiKey = $null
+if (Test-Path ".env.local") {
+  $line = Get-Content ".env.local" | Where-Object { $_ -match '^\s*API_KEY\s*=' } | Select-Object -First 1
+  if ($line) { $apiKey = ($line -split '=',2)[1].Trim().Trim('"').Trim("'") }
+}
+if (-not $apiKey -and (Test-Path "$env:USERPROFILE\.gephyr\config.json")) {
+  $cfg = Get-Content "$env:USERPROFILE\.gephyr\config.json" -Raw | ConvertFrom-Json
+  $apiKey = $cfg.proxy.api_key
+}
+if (-not $apiKey) { throw "API key not found in .env.local or %USERPROFILE%\.gephyr\config.json" }
+
+$base = "http://127.0.0.1:8045"
+$auth = "Authorization: Bearer $apiKey"
+
+# OpenAI-compatible
+curl.exe -sS "$base/v1/chat/completions" -H $auth -H "Content-Type: application/json" -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"Hello from PowerShell"}]}'
+curl.exe -N "$base/v1/chat/completions" -H $auth -H "Content-Type: application/json" -d '{"model":"gpt-5.3-codex","stream":true,"messages":[{"role":"user","content":"Stream a short response from PowerShell."}]}'
+
+# Claude-compatible
+curl.exe -sS "$base/v1/messages" -H $auth -H "Content-Type: application/json" -d '{"model":"claude-sonnet-4-5","max_tokens":128,"messages":[{"role":"user","content":"Hello from PowerShell"}]}'
+curl.exe -N "$base/v1/messages" -H $auth -H "Content-Type: application/json" -d '{"model":"claude-sonnet-4-5","stream":true,"max_tokens":128,"messages":[{"role":"user","content":"Stream a short response from PowerShell."}]}'
+
+# Gemini-compatible
+curl.exe -sS "$base/v1beta/models/gemini-2.5-flash:generateContent" -H $auth -H "Content-Type: application/json" -d '{"contents":[{"role":"user","parts":[{"text":"Hello from PowerShell"}]}]}'
+curl.exe -N "$base/v1beta/models/gemini-2.5-flash:streamGenerateContent" -H $auth -H "Content-Type: application/json" -d '{"contents":[{"role":"user","parts":[{"text":"Stream 3 short bullet points about Gephyr."}]}]}'
+```
+
+### Bash: Load API Key from Local Config and Test All 3 APIs (Non-Stream + Stream)
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+api_key=""
+if [[ -f ".env.local" ]]; then
+  api_key="$(grep -m1 -E '^\s*API_KEY\s*=' .env.local | sed -E 's/^[^=]+=\s*//; s/^"//; s/"$//; s/^'"'"'//; s/'"'"'$//')"
+fi
+
+if [[ -z "$api_key" && -f "$HOME/.gephyr/config.json" ]]; then
+  if command -v jq >/dev/null 2>&1; then
+    api_key="$(jq -r '.proxy.api_key // ""' "$HOME/.gephyr/config.json")"
+  fi
+fi
+
+if [[ -z "$api_key" ]]; then
+  echo "API key not found in .env.local or ~/.gephyr/config.json" >&2
+  exit 1
+fi
+
+base="http://127.0.0.1:8045"
+
+# 1) OpenAI-compatible (non-stream)
+curl -sS "$base/v1/chat/completions" \
+  -H "Authorization: Bearer $api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"Hello!"}]}'
+
+# 2) OpenAI-compatible (stream)
+curl -N "$base/v1/chat/completions" \
+  -H "Authorization: Bearer $api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-5.3-codex","stream":true,"messages":[{"role":"user","content":"Stream a short response."}]}'
+
+# 3) Claude-compatible (non-stream)
+curl -sS "$base/v1/messages" \
+  -H "Authorization: Bearer $api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","max_tokens":256,"messages":[{"role":"user","content":"Write a one-line haiku about Rust."}]}'
+
+# 4) Claude-compatible (stream)
+curl -N "$base/v1/messages" \
+  -H "Authorization: Bearer $api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-sonnet-4-5","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"Stream a brief poem about latency."}]}'
+
+# 5) Gemini-compatible generateContent (non-stream)
+curl -sS "$base/v1beta/models/gemini-2.5-flash:generateContent" \
+  -H "Authorization: Bearer $api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Summarize what this proxy does in one sentence."}]}]}'
+
+# 6) Gemini-compatible streamGenerateContent
+curl -N "$base/v1beta/models/gemini-2.5-flash:streamGenerateContent" \
+  -H "Authorization: Bearer $api_key" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Stream 3 short bullet points about this project."}]}]}'
 ```
 
 ---
@@ -473,7 +576,7 @@ Keep these in both modes:
 | `restart` | Restart container |
 | `status` | Show container and API status |
 | `logs` | Show container logs |
-| `health` | Check `/healthz` endpoint |
+| `health` | Check `/health` endpoint |
 | `login` | Start OAuth flow (opens browser) |
 | `accounts` | List linked accounts |
 | `api-test` | Run a test API completion |
@@ -615,4 +718,4 @@ cargo audit
 
 ## License
 
-This project is licensed under [CC-BY-NC-SA-4.0](LICENSE).
+This project is licensed under [MIT](LICENSE).

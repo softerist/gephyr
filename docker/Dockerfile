@@ -37,6 +37,9 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 FROM debian:bookworm-slim
 ARG USE_MIRROR=auto
 WORKDIR /app
+LABEL org.opencontainers.image.source="https://github.com/softerist/gephyr" \
+      org.opencontainers.image.description="Gephyr headless local API relay/proxy service for Google AI services" \
+      org.opencontainers.image.licenses="MIT"
 
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
     echo "Using Aliyun mirror for APT..."; \
