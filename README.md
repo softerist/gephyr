@@ -4,718 +4,109 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue?logo=docker)](https://www.docker.com/)
 
-Gephyr is a headless local AI relay/proxy service. It exposes OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible APIs, and provides API-key auth, account routing, and protocol adaptation to Google-backed upstreams.
+Gephyr is a headless local AI relay/proxy server. It gives you one local API endpoint and supports three client styles:
+- OpenAI-compatible
+- Claude-compatible
+- Google AI (Gemini)-compatible
 
-## Features
+## What This Server Is For
 
-- 🔒 **Secure API Authentication** — Bearer token auth with configurable modes
-- 🔄 **Multi-Account Support** — Link multiple Google accounts and rotate between them
-- 🌐 **Multi-Protocol API Compatibility** — OpenAI-compatible, Claude-compatible, and Google AI (Gemini)-compatible endpoints
-- 🐳 **Docker Native** — One-command deployment
-- ⚡ **High Performance** — Built with Rust + Axum for low latency
+Use Gephyr when you want local, API-key-protected access to Google-backed model traffic through familiar API formats.
 
----
+## What It Does
 
-## Quick Start
+- Exposes OpenAI-compatible, Claude-compatible, and Gemini-compatible routes
+- Handles API-key auth and request routing
+- Supports linked Google accounts and account rotation
+- Runs as a local headless service (Docker-first workflow)
 
-### Prerequisites
+## Requirements
 
-- [Docker](https://docs.docker.com/get-docker/) installed and running
-- [PowerShell](https://docs.microsoft.com/en-us/powershell/) (Windows) or Bash (Linux/macOS)
+- Docker Desktop (or Docker Engine)
+- PowerShell (Windows) or Bash (Linux/macOS)
+- A Google OAuth client (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`)
+- An API key for Gephyr (`API_KEY`)
 
-### 1. Clone & Configure
+## Install
 
 ```bash
 git clone https://github.com/softerist/gephyr.git
 cd gephyr
-
-# Copy the example env file and edit with your values
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your API key and OAuth credentials:
+Set at least these values in `.env.local`:
 
 ```env
 API_KEY=gph_your_secure_api_key
 GOOGLE_OAUTH_CLIENT_ID=your_client_id.apps.googleusercontent.com
 GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-your_secret
-
-# Optional: restrict accepted Google Workspace domains for identity verification
-ALLOWED_GOOGLE_DOMAINS=example.com,subsidiary.example.com
-
-# Optional: scheduler jitter window in seconds (defaults shown)
-SCHEDULER_REFRESH_JITTER_MIN_SECONDS=30
-SCHEDULER_REFRESH_JITTER_MAX_SECONDS=120
-
-# Optional: deterministic per-account stagger before each batch refresh task
-ACCOUNT_REFRESH_STAGGER_MIN_MS=250
-ACCOUNT_REFRESH_STAGGER_MAX_MS=1500
-
-# Optional: startup health-check smoothing (boot-time token refresh)
-STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES=5
-STARTUP_HEALTH_JITTER_MIN_MS=150
-STARTUP_HEALTH_JITTER_MAX_MS=1200
-
-# Optional runtime TLS backend override when binary includes both stacks
-TLS_BACKEND=rustls
-
-# Optional startup TLS canary probe (recommended when changing TLS backend)
-TLS_CANARY_URL=https://oauth2.googleapis.com/token
-TLS_CANARY_TIMEOUT_SECS=5
-TLS_CANARY_REQUIRED=false
 ```
 
-### 2. Build & Run
+## Run
 
 ```powershell
-# Build Docker image
+# Build image
 docker build -t gephyr:latest -f docker/Dockerfile .
 
-# Start the service
+# Start service
 .\console.ps1 start
 
-# Check status
-.\console.ps1 status
-```
-
-### 3. Link Google Account (OAuth)
-
-```powershell
+# Link at least one Google account (opens browser)
 .\console.ps1 login
-# Browser opens → Complete Google OAuth → Account linked
 ```
 
-### 4. Test the API
+Quick health check:
 
 ```powershell
-.\console.ps1 api-test
+curl.exe -sS http://127.0.0.1:8045/health
 ```
 
----
+## API Examples (One Per Provider)
 
-## API Reference
-
-### Base URL
-
-```
-http://127.0.0.1:8045
-```
-
-### Authentication
-
-All requests require a Bearer token in the `Authorization` header:
-
-```
-Authorization: Bearer YOUR_API_KEY
-```
-
-### Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/v1/chat/completions` | POST | OpenAI-compatible chat completions |
-| `/v1/completions` | POST | OpenAI-compatible completions |
-| `/v1/responses` | POST | OpenAI-compatible Responses-style payloads |
-| `/v1/messages` | POST | Claude-compatible messages API |
-| `/v1/messages/count_tokens` | POST | Claude-compatible token counting |
-| `/v1/models` | GET | Unified model listing |
-| `/v1beta/models` | GET | Gemini-compatible model listing |
-| `/v1beta/models/:model` | GET | Gemini-compatible model metadata |
-| `/v1beta/models/:model:generateContent` | POST | Google AI (Gemini)-compatible generation API |
-| `/v1beta/models/:model:streamGenerateContent` | POST | Google AI (Gemini)-compatible streaming generation API |
-| `/v1beta/models/:model/countTokens` | POST | Google AI (Gemini)-compatible token counting |
-| `/api/accounts` | GET | List linked accounts (admin API) |
-| `/api/auth/url` | GET | Get OAuth login URL (admin API) |
-
-`/api/*` routes require `ENABLE_ADMIN_API=true`.
-
-### Example: OpenAI-Compatible Chat Completion
-
-```bash
-curl http://127.0.0.1:8045/v1/chat/completions \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.3-codex",
-    "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-### Example: OpenAI-Compatible Streaming
-
-```bash
-curl -N http://127.0.0.1:8045/v1/chat/completions \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-5.3-codex",
-    "stream": true,
-    "messages": [{"role": "user", "content": "Stream a short response."}]
-  }'
-```
-
-### Example: Claude-Compatible Messages
-
-```bash
-curl http://127.0.0.1:8045/v1/messages \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4-5",
-    "max_tokens": 256,
-    "messages": [
-      { "role": "user", "content": "Write a one-line haiku about Rust." }
-    ]
-  }'
-```
-
-### Example: Claude-Compatible Streaming
-
-```bash
-curl -N http://127.0.0.1:8045/v1/messages \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4-5",
-    "stream": true,
-    "max_tokens": 256,
-    "messages": [
-      { "role": "user", "content": "Stream a brief poem about latency." }
-    ]
-  }'
-```
-
-### Example: Google AI (Gemini)-Compatible generateContent
-
-```bash
-curl http://127.0.0.1:8045/v1beta/models/gemini-2.5-flash:generateContent \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{ "text": "Summarize what this proxy does in one sentence." }]
-      }
-    ]
-  }'
-```
-
-### Example: Google AI (Gemini)-Compatible streamGenerateContent
-
-```bash
-curl -N http://127.0.0.1:8045/v1beta/models/gemini-2.5-flash:streamGenerateContent \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{ "text": "Stream 3 short bullet points about this project." }]
-      }
-    ]
-  }'
-```
-
-### PowerShell: Load API Key from Local Config and Test All 3 APIs (Non-Stream + Stream)
-
-Use `curl.exe` in PowerShell to avoid alias issues.
+Set values:
 
 ```powershell
-$apiKey = $null
-if (Test-Path ".env.local") {
-  $line = Get-Content ".env.local" | Where-Object { $_ -match '^\s*API_KEY\s*=' } | Select-Object -First 1
-  if ($line) { $apiKey = ($line -split '=',2)[1].Trim().Trim('"').Trim("'") }
-}
-if (-not $apiKey -and (Test-Path "$env:USERPROFILE\.gephyr\config.json")) {
-  $cfg = Get-Content "$env:USERPROFILE\.gephyr\config.json" -Raw | ConvertFrom-Json
-  $apiKey = $cfg.proxy.api_key
-}
-if (-not $apiKey) { throw "API key not found in .env.local or %USERPROFILE%\.gephyr\config.json" }
-
-$base = "http://127.0.0.1:8045"
-$auth = "Authorization: Bearer $apiKey"
-
-# OpenAI-compatible
-curl.exe -sS "$base/v1/chat/completions" -H $auth -H "Content-Type: application/json" -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"Hello from PowerShell"}]}'
-curl.exe -N "$base/v1/chat/completions" -H $auth -H "Content-Type: application/json" -d '{"model":"gpt-5.3-codex","stream":true,"messages":[{"role":"user","content":"Stream a short response from PowerShell."}]}'
-
-# Claude-compatible
-curl.exe -sS "$base/v1/messages" -H $auth -H "Content-Type: application/json" -d '{"model":"claude-sonnet-4-5","max_tokens":128,"messages":[{"role":"user","content":"Hello from PowerShell"}]}'
-curl.exe -N "$base/v1/messages" -H $auth -H "Content-Type: application/json" -d '{"model":"claude-sonnet-4-5","stream":true,"max_tokens":128,"messages":[{"role":"user","content":"Stream a short response from PowerShell."}]}'
-
-# Gemini-compatible
-curl.exe -sS "$base/v1beta/models/gemini-2.5-flash:generateContent" -H $auth -H "Content-Type: application/json" -d '{"contents":[{"role":"user","parts":[{"text":"Hello from PowerShell"}]}]}'
-curl.exe -N "$base/v1beta/models/gemini-2.5-flash:streamGenerateContent" -H $auth -H "Content-Type: application/json" -d '{"contents":[{"role":"user","parts":[{"text":"Stream 3 short bullet points about Gephyr."}]}]}'
+$API_KEY = "YOUR_API_KEY"
+$BASE = "http://127.0.0.1:8045"
 ```
 
-### Bash: Load API Key from Local Config and Test All 3 APIs (Non-Stream + Stream)
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-api_key=""
-if [[ -f ".env.local" ]]; then
-  api_key="$(grep -m1 -E '^\s*API_KEY\s*=' .env.local | sed -E 's/^[^=]+=\s*//; s/^"//; s/"$//; s/^'"'"'//; s/'"'"'$//')"
-fi
-
-if [[ -z "$api_key" && -f "$HOME/.gephyr/config.json" ]]; then
-  if command -v jq >/dev/null 2>&1; then
-    api_key="$(jq -r '.proxy.api_key // ""' "$HOME/.gephyr/config.json")"
-  fi
-fi
-
-if [[ -z "$api_key" ]]; then
-  echo "API key not found in .env.local or ~/.gephyr/config.json" >&2
-  exit 1
-fi
-
-base="http://127.0.0.1:8045"
-
-# 1) OpenAI-compatible (non-stream)
-curl -sS "$base/v1/chat/completions" \
-  -H "Authorization: Bearer $api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"Hello!"}]}'
-
-# 2) OpenAI-compatible (stream)
-curl -N "$base/v1/chat/completions" \
-  -H "Authorization: Bearer $api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gpt-5.3-codex","stream":true,"messages":[{"role":"user","content":"Stream a short response."}]}'
-
-# 3) Claude-compatible (non-stream)
-curl -sS "$base/v1/messages" \
-  -H "Authorization: Bearer $api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-5","max_tokens":256,"messages":[{"role":"user","content":"Write a one-line haiku about Rust."}]}'
-
-# 4) Claude-compatible (stream)
-curl -N "$base/v1/messages" \
-  -H "Authorization: Bearer $api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-5","stream":true,"max_tokens":256,"messages":[{"role":"user","content":"Stream a brief poem about latency."}]}'
-
-# 5) Gemini-compatible generateContent (non-stream)
-curl -sS "$base/v1beta/models/gemini-2.5-flash:generateContent" \
-  -H "Authorization: Bearer $api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"contents":[{"role":"user","parts":[{"text":"Summarize what this proxy does in one sentence."}]}]}'
-
-# 6) Gemini-compatible streamGenerateContent
-curl -N "$base/v1beta/models/gemini-2.5-flash:streamGenerateContent" \
-  -H "Authorization: Bearer $api_key" \
-  -H "Content-Type: application/json" \
-  -d '{"contents":[{"role":"user","parts":[{"text":"Stream 3 short bullet points about this project."}]}]}'
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `API_KEY` | ✅ | — | API key for console scripts and runtime auth |
-| `AUTH_MODE` | — | `strict` | Auth mode: `strict`, `off`, `all_except_health`, `auto` |
-| `ALLOW_LAN_ACCESS` | — | `false` | Bind to `0.0.0.0` instead of `127.0.0.1` |
-| `ENABLE_ADMIN_API` | — | `false` | Enable `/api/*` admin routes |
-| `GOOGLE_OAUTH_CLIENT_ID` | — | — | Google OAuth Client ID |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | — | — | Google OAuth Client Secret |
-| `TLS_BACKEND` | — | compiled default | Runtime TLS backend override (`native-tls`/`rustls`) when build includes both |
-| `TLS_CANARY_URL` | — | — | Optional startup TLS canary probe URL |
-| `TLS_CANARY_TIMEOUT_SECS` | — | `5` | Startup TLS canary timeout seconds (clamped 1..60) |
-| `TLS_CANARY_REQUIRED` | — | `false` | If `true`, startup fails when TLS canary probe fails |
-| `ALLOWED_GOOGLE_DOMAINS` | — | — | Optional comma-separated Workspace domain allowlist for identity verification |
-| `DATA_DIR` | — | `~/.gephyr` | Data directory path |
-| `PUBLIC_URL` | — | — | Public URL for OAuth callbacks (hosted deployments) |
-| `MAX_BODY_SIZE` | — | `104857600` | Max request body size in bytes |
-| `SCHEDULER_REFRESH_JITTER_MIN_SECONDS` | — | `30` | Min random delay before each scheduled quota-refresh batch |
-| `SCHEDULER_REFRESH_JITTER_MAX_SECONDS` | — | `120` | Max random delay before each scheduled quota-refresh batch |
-| `ACCOUNT_REFRESH_STAGGER_MIN_MS` | — | `250` | Min deterministic per-account delay before each batch refresh task |
-| `ACCOUNT_REFRESH_STAGGER_MAX_MS` | — | `1500` | Max deterministic per-account delay before each batch refresh task |
-| `STARTUP_HEALTH_MAX_CONCURRENT_REFRESHES` | — | `5` | Max concurrent token refreshes during startup health-check (clamped 1..32) |
-| `STARTUP_HEALTH_JITTER_MIN_MS` | — | `150` | Min random per-account delay before startup health refresh |
-| `STARTUP_HEALTH_JITTER_MAX_MS` | — | `1200` | Max random per-account delay before startup health refresh |
-
-Proxy-pool isolation knobs are config/API settings (not env vars):
-- `proxy.proxy_pool.allow_shared_proxy_fallback`
-- `proxy.proxy_pool.require_proxy_for_account_requests`
-
-### Persistent Session Bindings (Sticky Sessions Across Restart)
-
-`persist_session_bindings` is a config-file setting (not an env var).  
-It controls whether sticky session bindings (`session_id -> account_id`) survive process/container restarts.
-
-- Default: `true`
-- Config file: `config.json` under your data dir (for example `~/.gephyr/config.json` or `%USERPROFILE%\.gephyr\config.json`)
-
-Example:
-
-```json
-{
-  "proxy": {
-    "persist_session_bindings": true,
-    "scheduling": {
-      "mode": "balance",
-      "max_wait_seconds": 60
-    }
-  }
-}
-```
-
-Admin visibility:
-- `GET /api/version/routes` returns running version + key route capabilities (useful to detect old images).
-- `GET /api/proxy/sticky` returns sticky runtime config (`persist_session_bindings`, scheduling, preferred account).
-- `POST /api/proxy/sticky` updates sticky settings only (avoids full `/api/config` round-trip).
-- `GET /api/proxy/request-timeout` returns configured/effective runtime timeout.
-- `POST /api/proxy/request-timeout` updates timeout only (avoids full `/api/config` round-trip).
-- `GET /api/proxy/pool/runtime` returns proxy-pool runtime knobs (`enabled`, `auto_failover`, `allow_shared_proxy_fallback`, `require_proxy_for_account_requests`, `health_check_interval`) plus strategy snapshot.
-- `POST /api/proxy/pool/runtime` updates only proxy-pool runtime knobs (avoids full `/api/config` round-trip).
-- `GET /api/proxy/pool/strategy` returns current proxy-pool strategy snapshot.
-- `POST /api/proxy/pool/strategy` updates proxy-pool strategy only (avoids full `/api/config` round-trip).
-- `GET /api/proxy/metrics` returns runtime/monitor/sticky/proxy-pool/compliance aggregates (including TLS diagnostics: backend/requested/compiled/canary snapshot) and supported runtime-apply policy values.
-- `GET /api/proxy/google/outbound-policy` returns the effective Google outbound header policy snapshot (mode, host-header behavior, metadata shape, passthrough allow/block policy, debug redaction contract).
-- `GET /api/proxy/tls-canary` returns latest TLS canary probe snapshot.
-- `POST /api/proxy/tls-canary/run` runs TLS canary probe on demand and returns the latest canary snapshot.
-- `GET /api/proxy/compliance` returns live compliance counters/cooldowns (requires admin API enabled).
-- `POST /api/proxy/compliance` updates only compliance settings (avoids full `/api/config` round-trip).
-- scoped `POST /api/proxy/*` update responses include `runtime_apply` (`policy`, `applied`, `requires_restart`).
-
-Example update call:
-
-```bash
-curl -X POST http://127.0.0.1:8045/api/proxy/compliance \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "enabled": true,
-    "max_global_requests_per_minute": 120,
-    "max_account_requests_per_minute": 10,
-    "max_account_concurrency": 1,
-    "risk_cooldown_seconds": 300,
-    "max_retry_attempts": 2
-  }'
-```
-
-Sticky-only update call:
-
-```bash
-curl -X POST http://127.0.0.1:8045/api/proxy/sticky \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "persist_session_bindings": true,
-    "scheduling": {
-      "mode": "Balance",
-      "max_wait_seconds": 60
-    }
-  }'
-```
-
-Request-timeout-only update call:
-
-```bash
-curl -X POST http://127.0.0.1:8045/api/proxy/request-timeout \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "request_timeout": 120
-  }'
-```
-
-Proxy-pool-strategy-only update call:
-
-```bash
-curl -X POST http://127.0.0.1:8045/api/proxy/pool/strategy \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "strategy": "round_robin"
-  }'
-```
-
-Proxy-pool-runtime-only update call:
-
-```bash
-curl -X POST http://127.0.0.1:8045/api/proxy/pool/runtime \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "enabled": true,
-    "auto_failover": true,
-    "allow_shared_proxy_fallback": false,
-    "require_proxy_for_account_requests": true,
-    "health_check_interval": 120
-  }'
-```
-
-### Google Outbound Policy (Config + Runtime)
-
-Google-bound calls now use a shared policy with explicit defaults:
-
-- Always set: `authorization`, `user-agent`, `accept-encoding: gzip`
-- JSON requests additionally set: `content-type: application/json`
-- Passthrough policy: deny-by-default (only explicit allowlist keys are forwarded)
-- Optional explicit `Host` header: compat mode only (`codeassist_compat` + `send_host_header=true`)
-
-Config example (`config.json`):
-
-```json
-{
-  "proxy": {
-    "google": {
-      "mode": "public_google",
-      "headers": {
-        "send_host_header": false
-      },
-      "identity_metadata": {
-        "ide_type": "ANTIGRAVITY",
-        "platform": "PLATFORM_UNSPECIFIED",
-        "plugin_type": "GEMINI"
-      }
-    },
-    "debug_logging": {
-      "log_google_outbound_headers": false
-    }
-  }
-}
-```
-
-Runtime note:
-
-- Saving config via `POST /api/config` hot-applies Google outbound policy to live upstream calls (no restart required).
-- Verify effective runtime policy with `GET /api/proxy/google/outbound-policy`.
-
-Staging trace validation runbook:
-
-- See `docs/agents/GOOGLE_TRACE_VALIDATION.md` for a step-by-step manual diff workflow.
-
-Manual TLS canary run:
-
-```bash
-curl -X POST http://127.0.0.1:8045/api/proxy/tls-canary/run \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json"
-```
-
-Practical notes:
-
-- Keep `scheduling.mode` as `balance` or `cache_first` to use sticky session behavior.
-- `performance_first` intentionally disables sticky session reuse.
-- runtime apply policy mapping:
-- sticky / request-timeout / compliance updates: `always_hot_applied`
-- proxy-pool strategy / runtime updates: `hot_applied_when_safe`
-- `scheduling.max_wait_seconds` keeps sticky binding during short bound-account rate-limit windows; long windows release/rebind.
-- `allow_shared_proxy_fallback=false` prevents borrowing an already-bound proxy for unbound accounts.
-- `require_proxy_for_account_requests=true` makes account requests fail closed when no eligible proxy is available (instead of app-upstream/direct fallback).
-- For maximum stickiness from clients, send a stable explicit session id:
-- Header: `x-session-id` (or `x-client-session-id`, `x-gephyr-session-id`, `x-conversation-id`, `x-thread-id`)
-- Payload: `session_id` / `sessionId` (also `conversation_id` / `conversationId`, `thread_id` / `threadId`)
-
-### Compliance Guardrails (Low-Risk Account Traffic Profile)
-
-`proxy.compliance` applies runtime guardrails to reduce bursty/account-risky traffic patterns.
-
-- `enabled`: turns guardrails on/off (default: `false`)
-- `max_global_requests_per_minute`: global request budget across all accounts
-- `max_account_requests_per_minute`: per-account request budget (default `10`)
-- `max_account_concurrency`: max in-flight requests per account (default `1`)
-- `risk_cooldown_seconds`: temporary cooldown applied after risky upstream statuses (`401`, `403`, `429`, `500`, `503`, `529`)
-- `max_retry_attempts`: hard cap for handler retry loops when compliance mode is enabled
-
-Example:
-
-```json
-{
-  "proxy": {
-    "compliance": {
-      "enabled": true,
-      "max_global_requests_per_minute": 120,
-      "max_account_requests_per_minute": 10,
-      "max_account_concurrency": 1,
-      "risk_cooldown_seconds": 300,
-      "max_retry_attempts": 2
-    }
-  }
-}
-```
-
-### One-IP Presets (Runbook)
-
-Choose one profile and monitor `/api/proxy/metrics` proxy-pool counters.
-
-- Availability-first:
-- `allow_shared_proxy_fallback=true`
-- `require_proxy_for_account_requests=false`
-- keeps traffic flowing when pool is saturated, but allows shared-proxy reuse
-
-- Isolation-first:
-- `allow_shared_proxy_fallback=false`
-- `require_proxy_for_account_requests=true`
-- fails closed when no eligible proxy exists, reducing shared routing but increasing hard failures
-
-Keep these in both modes:
-- `max_account_requests_per_minute=10`
-- `max_account_concurrency=1`
-- scheduler jitter enabled (`SCHEDULER_REFRESH_JITTER_MIN_SECONDS`, `SCHEDULER_REFRESH_JITTER_MAX_SECONDS`)
-
-### Console Commands
+OpenAI-compatible:
 
 ```powershell
-.\console.ps1 <command> [options]
+curl.exe -sS "$BASE/v1/chat/completions" `
+  -H "Authorization: Bearer $API_KEY" `
+  -H "Content-Type: application/json" `
+  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"Hello from OpenAI-style request."}]}'
 ```
 
-| Command | Description |
-|---------|-------------|
-| `start` | Start the container |
-| `stop` | Stop and remove container |
-| `restart` | Restart container |
-| `status` | Show container and API status |
-| `logs` | Show container logs |
-| `health` | Check `/health` endpoint |
-| `login` | Start OAuth flow (opens browser) |
-| `accounts` | List linked accounts |
-| `api-test` | Run a test API completion |
-| `rotate-key` | Generate new API key |
-| `docker-repair` | Repair Docker builder cache for snapshot/export errors |
-| `logout` | Remove all linked accounts |
-
----
-
-## Admin API Mode
-
-The admin API (`/api/*` routes) is disabled by default for security. Enable it when you need to:
-
-- Bootstrap OAuth login
-- Manage accounts
-- Access admin configuration
+Claude-compatible:
 
 ```powershell
-# Start with admin API enabled
-.\console.ps1 start -EnableAdminApi
-
-# Or restart with admin API
-.\console.ps1 restart -EnableAdminApi
+curl.exe -sS "$BASE/v1/messages" `
+  -H "Authorization: Bearer $API_KEY" `
+  -H "Content-Type: application/json" `
+  -d '{"model":"claude-sonnet-4-5","max_tokens":128,"messages":[{"role":"user","content":"Hello from Claude-style request."}]}'
 ```
 
-> **Recommendation**: Enable admin API only during setup/maintenance. Run normal proxy with it disabled.
-
----
-
-## Multiple Accounts
-
-Gephyr supports linking multiple Google accounts:
+Gemini-compatible:
 
 ```powershell
-.\console.ps1 restart -EnableAdminApi
-.\console.ps1 login  # Link account A
-.\console.ps1 login  # Link account B
-.\console.ps1 login  # Link account C
-.\console.ps1 accounts  # Verify all linked
-.\console.ps1 restart  # Restart with admin API disabled
+curl.exe -sS "$BASE/v1beta/models/gemini-2.5-flash:generateContent" `
+  -H "Authorization: Bearer $API_KEY" `
+  -H "Content-Type: application/json" `
+  -d '{"contents":[{"role":"user","parts":[{"text":"Hello from Gemini-style request."}]}]}'
 ```
 
----
+## Advanced Guides
 
-## OAuth Setup
+For configuration, full endpoint reference, admin API details, runtime tuning, compliance, proxy pool, and troubleshooting:
 
-See [OAUTH_SETUP.md](OAUTH_SETUP.md) for detailed Google Cloud OAuth configuration.
-
-**Quick summary:**
-- **Local/Docker**: Use "Desktop app" OAuth client type
-- **Hosted deployment**: Use "Web application" client with `PUBLIC_URL` set
-
----
-
-## Data Directory
-
-| Platform | Default Path |
-|----------|--------------|
-| Linux/macOS | `~/.gephyr` |
-| Windows | `%USERPROFILE%\.gephyr` |
-
-Override with `DATA_DIR` environment variable.
-
----
-
-## Docker Build Troubleshooting
-
-If Docker build fails with an error like:
-
-```text
-failed to prepare extraction snapshot ... parent snapshot ... does not exist
-```
-
-This is typically a Docker BuildKit/builder cache issue on the host (not a Gephyr code issue).
-
-### Fast recovery
-
-```powershell
-.\console.ps1 docker-repair
-docker build -t gephyr:latest -f docker/Dockerfile .
-```
-
-```bash
-./console.sh docker-repair
-docker build -t gephyr:latest -f docker/Dockerfile .
-```
-
-### If it still fails
-
-Use aggressive mode (clears more builder cache; next build will be slower):
-
-```powershell
-.\console.ps1 docker-repair -Aggressive
-```
-
-```bash
-./console.sh docker-repair --aggressive
-```
-
-### Preventive tips
-
-- Avoid force-closing Docker Desktop during builds.
-- Keep sufficient free disk space for image layers and cache.
-- If Docker was updated/restarted mid-build, rerun `docker-repair` before rebuilding.
-
----
-
-## Development
-
-### Build from Source
-
-```bash
-cargo build --release
-```
-
-TLS backend build profiles:
-- Default build uses `native-tls`.
-- Rustls build profile:
-
-```bash
-cargo build --release --no-default-features --features tls-rustls
-```
-
-### Run Tests
-
-```bash
-cargo test
-```
-
-### Code Quality
-
-```bash
-cargo fmt --check
-cargo clippy
-cargo audit
-```
-
----
+- Full advanced guide: `docs/ADVANCED_GUIDE.md`
+- OAuth setup details: `OAUTH_SETUP.md`
+- Architecture notes: `docs/ARCHITECTURE.md`
+- Code-derived capability map: `docs/AGENT_CODE_CAPABILITIES.md`
 
 ## License
 
-This project is licensed under [MIT](LICENSE).
+MIT. See `LICENSE`.
