@@ -473,7 +473,10 @@ confirm_ghcr_package_discoverability() {
   local repo_slug
   repo_slug="$(get_github_repo_slug 2>/dev/null || true)"
   local package_repo_link
-  package_repo_link="$(gh api "$endpoint" -q .repository.nameWithOwner 2>/dev/null || true)"
+  package_repo_link="$(gh api "$endpoint" -q .repository.full_name 2>/dev/null || true)"
+  if [ -z "$package_repo_link" ]; then
+    package_repo_link="$(gh api "$endpoint" -q .repository.nameWithOwner 2>/dev/null || true)"
+  fi
   if [ -z "$package_repo_link" ] && [ -n "$repo_slug" ]; then
     warn "If repo sidebar still shows 'No packages published', connect this package to repository $repo_slug."
     warn "Package settings: $package_url/settings"

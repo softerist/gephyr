@@ -478,8 +478,12 @@ function Confirm-GhcrPackageDiscoverability {
   $repoSlug = Get-GitHubRepoSlug
   $hasRepositoryLink = ($pkg.PSObject.Properties.Name -contains 'repository') -and $pkg.repository
   $repositoryLink = $null
-  if ($hasRepositoryLink -and $pkg.repository.PSObject.Properties.Name -contains 'nameWithOwner') {
-    $repositoryLink = "$($pkg.repository.nameWithOwner)"
+  if ($hasRepositoryLink) {
+    if ($pkg.repository.PSObject.Properties.Name -contains 'full_name' -and -not [string]::IsNullOrWhiteSpace("$($pkg.repository.full_name)")) {
+      $repositoryLink = "$($pkg.repository.full_name)"
+    } elseif ($pkg.repository.PSObject.Properties.Name -contains 'nameWithOwner' -and -not [string]::IsNullOrWhiteSpace("$($pkg.repository.nameWithOwner)")) {
+      $repositoryLink = "$($pkg.repository.nameWithOwner)"
+    }
   }
 
   if (-not $hasRepositoryLink -and -not [string]::IsNullOrWhiteSpace($repoSlug)) {
