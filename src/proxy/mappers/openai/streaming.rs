@@ -53,6 +53,46 @@ fn extract_usage_metadata(u: &Value) -> Option<super::models::OpenAIUsage> {
     })
 }
 
+fn build_grounding_fallback_text(candidate: &Value) -> String {
+    let mut grounding_text = String::new();
+    if let Some(grounding) = candidate.get("groundingMetadata") {
+        if let Some(queries) = grounding.get("webSearchQueries").and_then(|q| q.as_array()) {
+            let query_list: Vec<&str> = queries.iter().filter_map(|v| v.as_str()).collect();
+            if !query_list.is_empty() {
+                grounding_text.push_str("\n\n---\nSearched for: ");
+                grounding_text.push_str(&query_list.join(", "));
+            }
+        }
+        if let Some(chunks) = grounding.get("groundingChunks").and_then(|c| c.as_array()) {
+            let mut links = Vec::new();
+            for (i, chunk) in chunks.iter().enumerate() {
+                if let Some(web) = chunk.get("web") {
+                    let title = web
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Web source");
+                    let uri = web.get("uri").and_then(|v| v.as_str()).unwrap_or("#");
+                    links.push(format!("[{}] [{}]({})", i + 1, title, uri));
+                }
+            }
+            if !links.is_empty() {
+                grounding_text.push_str("\n\nSource citations:\n");
+                grounding_text.push_str(&links.join("\n"));
+            }
+        }
+    }
+    grounding_text
+}
+
+fn stable_tool_call_id(func_call: &Value) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    serde_json::to_string(func_call)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    format!("call_{:x}", hasher.finish())
+}
+
 pub fn create_openai_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     model: String,
@@ -65,6 +105,7 @@ pub fn create_openai_sse_stream(
 
     let stream = async_stream::stream! {
         let mut emitted_tool_calls = std::collections::HashSet::new();
+        let mut tool_call_indices: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         let mut final_usage: Option<super::models::OpenAIUsage> = None;
         let mut error_occurred = false;
 
@@ -117,7 +158,18 @@ pub fn create_openai_sse_stream(
                                                             if let Some(func_call) = part.get("functionCall") {
                                                                 let call_key = serde_json::to_string(func_call).unwrap_or_default();
                                                                 if !emitted_tool_calls.contains(&call_key) {
-                                                                    emitted_tool_calls.insert(call_key);
+                                                                    emitted_tool_calls.insert(call_key.clone());
+                                                                    let tool_call_index = if let Some(existing) =
+                                                                        tool_call_indices.get(&call_key)
+                                                                    {
+                                                                        *existing
+                                                                    } else {
+                                                                        let new_index =
+                                                                            tool_call_indices.len() as u32;
+                                                                        tool_call_indices
+                                                                            .insert(call_key.clone(), new_index);
+                                                                        new_index
+                                                                    };
                                                                     let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                                                                     let mut args = func_call.get("args").unwrap_or(&json!({})).clone();
                                                                     if name == "shell" || name == "bash" || name == "local_shell" {
@@ -135,10 +187,7 @@ pub fn create_openai_sse_stream(
                                                                     }
 
                                                                     let args_str = serde_json::to_string(&args).unwrap_or_default();
-                                                                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                                                                    use std::hash::{Hash, Hasher};
-                                                                    serde_json::to_string(func_call).unwrap_or_default().hash(&mut hasher);
-                                                                    let call_id = format!("call_{:x}", hasher.finish());
+                                                                    let call_id = stable_tool_call_id(func_call);
 
                                                                     let tool_call_chunk = json!({
                                                                         "id": &stream_id,
@@ -150,7 +199,7 @@ pub fn create_openai_sse_stream(
                                                                             "delta": {
                                                                                 "role": "assistant",
                                                                                 "tool_calls": [{
-                                                                                    "index": 0,
+                                                                                    "index": tool_call_index,
                                                                                     "id": call_id,
                                                                                     "type": "function",
                                                                                     "function": { "name": name, "arguments": args_str }
@@ -377,7 +426,7 @@ pub fn create_legacy_sse_stream(
 
 pub fn create_codex_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
-    _model: String,
+    model: String,
     session_id: String,
     message_count: usize,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
@@ -393,10 +442,43 @@ pub fn create_codex_sse_stream(
     let response_id = format!("resp-{}", random_str);
 
     let stream = async_stream::stream! {
-        let created_ev = json!({ "type": "response.created", "response": { "id": &response_id, "object": "response" } });
+        let output_item_id = format!("msg_{}", Uuid::new_v4().simple());
+        let created_ev = json!({
+            "type": "response.created",
+            "response": {
+                "id": &response_id,
+                "object": "response",
+                "status": "in_progress",
+                "model": &model,
+                "output": []
+            }
+        });
         yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&created_ev).unwrap())));
+        let output_item_added_ev = json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "id": &output_item_id,
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": []
+            }
+        });
+        yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&output_item_added_ev).unwrap())));
+        let content_part_added_ev = json!({
+            "type": "response.content_part.added",
+            "output_index": 0,
+            "item_id": &output_item_id,
+            "content_index": 0,
+            "part": { "type": "output_text", "text": "" }
+        });
+        yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&content_part_added_ev).unwrap())));
 
         let mut emitted_tool_calls = std::collections::HashSet::new();
+        let mut tool_call_indices: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut full_text = String::new();
+        let mut error_occurred = false;
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(15));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -418,11 +500,11 @@ pub fn create_codex_sse_stream(
                                         let actual_data = if let Some(inner) = json.get_mut("response").map(|v| v.take()) { inner } else { json };
                                         if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
                                             if let Some(candidate) = candidates.first() {
+                                                let mut text_chunk = String::new();
                                                 if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                     for part in parts {
                                                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                                                            let delta_ev = json!({ "type": "response.output_text.delta", "delta": text });
-                                                            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&delta_ev).unwrap())));
+                                                            text_chunk.push_str(text);
                                                         }
                                                         if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
                                                             store_thought_signature(sig, &session_id, message_count);
@@ -430,10 +512,62 @@ pub fn create_codex_sse_stream(
                                                         if let Some(func_call) = part.get("functionCall") {
                                                             let call_key = serde_json::to_string(func_call).unwrap_or_default();
                                                             if !emitted_tool_calls.contains(&call_key) {
-                                                                emitted_tool_calls.insert(call_key);
+                                                                emitted_tool_calls.insert(call_key.clone());
+                                                                let tool_call_index = if let Some(existing) = tool_call_indices.get(&call_key) {
+                                                                    *existing
+                                                                } else {
+                                                                    let new_index = tool_call_indices.len() as u32;
+                                                                    tool_call_indices.insert(call_key.clone(), new_index);
+                                                                    new_index
+                                                                };
+                                                                let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                                                let args = func_call.get("args").cloned().unwrap_or_else(|| json!({}));
+                                                                let args_str = serde_json::to_string(&args).unwrap_or_default();
+                                                                let call_id = stable_tool_call_id(func_call);
+                                                                let tool_added_ev = json!({
+                                                                    "type": "response.output_item.added",
+                                                                    "output_index": tool_call_index + 1,
+                                                                    "item": {
+                                                                        "id": call_id,
+                                                                        "type": "function_call",
+                                                                        "status": "completed",
+                                                                        "name": name,
+                                                                        "arguments": args_str
+                                                                    }
+                                                                });
+                                                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&tool_added_ev).unwrap())));
+                                                                let tool_done_ev = json!({
+                                                                    "type": "response.output_item.done",
+                                                                    "output_index": tool_call_index + 1,
+                                                                    "item": {
+                                                                        "id": call_id,
+                                                                        "type": "function_call",
+                                                                        "status": "completed",
+                                                                        "name": name,
+                                                                        "arguments": args_str
+                                                                    }
+                                                                });
+                                                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&tool_done_ev).unwrap())));
                                                             }
                                                         }
                                                     }
+                                                }
+                                                if text_chunk.is_empty() {
+                                                    let grounding_fallback = build_grounding_fallback_text(candidate);
+                                                    if !grounding_fallback.is_empty() {
+                                                        text_chunk = grounding_fallback;
+                                                    }
+                                                }
+                                                if !text_chunk.is_empty() {
+                                                    full_text.push_str(&text_chunk);
+                                                    let delta_ev = json!({
+                                                        "type": "response.output_text.delta",
+                                                        "output_index": 0,
+                                                        "item_id": &output_item_id,
+                                                        "content_index": 0,
+                                                        "delta": text_chunk
+                                                    });
+                                                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&delta_ev).unwrap())));
                                                 }
                                             }
                                         }
@@ -441,13 +575,230 @@ pub fn create_codex_sse_stream(
                                 }
                             }
                         }
-                        Some(Err(_)) => break,
+                        Some(Err(e)) => {
+                            error_occurred = true;
+                            let err_ev = json!({
+                                "type": "response.failed",
+                                "response": {
+                                    "id": &response_id,
+                                    "object": "response",
+                                    "status": "failed"
+                                },
+                                "error": {
+                                    "message": e.to_string()
+                                }
+                            });
+                            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&err_ev).unwrap())));
+                            break;
+                        }
                         None => break,
                     }
                 }
                 _ = heartbeat_interval.tick() => { yield Ok::<Bytes, String>(Bytes::from(": ping\n\n")); }
             }
         }
+        if !error_occurred {
+            let output_text_done_ev = json!({
+                "type": "response.output_text.done",
+                "output_index": 0,
+                "item_id": &output_item_id,
+                "content_index": 0,
+                "text": &full_text
+            });
+            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&output_text_done_ev).unwrap())));
+            let content_part_done_ev = json!({
+                "type": "response.content_part.done",
+                "output_index": 0,
+                "item_id": &output_item_id,
+                "content_index": 0,
+                "part": { "type": "output_text", "text": &full_text }
+            });
+            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&content_part_done_ev).unwrap())));
+            let output_item_done_ev = json!({
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {
+                    "id": &output_item_id,
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": &full_text
+                    }]
+                }
+            });
+            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&output_item_done_ev).unwrap())));
+            let completed_ev = json!({
+                "type": "response.completed",
+                "response": {
+                    "id": &response_id,
+                    "object": "response",
+                    "status": "completed",
+                    "model": &model,
+                    "output": [{
+                        "id": &output_item_id,
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{
+                            "type": "output_text",
+                            "text": &full_text
+                        }]
+                    }]
+                }
+            });
+            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&completed_ev).unwrap())));
+        }
+        yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
     };
     Box::pin(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+
+    fn data_line(json: serde_json::Value) -> Bytes {
+        Bytes::from(format!("data: {}\n", serde_json::to_string(&json).unwrap()))
+    }
+
+    async fn collect_event_payloads(
+        mut stream: Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>,
+    ) -> Vec<serde_json::Value> {
+        let mut payloads = Vec::new();
+        while let Some(item) = stream.next().await {
+            let bytes = item.expect("stream item should be ok");
+            let line = String::from_utf8(bytes.to_vec()).expect("valid utf8");
+            for part in line.lines() {
+                if !part.starts_with("data: ") {
+                    continue;
+                }
+                let raw = part.trim_start_matches("data: ").trim();
+                if raw == "[DONE]" {
+                    continue;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+                    payloads.push(v);
+                }
+            }
+        }
+        payloads
+    }
+
+    #[tokio::test]
+    async fn codex_stream_emits_lifecycle_events_in_order() {
+        let gemini_events = vec![Ok::<Bytes, reqwest::Error>(data_line(json!({
+            "candidates": [{
+                "content": { "parts": [{ "text": "Hello from Codex stream." }] },
+                "finishReason": "STOP"
+            }]
+        })))];
+        let stream = create_codex_sse_stream(
+            Box::pin(futures::stream::iter(gemini_events)),
+            "gpt-5.3-codex".to_string(),
+            "session-lifecycle".to_string(),
+            1,
+        );
+        let payloads = collect_event_payloads(stream).await;
+        let event_types: Vec<&str> = payloads
+            .iter()
+            .filter_map(|p| p.get("type").and_then(|v| v.as_str()))
+            .collect();
+        let expected = vec![
+            "response.created",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ];
+        assert_eq!(event_types, expected);
+    }
+
+    #[tokio::test]
+    async fn codex_stream_uses_grounding_as_non_empty_fallback_text() {
+        let gemini_events = vec![Ok::<Bytes, reqwest::Error>(data_line(json!({
+            "candidates": [{
+                "content": { "parts": [] },
+                "groundingMetadata": {
+                    "webSearchQueries": ["gephyr proxy"],
+                    "groundingChunks": [{
+                        "web": {
+                            "title": "Gephyr",
+                            "uri": "https://example.com/gephyr"
+                        }
+                    }]
+                },
+                "finishReason": "STOP"
+            }]
+        })))];
+        let stream = create_codex_sse_stream(
+            Box::pin(futures::stream::iter(gemini_events)),
+            "gpt-5.3-codex".to_string(),
+            "session-grounding".to_string(),
+            1,
+        );
+        let payloads = collect_event_payloads(stream).await;
+        let delta_event = payloads
+            .iter()
+            .find(|p| p.get("type").and_then(|v| v.as_str()) == Some("response.output_text.delta"))
+            .expect("expected output_text delta event");
+        let delta = delta_event
+            .get("delta")
+            .and_then(|v| v.as_str())
+            .expect("delta text");
+        assert!(
+            delta.contains("Searched for"),
+            "grounding fallback should produce readable text"
+        );
+    }
+
+    #[tokio::test]
+    async fn openai_stream_assigns_stable_tool_call_indices() {
+        let gemini_events = vec![
+            Ok::<Bytes, reqwest::Error>(data_line(json!({
+                "candidates": [{
+                    "content": { "parts": [{
+                        "functionCall": { "name": "first_tool", "args": { "a": 1 } }
+                    }] }
+                }]
+            }))),
+            Ok::<Bytes, reqwest::Error>(data_line(json!({
+                "candidates": [{
+                    "content": { "parts": [{
+                        "functionCall": { "name": "second_tool", "args": { "b": 2 } }
+                    }] },
+                    "finishReason": "STOP"
+                }]
+            }))),
+        ];
+        let stream = create_openai_sse_stream(
+            Box::pin(futures::stream::iter(gemini_events)),
+            "gpt-5.3-codex".to_string(),
+            "session-tools".to_string(),
+            1,
+        );
+        let payloads = collect_event_payloads(stream).await;
+        let mut tool_indices = Vec::new();
+        for payload in payloads {
+            let idx = payload
+                .get("choices")
+                .and_then(|c| c.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|choice| choice.get("delta"))
+                .and_then(|delta| delta.get("tool_calls"))
+                .and_then(|calls| calls.as_array())
+                .and_then(|calls| calls.first())
+                .and_then(|call| call.get("index"))
+                .and_then(|idx| idx.as_u64());
+            if let Some(index) = idx {
+                tool_indices.push(index);
+            }
+        }
+        assert_eq!(tool_indices, vec![0, 1]);
+    }
 }

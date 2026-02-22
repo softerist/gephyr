@@ -116,6 +116,7 @@ pub(super) fn build_generation_config(
     is_thinking_enabled: bool,
 ) -> Value {
     let mut config = json!({});
+    let is_gemini_family_model = crate::proxy::common::model_mapping::is_gemini_model(mapped_model);
     if is_thinking_enabled {
         let mut thinking_config = json!({"includeThoughts": true});
         let budget_tokens = claude_req
@@ -175,17 +176,24 @@ pub(super) fn build_generation_config(
     }
     if let Some(output_config) = &claude_req.output_config {
         if let Some(effort) = &output_config.effort {
-            config["effortLevel"] = json!(match effort.to_lowercase().as_str() {
-                "high" => "HIGH",
-                "medium" => "MEDIUM",
-                "low" => "LOW",
-                _ => "HIGH",
-            });
-            tracing::debug!(
-                "[Generation-Config] Effort level set: {} -> {}",
-                effort,
-                config["effortLevel"]
-            );
+            if !is_gemini_family_model {
+                config["effortLevel"] = json!(match effort.to_lowercase().as_str() {
+                    "high" => "HIGH",
+                    "medium" => "MEDIUM",
+                    "low" => "LOW",
+                    _ => "HIGH",
+                });
+                tracing::debug!(
+                    "[Generation-Config] Effort level set: {} -> {}",
+                    effort,
+                    config["effortLevel"]
+                );
+            } else {
+                tracing::debug!(
+                    "[Generation-Config] Skipping effortLevel for Gemini-family model {}",
+                    mapped_model
+                );
+            }
         }
     }
     let mut final_max_tokens: Option<i64> = claude_req.max_tokens.map(|t| t as i64);
@@ -209,7 +217,6 @@ pub(super) fn build_generation_config(
     if let Some(val) = final_max_tokens {
         config["maxOutputTokens"] = json!(val);
     }
-    config["stopSequences"] = json!(["<|user|>", "<|end_of_turn|>", "\n\nHuman:"]);
 
     config
 }

@@ -290,6 +290,8 @@ pub(crate) async fn load_single_account(
     let project_id = token_obj
         .get("project_id")
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
     let subscription_tier = account

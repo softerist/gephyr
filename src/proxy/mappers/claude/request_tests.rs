@@ -1,8 +1,8 @@
 use super::*;
 use crate::proxy::common::json_schema::clean_json_schema;
 use crate::proxy::common::model_mapping::{
-    MODEL_CLAUDE_SONNET_45, MODEL_GEMINI_3_FLASH_THINKING, MODEL_GEMINI_3_PRO,
-    MODEL_GEMINI_3_PRO_PREVIEW,
+    MODEL_CLAUDE_OPUS_46, MODEL_CLAUDE_SONNET_45, MODEL_GEMINI_3_FLASH_THINKING,
+    MODEL_GEMINI_3_PRO, MODEL_GEMINI_3_PRO_PREVIEW,
 };
 
 #[test]
@@ -597,6 +597,98 @@ fn test_default_max_tokens() {
         "maxOutputTokens should not be set when max_tokens is None"
     );
 }
+
+#[test]
+fn test_generation_config_skips_effort_level_for_gemini_models() {
+    let req = ClaudeRequest {
+        model: MODEL_GEMINI_3_PRO_PREVIEW.to_string(),
+        messages: vec![Message {
+            role: "user".to_string(),
+            content: MessageContent::String("Hello".to_string()),
+        }],
+        system: None,
+        tools: None,
+        stream: false,
+        max_tokens: Some(256),
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        thinking: None,
+        metadata: None,
+        output_config: Some(OutputConfig {
+            effort: Some("high".to_string()),
+        }),
+        size: None,
+        quality: None,
+    };
+
+    let result = transform_claude_request_in(&req, "test-v", false).unwrap();
+    let gen_config = &result["request"]["generationConfig"];
+    assert!(
+        gen_config.get("effortLevel").is_none(),
+        "effortLevel should be skipped for Gemini-family mapped models"
+    );
+}
+
+#[test]
+fn test_generation_config_keeps_effort_level_for_claude_models() {
+    let req = ClaudeRequest {
+        model: MODEL_CLAUDE_OPUS_46.to_string(),
+        messages: vec![Message {
+            role: "user".to_string(),
+            content: MessageContent::String("Hello".to_string()),
+        }],
+        system: None,
+        tools: None,
+        stream: false,
+        max_tokens: Some(256),
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        thinking: None,
+        metadata: None,
+        output_config: Some(OutputConfig {
+            effort: Some("medium".to_string()),
+        }),
+        size: None,
+        quality: None,
+    };
+
+    let result = transform_claude_request_in(&req, "test-v", false).unwrap();
+    let gen_config = &result["request"]["generationConfig"];
+    assert_eq!(gen_config["effortLevel"], "MEDIUM");
+}
+
+#[test]
+fn test_generation_config_does_not_force_default_stop_sequences() {
+    let req = ClaudeRequest {
+        model: MODEL_CLAUDE_SONNET_45.to_string(),
+        messages: vec![Message {
+            role: "user".to_string(),
+            content: MessageContent::String("Hello".to_string()),
+        }],
+        system: None,
+        tools: None,
+        stream: false,
+        max_tokens: Some(128),
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        thinking: None,
+        metadata: None,
+        output_config: None,
+        size: None,
+        quality: None,
+    };
+
+    let result = transform_claude_request_in(&req, "test-v", false).unwrap();
+    let gen_config = &result["request"]["generationConfig"];
+    assert!(
+        gen_config.get("stopSequences").is_none(),
+        "stopSequences should not be injected by default"
+    );
+}
+
 #[test]
 fn test_claude_flash_thinking_budget_capping() {
     let req = ClaudeRequest {

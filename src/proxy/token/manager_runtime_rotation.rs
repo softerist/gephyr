@@ -359,8 +359,13 @@ impl TokenManager {
     }
 
     async fn resolve_project_id_or_err(&self, token: &mut ProxyToken) -> Result<String, String> {
-        if let Some(pid) = &token.project_id {
-            return Ok(pid.clone());
+        if let Some(pid) = token
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|pid| !pid.is_empty())
+        {
+            return Ok(pid.to_string());
         }
 
         tracing::debug!(
@@ -372,8 +377,12 @@ impl TokenManager {
             Some(&token.account_id),
         )
         .await?;
-        self.apply_project_id(token, &pid);
-        Ok(pid)
+        let normalized = pid.trim();
+        if normalized.is_empty() {
+            return Ok("bamboo-precept-lgxtn".to_string());
+        }
+        self.apply_project_id(token, normalized);
+        Ok(normalized.to_string())
     }
 
     fn mark_need_clear_last_used_if_selected(

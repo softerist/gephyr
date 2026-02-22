@@ -39,7 +39,16 @@ pub(crate) async fn get_token_by_email(
         None => return Err(format!("Account not found: {}", email)),
     };
 
-    let project_id = project_id_opt.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
+    let project_id = project_id_opt
+        .and_then(|pid| {
+            let trimmed = pid.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
 
     if now < timestamp + expires_in - 300 {
         return Ok((

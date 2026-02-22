@@ -172,8 +172,13 @@ impl TokenManager {
             }
         }
 
-        let project_id = if let Some(pid) = &token.project_id {
-            pid.clone()
+        let project_id = if let Some(pid) = token
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|pid| !pid.is_empty())
+        {
+            pid.to_string()
         } else {
             match crate::proxy::project_resolver::fetch_project_id(
                 &token.access_token,
@@ -182,8 +187,13 @@ impl TokenManager {
             .await
             {
                 Ok(pid) => {
-                    self.apply_project_id(&mut token, &pid);
-                    pid
+                    let normalized = pid.trim();
+                    if normalized.is_empty() {
+                        "bamboo-precept-lgxtn".to_string()
+                    } else {
+                        self.apply_project_id(&mut token, normalized);
+                        normalized.to_string()
+                    }
                 }
                 Err(_) => "bamboo-precept-lgxtn".to_string(),
             }

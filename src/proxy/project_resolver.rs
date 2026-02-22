@@ -82,7 +82,12 @@ async fn fetch_project_id_at(
         .json()
         .await
         .map_err(|e| format!("Failed to parse response: {}", e))?;
-    if let Some(project_id) = data.get("cloudaicompanionProject").and_then(|v| v.as_str()) {
+    if let Some(project_id) = data
+        .get("cloudaicompanionProject")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         return Ok(project_id.to_string());
     }
     let mock_id = generate_mock_project_id();
@@ -145,6 +150,12 @@ mod tests {
         }))
     }
 
+    async fn load_code_assist_empty_project_handler() -> Json<serde_json::Value> {
+        Json(json!({
+            "cloudaicompanionProject": "   "
+        }))
+    }
+
     async fn start_mock_load_code_assist_server(
     ) -> (String, LoadCodeAssistCaptureState, tokio::task::JoinHandle<()>) {
         let state = LoadCodeAssistCaptureState::default();
@@ -165,6 +176,26 @@ mod tests {
         (
             format!("http://{}/v1internal:loadCodeAssist", addr),
             state,
+            server,
+        )
+    }
+
+    async fn start_mock_empty_project_server() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route(
+            "/v1internal:loadCodeAssist",
+            post(load_code_assist_empty_project_handler),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock empty project");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock empty project");
+        });
+        (
+            format!("http://{}/v1internal:loadCodeAssist", addr),
             server,
         )
     }
@@ -201,5 +232,20 @@ mod tests {
         assert!(body.pointer("/metadata/ideType").is_some());
         assert!(body.pointer("/metadata/platform").is_some());
         assert!(body.pointer("/metadata/pluginType").is_some());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fetch_project_id_rejects_blank_project_and_uses_fallback() {
+        let (url, server) = start_mock_empty_project_server().await;
+        let project_id = fetch_project_id_at("access-token", None, &url)
+            .await
+            .expect("fetch_project_id should succeed");
+        server.abort();
+
+        assert!(
+            !project_id.trim().is_empty(),
+            "blank project id must not be propagated"
+        );
+        assert_ne!(project_id, "   ");
     }
 }

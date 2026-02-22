@@ -219,6 +219,9 @@ async fn fetch_quota_with_cache_at(
     cloud_code_base_url: &str,
 ) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     use crate::error::AppError;
+    let cached_project_id = cached_project_id
+        .map(str::trim)
+        .filter(|pid| !pid.is_empty());
     let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
         (Some(pid.to_string()), None)
     } else if cloud_code_base_url == CLOUD_CODE_BASE_URL {

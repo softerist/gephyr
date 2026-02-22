@@ -14,9 +14,9 @@ pub struct OpenAIRequest {
     pub n: Option<u32>,
     #[serde(rename = "max_tokens")]
     pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     #[serde(rename = "top_p")]
-    pub top_p: Option<f32>,
+    pub top_p: Option<f64>,
     pub stop: Option<Value>,
     pub response_format: Option<ResponseFormat>,
     #[serde(default)]
@@ -146,4 +146,28 @@ pub struct PromptTokensDetails {
 pub struct CompletionTokensDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn openai_request_preserves_sampling_precision_with_f64() {
+        let req: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gpt-5.3-codex",
+            "temperature": 0.123456789123,
+            "top_p": 0.987654321987
+        }))
+        .expect("request should deserialize");
+        let temp = req.temperature.expect("temperature");
+        let top_p = req.top_p.expect("top_p");
+        assert!((temp - 0.123456789123).abs() < 1e-12);
+        assert!((top_p - 0.987654321987).abs() < 1e-12);
+
+        let out = serde_json::to_value(req).expect("serialize");
+        assert!((out["temperature"].as_f64().unwrap() - 0.123456789123).abs() < 1e-12);
+        assert!((out["top_p"].as_f64().unwrap() - 0.987654321987).abs() < 1e-12);
+    }
 }

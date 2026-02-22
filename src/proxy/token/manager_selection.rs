@@ -55,6 +55,36 @@ impl TokenManager {
             .iter()
             .find(|t| t.account_id == bound_id)
         {
+            let require_explicit_model_support =
+                crate::proxy::token::pool::requires_explicit_model_support(
+                    req.tokens_snapshot,
+                    req.normalized_target,
+                );
+            let bound_supports_target = crate::proxy::token::pool::supports_target_model(
+                bound_token,
+                req.normalized_target,
+                require_explicit_model_support,
+            );
+            if !bound_supports_target {
+                tracing::debug!(
+                    "Sticky Session: Bound account {} has no explicit quota for model {} while strict model filtering is active, unbinding.",
+                    bound_token.email,
+                    req.normalized_target
+                );
+                self.session_accounts.remove(sid);
+                self.record_sticky_event(StickyEventRecord {
+                    action: "unbound_missing_target_quota",
+                    session_id: sid,
+                    bound_account_id: Some(&bound_token.account_id),
+                    selected_account_id: None,
+                    model: Some(req.normalized_target),
+                    wait_seconds: None,
+                    max_wait_seconds: None,
+                    reason: Some("bound_account_missing_explicit_target_model_quota"),
+                });
+                self.persist_session_bindings_internal();
+                return None;
+            }
             let key =
                 crate::proxy::token::lookup::account_id_by_email(&self.tokens, &bound_token.email)
                     .unwrap_or_else(|| bound_token.account_id.clone());
@@ -182,6 +212,11 @@ impl TokenManager {
         if req.rotate || req.quota_group == "image_gen" || !req.use_sticky_mode {
             return (None, None);
         }
+        let require_explicit_model_support =
+            crate::proxy::token::pool::requires_explicit_model_support(
+                req.tokens_snapshot,
+                req.normalized_target,
+            );
         if let Some((account_id, last_time)) = req.last_used_account_id {
             if last_time.elapsed().as_secs() < 60 && !req.attempted.contains(account_id) {
                 if let Some(found) = req
@@ -192,6 +227,11 @@ impl TokenManager {
                     if !self
                         .is_rate_limited(&found.account_id, Some(req.normalized_target))
                         .await
+                        && crate::proxy::token::pool::supports_target_model(
+                            found,
+                            req.normalized_target,
+                            require_explicit_model_support,
+                        )
                         && !crate::proxy::token::pool::is_quota_protected(
                             found,
                             req.normalized_target,
@@ -209,6 +249,16 @@ impl TokenManager {
                         tracing::debug!(
                             "60s Window: Last account {} is rate-limited, skipping",
                             found.email
+                        );
+                    } else if !crate::proxy::token::pool::supports_target_model(
+                        found,
+                        req.normalized_target,
+                        require_explicit_model_support,
+                    ) {
+                        tracing::debug!(
+                            "60s Window: Last account {} has no explicit quota for model {}, skipping",
+                            found.email,
+                            req.normalized_target
                         );
                     } else {
                         tracing::debug!(

@@ -16,10 +16,12 @@ pub(crate) async fn add_account(refresh_token: &str) -> Result<(), String> {
     let email = identity.email;
     let google_sub = identity.google_sub;
 
-    let project_id =
-        crate::proxy::project_resolver::fetch_project_id(&token_info.access_token, None)
-            .await
-            .unwrap_or_else(|_| "bamboo-precept-lgxtn".to_string());
+    let project_id = crate::proxy::project_resolver::fetch_project_id(&token_info.access_token, None)
+        .await
+        .ok()
+        .map(|pid| pid.trim().to_string())
+        .filter(|pid| !pid.is_empty())
+        .unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
 
     let email_clone = email.clone();
     let refresh_token_clone = refresh_token.to_string();

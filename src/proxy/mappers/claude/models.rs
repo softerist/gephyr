@@ -12,9 +12,9 @@ pub struct ClaudeRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f32>,
+    pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -265,4 +265,29 @@ pub struct UsageMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "cachedContentTokenCount")]
     pub cached_content_token_count: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn claude_request_preserves_sampling_precision_with_f64() {
+        let req: ClaudeRequest = serde_json::from_value(json!({
+            "model": "claude-sonnet-4-6",
+            "messages": [{ "role": "user", "content": "hello" }],
+            "temperature": 0.123456789123,
+            "top_p": 0.987654321987
+        }))
+        .expect("request should deserialize");
+        let temp = req.temperature.expect("temperature");
+        let top_p = req.top_p.expect("top_p");
+        assert!((temp - 0.123456789123).abs() < 1e-12);
+        assert!((top_p - 0.987654321987).abs() < 1e-12);
+
+        let out = serde_json::to_value(req).expect("serialize");
+        assert!((out["temperature"].as_f64().unwrap() - 0.123456789123).abs() < 1e-12);
+        assert!((out["top_p"].as_f64().unwrap() - 0.987654321987).abs() < 1e-12);
+    }
 }

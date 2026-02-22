@@ -12,6 +12,8 @@ pub const MODEL_GEMINI_30_ULTRA: &str = "gemini-3.0-ultra";
 pub const MODEL_GEMINI_3_PRO: &str = "gemini-3-pro";
 pub const MODEL_GEMINI_3_PRO_LOW: &str = "gemini-3-pro-low";
 pub const MODEL_GEMINI_3_PRO_HIGH: &str = "gemini-3-pro-high";
+pub const MODEL_GEMINI_31_PRO_LOW: &str = "gemini-3.1-pro-low";
+pub const MODEL_GEMINI_31_PRO_HIGH: &str = "gemini-3.1-pro-high";
 pub const MODEL_GEMINI_3_PRO_PREVIEW: &str = "gemini-3-pro-preview";
 pub const MODEL_GEMINI_3_PRO_IMAGE: &str = "gemini-3-pro-image";
 pub const MODEL_GEMINI_3_PRO_IMAGE_PREVIEW: &str = "gemini-3-pro-image-preview";
@@ -61,6 +63,8 @@ pub const OPENCODE_ANTHROPIC_MODELS: &[&str] = &[
 ];
 
 pub const OPENCODE_GOOGLE_MODELS: &[&str] = &[
+    MODEL_GEMINI_31_PRO_HIGH,
+    MODEL_GEMINI_31_PRO_LOW,
     MODEL_GEMINI_3_PRO_HIGH,
     MODEL_GEMINI_3_PRO_LOW,
     MODEL_GEMINI_3_FLASH,
@@ -111,6 +115,8 @@ pub fn is_image_generation_model(model: &str) -> bool {
 pub fn normalize_preview_alias(model: &str) -> String {
     match model {
         MODEL_GEMINI_3_PRO_PREVIEW => MODEL_GEMINI_3_PRO_HIGH.to_string(),
+        MODEL_GEMINI_31_PRO_HIGH => MODEL_GEMINI_3_PRO_PREVIEW.to_string(),
+        MODEL_GEMINI_31_PRO_LOW => MODEL_GEMINI_3_PRO_PREVIEW.to_string(),
         MODEL_GEMINI_3_PRO_IMAGE_PREVIEW => MODEL_GEMINI_3_PRO_IMAGE.to_string(),
         MODEL_GEMINI_3_FLASH_PREVIEW => MODEL_GEMINI_3_FLASH.to_string(),
         _ => model.to_string(),
@@ -127,6 +133,7 @@ pub fn is_high_quality_grounding_candidate(model: &str) -> bool {
         || lower == MODEL_GEMINI_30_FLASH
         || lower.starts_with("gemini-3-")
         || lower.starts_with("gemini-3.0-")
+        || lower.starts_with("gemini-3.1-")
         || lower.contains("claude-sonnet-4-")
         || lower.contains("claude-opus-4-")
         || lower.contains("claude-haiku-4-")
@@ -137,6 +144,7 @@ pub fn model_supports_thinking(model: &str) -> bool {
     lower.contains("-thinking")
         || lower.starts_with("claude-")
         || lower.contains(MODEL_GEMINI_3_PRO)
+        || lower.contains("gemini-3.1-pro")
         || lower.contains(MODEL_GEMINI_30_PRO)
 }
 
@@ -148,6 +156,7 @@ pub fn should_auto_enable_thinking(model: &str) -> bool {
         || lower.contains("opus-4-6")
         || lower.contains("opus-4.6")
         || lower.contains(MODEL_GEMINI_3_PRO)
+        || lower.contains("gemini-3.1-pro")
         || lower.contains(MODEL_GEMINI_30_PRO)
 }
 
@@ -276,6 +285,9 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert(MODEL_GEMINI_3_PRO, MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO_LOW, MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO_HIGH, MODEL_GEMINI_3_PRO_PREVIEW);
+    m.insert(MODEL_GEMINI_31_PRO_HIGH, MODEL_GEMINI_3_PRO_PREVIEW);
+    m.insert(MODEL_GEMINI_31_PRO_LOW, MODEL_GEMINI_3_PRO_PREVIEW);
+    m.insert("gemini-3.1-pro", MODEL_GEMINI_3_PRO_PREVIEW);
     m.insert(MODEL_GEMINI_3_PRO_IMAGE, MODEL_GEMINI_3_PRO_IMAGE);
     m.insert(MODEL_GEMINI_3_FLASH, MODEL_GEMINI_3_FLASH);
     m.insert(MODEL_GEMINI_3_FLASH_PREVIEW, MODEL_GEMINI_3_FLASH);
@@ -365,6 +377,8 @@ pub async fn get_all_dynamic_models(
     model_ids.insert(MODEL_GEMINI_3_FLASH.to_string());
     model_ids.insert(MODEL_GEMINI_3_PRO_HIGH.to_string());
     model_ids.insert(MODEL_GEMINI_3_PRO_LOW.to_string());
+    model_ids.insert(MODEL_GEMINI_31_PRO_HIGH.to_string());
+    model_ids.insert(MODEL_GEMINI_31_PRO_LOW.to_string());
 
     let mut sorted_ids: Vec<_> = model_ids.into_iter().collect();
     sorted_ids.sort();
@@ -448,6 +462,8 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         | MODEL_GEMINI_3_PRO_PREVIEW
         | MODEL_GEMINI_3_PRO_HIGH
         | MODEL_GEMINI_3_PRO_LOW
+        | MODEL_GEMINI_31_PRO_HIGH
+        | MODEL_GEMINI_31_PRO_LOW
         | MODEL_GEMINI_30_PRO
         | MODEL_GEMINI_30_PRO_THINKING => Some(MODEL_GEMINI_3_PRO_HIGH.to_string()),
         MODEL_CLAUDE_SONNET_45
@@ -499,6 +515,14 @@ mod tests {
         assert_eq!(
             map_claude_model_to_gemini("claude-3-5-haiku"),
             "claude-haiku-4-5"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3.1-pro-high"),
+            MODEL_GEMINI_3_PRO_PREVIEW
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3.1-pro-low"),
+            MODEL_GEMINI_3_PRO_PREVIEW
         );
     }
 
