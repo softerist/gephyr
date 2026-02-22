@@ -6,6 +6,8 @@ RELEASE_TYPE=""
 SKIP_TESTS=false
 HELP=false
 NO_PUSH=false
+RESUME=false
+RESUME_VERSION=""
 NEW_VERSION=""
 GHCR_PACKAGE_STATUS_SUMMARY="not checked (GHCR publish not attempted)."
 
@@ -16,6 +18,8 @@ while [[ "$#" -gt 0 ]]; do
     -SkipTests|--skip-tests) SKIP_TESTS=true ;;
     -Help|--help|-h) HELP=true ;;
     -NoPush|--no-push) NO_PUSH=true ;;
+    -Resume|--resume) RESUME=true ;;
+    -ResumeVersion|--resume-version) RESUME_VERSION="$2"; shift ;;
     *) echo "Unknown parameter passed: $1"; exit 1 ;;
   esac
   shift
@@ -25,6 +29,7 @@ if [ "$HELP" = true ]; then
   echo ""
   echo "Usage:"
   echo "  ./publish.sh [-Bump patch|minor|major|prerelease|x.y.z] [-ReleaseType fix|feat|chore] [-SkipTests] [-NoPush]"
+  echo "  ./publish.sh --resume [--resume-version x.y.z] [--no-push]"
   echo ""
   echo "Notes:"
   echo "- Requires clean git working tree."
@@ -36,6 +41,8 @@ if [ "$HELP" = true ]; then
   echo "- Publishes Docker image to GitHub Container Registry (ghcr.io) when pushing."
   echo "- Pushes git commit and tags (unless -NoPush) and creates GitHub Release."
   echo "- Use -SkipTests to skip the cargo test preflight step."
+  echo "- Use --resume to continue a partially completed release (after commit/tag/crates publish)."
+  echo "- --resume-version is optional; defaults to Cargo.toml version."
   exit 0
 fi
 
@@ -126,6 +133,16 @@ get_cargo_version() {
     return
   fi
   grep -m 1 -E '^\s*version\s*=\s*' "$cargo_toml" | sed -E 's/.*"([^"]+)".*/\1/'
+}
+
+normalize_version_literal() {
+  local raw="${1:-}"
+  raw="${raw#v}"
+  if [[ "$raw" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+    echo "$raw"
+    return 0
+  fi
+  return 1
 }
 
 set_cargo_version() {
@@ -470,6 +487,43 @@ get_github_repo_slug() {
   echo "${ghcr_image#ghcr.io/}"
 }
 
+ensure_release_tag_exists() {
+  local version="$1"
+  if ! git rev-parse --verify "refs/tags/v$version" >/dev/null 2>&1; then
+    fail "Tag v$version was not found locally." \
+      "Use full release mode first to create the tag, or pass the correct --resume-version." \
+      "If tag exists remotely only, run: git fetch --tags"
+  fi
+}
+
+push_and_create_github_release() {
+  local version="$1"
+
+  info "Pushing commit and tags to git remote..."
+  if ! git push --follow-tags; then
+    warn "git push failed. Commit/tag exist locally; push manually."
+    popd > /dev/null
+    exit 1
+  fi
+
+  if command -v gh >/dev/null 2>&1; then
+    if gh release view "v$version" >/dev/null 2>&1; then
+      info "GitHub Release v$version already exists; skipping create."
+    else
+      info "Creating GitHub Release..."
+      if ! gh release create "v$version" --title "v$version" --generate-notes; then
+        warn "GitHub Release creation failed. Create it manually at:"
+        echo "  https://github.com/softerist/gephyr/releases/new"
+      else
+        echo "[release] GitHub Release v$version created."
+      fi
+    fi
+  else
+    warn "gh CLI not found. Skipping GitHub Release creation."
+    info "Install gh from https://cli.github.com to enable this feature."
+  fi
+}
+
 confirm_ghcr_package_discoverability() {
   local ghcr_image="$1"
 
@@ -606,14 +660,39 @@ publish_docker_image_to_ghcr() {
       "Try: echo \$GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin"
   fi
 
-  info "Building Docker image for GHCR: $ghcr_image (platform linux/amd64, provenance disabled)"
-  if ! docker build --platform linux/amd64 --provenance=false --sbom=false -f docker/Dockerfile \
-    -t "$ghcr_image:v$version" \
-    -t "$ghcr_image:$version" \
-    -t "$ghcr_image:latest" \
-    .; then
+  local max_build_attempts=3
+  local build_ok=false
+  local attempt
+  for attempt in $(seq 1 "$max_build_attempts"); do
+    info "Building Docker image for GHCR: $ghcr_image (platform linux/amd64, provenance disabled) [attempt $attempt/$max_build_attempts]"
+    local build_log
+    build_log="$(mktemp)"
+    if docker build --platform linux/amd64 --provenance=false --sbom=false -f docker/Dockerfile \
+      -t "$ghcr_image:v$version" \
+      -t "$ghcr_image:$version" \
+      -t "$ghcr_image:latest" \
+      . 2>&1 | tee "$build_log"; then
+      build_ok=true
+      rm -f "$build_log"
+      break
+    fi
+
+    if grep -Eqi 'DeadlineExceeded|context deadline exceeded|TLS handshake timeout|i/o timeout|failed to resolve source metadata|temporary failure|connection reset|EOF' "$build_log" && [ "$attempt" -lt "$max_build_attempts" ]; then
+      local sleep_sec=$((5 * attempt))
+      warn "Docker build failed due to transient network/registry error. Retrying in ${sleep_sec}s..."
+      rm -f "$build_log"
+      sleep "$sleep_sec"
+      continue
+    fi
+
+    rm -f "$build_log"
+    break
+  done
+
+  if [ "$build_ok" = false ]; then
     fail "Docker build failed for GHCR publish." \
-      "Fix Docker build errors above." \
+      "Network/registry timeout can be transient. Retry ./publish.sh once network is stable." \
+      "If persistent, run: docker pull debian:bookworm-slim and docker pull rust:1.88-slim" \
       "Then rerun ./publish.sh to continue release publish."
   fi
 
@@ -643,6 +722,48 @@ assert_required_tools "$require_docker" "$require_gh_for_auth"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   fail "Current directory is not a git repository."
+fi
+
+if [ "$RESUME" = true ]; then
+  local_resume_version="$RESUME_VERSION"
+  if [ -z "$local_resume_version" ]; then
+    local_resume_version="$(get_cargo_version)"
+  fi
+
+  if ! NEW_VERSION="$(normalize_version_literal "$local_resume_version")"; then
+    fail "Invalid resume version '$local_resume_version'." \
+      "Pass --resume-version x.y.z (or vx.y.z), for example: --resume-version 1.16.15"
+  fi
+
+  old_version_now="$(get_cargo_version)"
+  if [ -n "$old_version_now" ] && [ "$old_version_now" != "$NEW_VERSION" ]; then
+    warn "Cargo.toml version is $old_version_now while resume target is $NEW_VERSION."
+  fi
+
+  ensure_release_tag_exists "$NEW_VERSION"
+
+  echo "[release] Repository: $REPO_ROOT"
+  echo "[release] Resume mode: true"
+  echo "[release] Target version: $NEW_VERSION"
+
+  if ! git diff-index --quiet HEAD --; then
+    warn "Working tree is not clean. Resume mode continues because it does not create a new commit."
+  fi
+
+  if [ "$NO_PUSH" = false ]; then
+    publish_docker_image_to_ghcr "$NEW_VERSION"
+    push_and_create_github_release "$NEW_VERSION"
+    echo "[release] SUCCESS: Resume completed for v$NEW_VERSION (GHCR publish + git push + GitHub Release)."
+    echo "[release] Package visibility/link status: $GHCR_PACKAGE_STATUS_SUMMARY"
+  else
+    warn "Skipping GHCR publish and git push due to --no-push in resume mode."
+    GHCR_PACKAGE_STATUS_SUMMARY="skipped (-NoPush)."
+    echo "[release] SUCCESS: Resume validation complete for v$NEW_VERSION. No network publish performed."
+    echo "[release] Package visibility/link status: $GHCR_PACKAGE_STATUS_SUMMARY"
+  fi
+
+  popd > /dev/null
+  exit 0
 fi
 
 if ! git diff-index --quiet HEAD --; then
@@ -740,25 +861,7 @@ else
 fi
 
 if [ "$NO_PUSH" = false ]; then
-  info "Pushing commit and tags to git remote..."
-  if ! git push --follow-tags; then
-    warn "git push failed. Commit exists locally; push manually."
-    popd > /dev/null
-    exit 1
-  fi
-
-  if command -v gh >/dev/null 2>&1; then
-    info "Creating GitHub Release..."
-    if ! gh release create "v$NEW_VERSION" --title "v$NEW_VERSION" --generate-notes; then
-      warn "GitHub Release creation failed. Create it manually at:"
-      echo "  https://github.com/softerist/gephyr/releases/new"
-    else
-      echo "[release] GitHub Release v$NEW_VERSION created."
-    fi
-  else
-    warn "gh CLI not found. Skipping GitHub Release creation."
-    info "Install gh from https://cli.github.com to enable this feature."
-  fi
+  push_and_create_github_release "$NEW_VERSION"
 
   echo "[release] SUCCESS: v$NEW_VERSION committed, tagged, crate published, GHCR image published, and git pushed."
   echo "[release] Package visibility/link status: $GHCR_PACKAGE_STATUS_SUMMARY"

@@ -3,13 +3,16 @@ param(
   [string]$ReleaseType = '',
   [switch]$SkipTests,
   [switch]$Help,
-  [switch]$NoPush
+  [switch]$NoPush,
+  [switch]$Resume,
+  [string]$ResumeVersion = ''
 )
 
 if ($Help) {
   Write-Host ''
   Write-Host 'Usage:'
   Write-Host '  ./publish.ps1 [-Bump patch|minor|major|prerelease|x.y.z] [-ReleaseType fix|feat|chore] [-SkipTests] [-NoPush]'
+  Write-Host '  ./publish.ps1 -Resume [-ResumeVersion x.y.z] [-NoPush]'
   Write-Host ''
   Write-Host 'Notes:'
   Write-Host '- Requires clean git working tree.'
@@ -21,6 +24,8 @@ if ($Help) {
   Write-Host '- Publishes Docker image to GitHub Container Registry (ghcr.io) when pushing.'
   Write-Host '- Pushes git commit and tags (unless -NoPush).'
   Write-Host '- Use -SkipTests to skip the cargo test preflight step.'
+  Write-Host '- Use -Resume to continue a partially completed release (after commit/tag/crates publish).'
+  Write-Host '- -ResumeVersion is optional; defaults to Cargo.toml version.'
   Write-Host ''
   exit 0
 }
@@ -661,11 +666,37 @@ function Publish-DockerImageToGhcr {
     $buildTagArgs += @('-t', "${ghcrImage}:$tag")
   }
 
-  Info "Building Docker image for GHCR: $ghcrImage (platform linux/amd64, provenance disabled)"
-  & docker build --platform linux/amd64 --provenance=false --sbom=false -f docker/Dockerfile @buildTagArgs .
-  if ($LASTEXITCODE -ne 0) {
+  $maxBuildAttempts = 3
+  $buildSucceeded = $false
+  for ($attempt = 1; $attempt -le $maxBuildAttempts; $attempt++) {
+    Info "Building Docker image for GHCR: $ghcrImage (platform linux/amd64, provenance disabled) [attempt $attempt/$maxBuildAttempts]"
+    $buildLog = & docker build --platform linux/amd64 --provenance=false --sbom=false -f docker/Dockerfile @buildTagArgs . 2>&1
+    $buildExit = $LASTEXITCODE
+    if ($buildLog) {
+      $buildLog | ForEach-Object { Write-Host $_ }
+    }
+
+    if ($buildExit -eq 0) {
+      $buildSucceeded = $true
+      break
+    }
+
+    $buildText = ($buildLog | Out-String)
+    $isTransient = $buildText -match '(?i)DeadlineExceeded|context deadline exceeded|TLS handshake timeout|i/o timeout|failed to resolve source metadata|temporary failure|connection reset|EOF'
+    if ($isTransient -and $attempt -lt $maxBuildAttempts) {
+      $sleepSec = 5 * $attempt
+      Warn "Docker build failed due to transient network/registry error. Retrying in ${sleepSec}s..."
+      Start-Sleep -Seconds $sleepSec
+      continue
+    }
+
+    break
+  }
+
+  if (-not $buildSucceeded) {
     Fail 'Docker build failed for GHCR publish.' -Hints @(
-      'Fix Docker build errors above.',
+      'Network/registry timeout can be transient. Retry ./publish.ps1 once network is stable.',
+      'If persistent, run: docker pull debian:bookworm-slim and docker pull rust:1.88-slim',
       'Then rerun ./publish.ps1 to continue release publish.'
     )
   }
@@ -704,7 +735,120 @@ function Fail {
   exit 1
 }
 
+function Normalize-VersionLiteral {
+  param([string]$InputVersion)
+
+  if ([string]::IsNullOrWhiteSpace($InputVersion)) {
+    return $null
+  }
+
+  $normalized = $InputVersion.Trim()
+  if ($normalized.StartsWith('v')) {
+    $normalized = $normalized.Substring(1)
+  }
+
+  if ($normalized -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z\.-]+)?$') {
+    return $null
+  }
+
+  return $normalized
+}
+
+function Ensure-ReleaseTagExists {
+  param([string]$Version)
+
+  git rev-parse --verify "refs/tags/v$Version" *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Fail "Tag v$Version was not found locally." -Hints @(
+      "Use full release mode first to create the tag, or pass the correct -ResumeVersion.",
+      "If tag exists remotely only, run: git fetch --tags"
+    )
+  }
+}
+
+function Push-And-CreateGitHubRelease {
+  param([string]$Version)
+
+  Info 'Pushing commit and tags to git remote...'
+  git push --follow-tags
+  if ($LASTEXITCODE -ne 0) {
+    Warn 'git push failed. Commit/tag exist locally; push manually.'
+    Pop-Location
+    exit 1
+  }
+
+  if (Get-Command gh -ErrorAction SilentlyContinue) {
+    gh release view "v$Version" *> $null
+    if ($LASTEXITCODE -eq 0) {
+      Info "GitHub Release v$Version already exists; skipping create."
+    } else {
+      Info 'Creating GitHub Release...'
+      gh release create "v$Version" --title "v$Version" --generate-notes
+      if ($LASTEXITCODE -ne 0) {
+        Warn 'GitHub Release creation failed. Create it manually at:'
+        Write-Host '  https://github.com/softerist/gephyr/releases/new'
+      } else {
+        Write-Host "[release] GitHub Release v$Version created."
+      }
+    }
+  } else {
+    Warn 'gh CLI not found. Skipping GitHub Release creation.'
+    Info 'Install gh from https://cli.github.com to enable this feature.'
+  }
+}
+
 # --- Main flow ---
+
+if ($Resume) {
+  git rev-parse --is-inside-work-tree *> $null
+  if ($LASTEXITCODE -ne 0) { Fail 'Current directory is not a git repository.' }
+
+  $rawResumeVersion = $ResumeVersion
+  if ([string]::IsNullOrWhiteSpace($rawResumeVersion)) {
+    $rawResumeVersion = Get-CargoVersion
+  }
+
+  $newVersion = Normalize-VersionLiteral -InputVersion $rawResumeVersion
+  if ([string]::IsNullOrWhiteSpace($newVersion)) {
+    Fail "Invalid resume version '$rawResumeVersion'." -Hints @(
+      'Pass -ResumeVersion x.y.z (or vx.y.z), for example: -ResumeVersion 1.16.15'
+    )
+  }
+
+  $cargoVersionNow = Get-CargoVersion
+  if (-not [string]::IsNullOrWhiteSpace($cargoVersionNow) -and $cargoVersionNow -ne $newVersion) {
+    Warn "Cargo.toml version is $cargoVersionNow while resume target is $newVersion."
+  }
+
+  Ensure-ReleaseTagExists -Version $newVersion
+
+  Write-Host "[release] Repository: $repoRoot"
+  Write-Host "[release] Resume mode: true"
+  Write-Host "[release] Target version: $newVersion"
+
+  $requireGhForAuth = (-not $NoPush) -and [string]::IsNullOrWhiteSpace($env:GHCR_TOKEN) -and [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)
+  Assert-RequiredTools -RequireDocker:(-not $NoPush) -RequireGhForAuth:$requireGhForAuth
+
+  $dirty = git status --porcelain
+  if ($dirty) {
+    Warn 'Working tree is not clean. Resume mode continues because it does not create a new commit.'
+  }
+
+  if (-not $NoPush) {
+    Publish-DockerImageToGhcr -Version $newVersion
+    Push-And-CreateGitHubRelease -Version $newVersion
+    Write-Host "[release] SUCCESS: Resume completed for v$newVersion (GHCR publish + git push + GitHub Release)."
+    Write-Host "[release] Package visibility/link status: $script:GhcrPackageStatusSummary"
+  } else {
+    Warn 'Skipping GHCR publish and git push due to -NoPush in resume mode.'
+    $script:GhcrPackageStatusSummary = 'skipped (-NoPush).'
+    Write-Host "[release] SUCCESS: Resume validation complete for v$newVersion. No network publish performed."
+    Write-Host "[release] Package visibility/link status: $script:GhcrPackageStatusSummary"
+  }
+
+  Pop-Location
+  exit 0
+}
 
 if ([string]::IsNullOrWhiteSpace($ReleaseType)) {
   $ReleaseType = Get-DefaultReleaseTypeFromBump -BumpValue $Bump
@@ -832,28 +976,7 @@ if (-not $NoPush) {
 
 # Push
 if (-not $NoPush) {
-  Info 'Pushing commit and tags to git remote...'
-  git push --follow-tags
-  if ($LASTEXITCODE -ne 0) {
-    Warn 'git push failed. Commit exists locally; push manually.'
-    Pop-Location
-    exit 1
-  }
-
-  # Create GitHub Release
-  if (Get-Command gh -ErrorAction SilentlyContinue) {
-    Info 'Creating GitHub Release...'
-    gh release create "v$newVersion" --title "v$newVersion" --generate-notes
-    if ($LASTEXITCODE -ne 0) {
-      Warn 'GitHub Release creation failed. Create it manually at:'
-      Write-Host '  https://github.com/softerist/gephyr/releases/new'
-    } else {
-      Write-Host "[release] GitHub Release v$newVersion created."
-    }
-  } else {
-    Warn 'gh CLI not found. Skipping GitHub Release creation.'
-    Info 'Install gh from https://cli.github.com to enable this feature.'
-  }
+  Push-And-CreateGitHubRelease -Version $newVersion
 
   Write-Host "[release] SUCCESS: v$newVersion committed, tagged, crate published, GHCR image published, and git pushed."
   Write-Host "[release] Package visibility/link status: $script:GhcrPackageStatusSummary"
