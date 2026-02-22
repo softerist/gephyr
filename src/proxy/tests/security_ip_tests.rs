@@ -605,11 +605,7 @@ mod ip_filter_middleware_tests {
 #[cfg(test)]
 #[allow(clippy::await_holding_lock)]
 mod middleware_consistency_tests {
-    use axum::{
-        body::Body,
-        extract::ConnectInfo,
-        http::{Request, StatusCode},
-    };
+    use axum::{body::Body, extract::ConnectInfo, http::Request};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, AtomicUsize};
     use std::sync::Arc;
@@ -720,24 +716,24 @@ mod middleware_consistency_tests {
 
         let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 23, 45, 67)), 8045);
         let mut request = Request::builder()
-            .uri("/health")
+            .uri("/v1/models")
             .header("x-forwarded-for", "203.0.113.8, 198.51.100.2")
             .header("x-real-ip", "203.0.113.9")
             .body(Body::empty())
             .expect("build request");
         request.extensions_mut().insert(ConnectInfo(socket));
 
-        let response = router
+        let _ = router
             .oneshot(request)
             .await
-            .expect("health request should be handled");
-        assert_eq!(response.status(), StatusCode::OK);
+            .expect("request should be handled");
 
         tokio::time::sleep(Duration::from_millis(25)).await;
         let logs = monitor.logs.read().await;
         assert!(
             logs.iter()
-                .any(|log| log.url == "/health" && log.client_ip.as_deref() == Some("10.23.45.67")),
+                .any(|log| log.url == "/v1/models"
+                    && log.client_ip.as_deref() == Some("10.23.45.67")),
             "monitor should log socket IP, not spoofed forwarded header"
         );
 

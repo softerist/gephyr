@@ -159,15 +159,36 @@ function Select-ReleasePlanInteractive {
 
 function Rollback-VersionFiles {
   if (-not $newVersion) { return }
-  Write-Host '[release] Rolling back local version files...'
+  Write-Host '[release] INFO: Rolling back local version files...' -ForegroundColor DarkCyan
   git checkout -- Cargo.toml *> $null
   if (Test-Path 'Cargo.lock') { git checkout -- Cargo.lock *> $null }
 }
 
+function Info {
+  param([string]$Message)
+  Write-Host "[release] INFO: $Message" -ForegroundColor Cyan
+}
+
+function Warn {
+  param([string]$Message)
+  Write-Host "[release] WARN: $Message" -ForegroundColor Yellow
+}
+
 function Fail {
-  param([string]$Message, [switch]$Rollback)
+  param(
+    [string]$Message,
+    [string[]]$Hints = @(),
+    [switch]$Rollback
+  )
   if ($Rollback) { Rollback-VersionFiles }
-  Write-Error "[release] ERROR: $Message"
+  Write-Host ''
+  Write-Host "[release] ERROR: $Message" -ForegroundColor Red
+  if ($Hints.Count -gt 0) {
+    Write-Host '[release] Next steps:' -ForegroundColor Yellow
+    foreach ($hint in $Hints) {
+      Write-Host "  - $hint"
+    }
+  }
   Pop-Location
   exit 1
 }
@@ -202,7 +223,7 @@ if ($LASTEXITCODE -ne 0) { Fail 'Current directory is not a git repository.' }
 
 $dirty = git status --porcelain
 if ($dirty) {
-  Write-Host '[release] ERROR: Working tree is not clean. Commit or stash changes first.'
+  Warn 'Working tree is not clean. Commit or stash changes first.'
   git status --short
   Pop-Location
   exit 1
@@ -225,24 +246,35 @@ Set-CargoVersion -Version $newVersion
 Write-Host "[release] New version: $newVersion"
 
 # Update Cargo.lock to reflect the new version
-Write-Host '[release] Updating Cargo.lock...'
+Info 'Updating Cargo.lock...'
 cargo update --workspace *> $null
 if ($LASTEXITCODE -ne 0) {
-  Write-Host '[release] Warning: cargo update --workspace failed; Cargo.lock may be stale.'
+  Warn 'cargo update --workspace failed; Cargo.lock may be stale.'
 }
 
 # Preflight: build
-Write-Host '[release] Running cargo build --release...'
+Info 'Running preflight build: cargo build --release'
 cargo build --release
-if ($LASTEXITCODE -ne 0) { Fail 'cargo build --release failed.' -Rollback }
+if ($LASTEXITCODE -ne 0) {
+  Fail 'Preflight build failed (cargo build --release).' -Rollback -Hints @(
+    'Review the build errors above and fix compile issues.',
+    'Re-run this script after the build passes.'
+  )
+}
 
 # Preflight: tests
 if (-not $SkipTests) {
-  Write-Host '[release] Running cargo test...'
+  Info 'Running preflight tests: cargo test'
   cargo test
-  if ($LASTEXITCODE -ne 0) { Fail 'cargo test failed.' -Rollback }
+  if ($LASTEXITCODE -ne 0) {
+    Fail 'Preflight tests failed (cargo test). Release stopped to keep the publish safe.' -Rollback -Hints @(
+      'Re-run with extra output: cargo test -- --nocapture',
+      'Fix failing tests, then run ./publish.ps1 again.',
+      'If you intentionally want to skip tests (not recommended), run ./publish.ps1 -SkipTests'
+    )
+  }
 } else {
-  Write-Host '[release] Skipping tests due to -SkipTests.'
+  Warn 'Skipping tests due to -SkipTests.'
 }
 
 # Git commit
@@ -258,24 +290,40 @@ git tag -a "v$newVersion" -m "$ReleaseType(release): v$newVersion"
 if ($LASTEXITCODE -ne 0) { Fail 'git tag failed.' }
 
 # Publish to crates.io
-Write-Host '[release] Publishing to crates.io...'
+Info 'Publishing to crates.io...'
 cargo publish
 if ($LASTEXITCODE -ne 0) {
-  Write-Host '[release] ERROR: cargo publish failed. Commit and tag exist locally; push skipped.'
-  Write-Host '[release] Fix the issue and run: cargo publish && git push --follow-tags'
+  Warn 'cargo publish failed. Commit and tag exist locally; push was skipped.'
+  Warn 'Fix the issue and run: cargo publish && git push --follow-tags'
   Pop-Location
   exit 1
 }
 
 # Push
 if (-not $NoPush) {
-  Write-Host '[release] Pushing commit and tags to git remote...'
+  Info 'Pushing commit and tags to git remote...'
   git push --follow-tags
   if ($LASTEXITCODE -ne 0) {
-    Write-Host '[release] ERROR: git push failed. Commit exists locally; push manually.'
+    Warn 'git push failed. Commit exists locally; push manually.'
     Pop-Location
     exit 1
   }
+
+  # Create GitHub Release
+  if (Get-Command gh -ErrorAction SilentlyContinue) {
+    Info 'Creating GitHub Release...'
+    gh release create "v$newVersion" --title "v$newVersion" --generate-notes
+    if ($LASTEXITCODE -ne 0) {
+      Warn 'GitHub Release creation failed. Create it manually at:'
+      Write-Host '  https://github.com/softerist/gephyr/releases/new'
+    } else {
+      Write-Host "[release] GitHub Release v$newVersion created."
+    }
+  } else {
+    Warn 'gh CLI not found. Skipping GitHub Release creation.'
+    Info 'Install gh from https://cli.github.com to enable this feature.'
+  }
+
   Write-Host "[release] SUCCESS: v$newVersion committed, tagged, published, and pushed."
 } else {
   Write-Host '[release] Skipping git push due to -NoPush.'
