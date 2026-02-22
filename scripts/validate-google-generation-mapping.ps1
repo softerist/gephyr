@@ -37,8 +37,49 @@ function Normalize-RepoPath {
     return ($Path -replace '\\', '/')
 }
 
-if (-not (Get-Command rg -ErrorAction SilentlyContinue)) {
-    throw "ripgrep (rg) is required for this validator."
+function Get-RepoRoot {
+    try {
+        $gitRoot = (& git rev-parse --show-toplevel 2>$null | Select-Object -First 1)
+        if ($gitRoot) {
+            return (Resolve-Path $gitRoot.Trim()).Path
+        }
+    } catch {}
+
+    # Fallback: this script lives under scripts/, so parent is repo root.
+    return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+}
+
+function Find-UpstreamCallerMatches {
+    param([string]$RepoRoot)
+
+    $pattern = "call_v1_internal_with_headers\(|call_v1_internal\("
+    $rgCandidates = @()
+    $rgCandidates += Get-Command rg -CommandType Application -ErrorAction SilentlyContinue
+    $rgCandidates += Get-Command rg.exe -CommandType Application -ErrorAction SilentlyContinue
+    $rgCmd = $rgCandidates |
+        Where-Object {
+            $ext = [System.IO.Path]::GetExtension($_.Source).ToLowerInvariant()
+            $ext -ne ".cmd" -and $ext -ne ".bat"
+        } |
+        Select-Object -First 1
+    if ($rgCmd) {
+        return & $rgCmd.Source -n $pattern src/proxy src/modules -S
+    }
+
+    Write-Warning "ripgrep (rg) not found; using slower Select-String fallback."
+
+    $results = New-Object System.Collections.Generic.List[string]
+    foreach ($root in @("src/proxy", "src/modules")) {
+        if (-not (Test-Path $root)) { continue }
+        $files = Get-ChildItem -Path $root -Recurse -File -Filter "*.rs"
+        foreach ($match in ($files | Select-String -Pattern $pattern)) {
+            $full = [System.IO.Path]::GetFullPath($match.Path)
+            $rel = [System.IO.Path]::GetRelativePath($RepoRoot, $full)
+            $rel = Normalize-RepoPath -Path $rel
+            [void]$results.Add("{0}:{1}:{2}" -f $rel, $match.LineNumber, $match.Line)
+        }
+    }
+    return $results
 }
 
 if (-not (Test-Path $RoutesFilePath)) {
@@ -51,7 +92,8 @@ $routeAllow = Load-Allowlist -Path $RouteAllowlistPath
 $callerAllowSet = New-Object System.Collections.Generic.HashSet[string]
 foreach ($p in $callerAllow) { [void]$callerAllowSet.Add((Normalize-RepoPath -Path $p)) }
 
-$callerMatches = & rg -n "call_v1_internal_with_headers\(|call_v1_internal\(" src/proxy src/modules -S
+$repoRoot = Get-RepoRoot
+$callerMatches = Find-UpstreamCallerMatches -RepoRoot $repoRoot
 
 $observedCallers = New-Object System.Collections.Generic.HashSet[string]
 foreach ($line in $callerMatches) {

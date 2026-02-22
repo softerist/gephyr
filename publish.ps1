@@ -365,16 +365,37 @@ function Resolve-GhcrAuthMaterial {
     [string]$DefaultUser
   )
 
-  $token = $null
+  $candidates = New-Object System.Collections.Generic.List[object]
+  $seenTokens = New-Object 'System.Collections.Generic.HashSet[string]'
+
   if (-not [string]::IsNullOrWhiteSpace($env:GHCR_TOKEN)) {
-    $token = $env:GHCR_TOKEN
-  } elseif (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
-    $token = $env:GITHUB_TOKEN
-  } else {
+    $token = $env:GHCR_TOKEN.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($token) -and $seenTokens.Add($token)) {
+      [void]$candidates.Add([pscustomobject]@{ Source = 'GHCR_TOKEN'; Token = $token })
+    }
+  }
+
+  if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) {
+    $token = $env:GITHUB_TOKEN.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($token) -and $seenTokens.Add($token)) {
+      [void]$candidates.Add([pscustomobject]@{ Source = 'GITHUB_TOKEN'; Token = $token })
+    }
+  }
+
+  if ($candidates.Count -eq 0) {
     Ensure-GhCliAuthWithScopes
-    $ghToken = (gh auth token 2>$null)
-    if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
-      $token = $ghToken.Trim()
+  }
+
+  if (Get-Command gh -ErrorAction SilentlyContinue) {
+    gh auth status -h github.com *> $null
+    if ($LASTEXITCODE -eq 0) {
+      $ghToken = (gh auth token 2>$null)
+      if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
+        $token = $ghToken.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($token) -and $seenTokens.Add($token)) {
+          [void]$candidates.Add([pscustomobject]@{ Source = 'gh auth token'; Token = $token })
+        }
+      }
     }
   }
 
@@ -395,7 +416,7 @@ function Resolve-GhcrAuthMaterial {
     $user = $DefaultUser
   }
 
-  if ([string]::IsNullOrWhiteSpace($token)) {
+  if ($candidates.Count -eq 0) {
     Fail 'Missing GHCR auth token for docker publish.' -Hints @(
       'Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login/refresh.',
       'Re-run ./publish.ps1 after token is configured.'
@@ -411,8 +432,44 @@ function Resolve-GhcrAuthMaterial {
 
   return @{
     User = $user
-    Token = $token
+    Candidates = @($candidates)
   }
+}
+
+function Try-GhcrDockerLogin {
+  param(
+    [string]$User,
+    [object[]]$Candidates
+  )
+
+  $errors = @()
+  foreach ($candidate in @($Candidates)) {
+    $source = if ($candidate.PSObject.Properties.Name -contains 'Source') { "$($candidate.Source)" } else { 'token' }
+    $token = "$($candidate.Token)"
+    if ([string]::IsNullOrWhiteSpace($token)) {
+      continue
+    }
+
+    Info "Trying GHCR auth via $source..."
+    $loginOutput = $token | docker login ghcr.io -u $User --password-stdin 2>&1
+    if ($LASTEXITCODE -eq 0) {
+      Info "GHCR docker login succeeded via $source."
+      return $true
+    }
+
+    $detail = ($loginOutput | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($detail)) {
+      $detail = '(no docker error text)'
+    }
+    $errors += "${source}: $detail"
+    Warn "GHCR login attempt via $source failed."
+  }
+
+  if ($errors.Count -gt 0) {
+    Warn "GHCR login failure details: $($errors -join ' | ')"
+  }
+
+  return $false
 }
 
 function Get-GitHubRepoSlug {
@@ -532,10 +589,11 @@ function Publish-DockerImageToGhcr {
   $auth = Resolve-GhcrAuthMaterial -DefaultUser $defaultUser
 
   Info "Logging in to GHCR as $($auth.User)..."
-  $auth.Token | docker login ghcr.io -u $auth.User --password-stdin *> $null
-  if ($LASTEXITCODE -ne 0) {
+  $loginOk = Try-GhcrDockerLogin -User $auth.User -Candidates @($auth.Candidates)
+  if (-not $loginOk) {
     Fail 'GHCR docker login failed.' -Hints @(
       'Verify GHCR token scope includes write:packages (and read:packages).',
+      'If GHCR_TOKEN/GITHUB_TOKEN is stale, clear it and rely on gh auth token.',
       'Try: gh auth refresh -h github.com -s write:packages -s read:packages -s repo',
       'Try: echo $env:GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin'
     )

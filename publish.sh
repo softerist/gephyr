@@ -394,10 +394,40 @@ resolve_ghcr_image() {
 resolve_ghcr_auth() {
   local default_user="$1"
 
-  GHCR_AUTH_TOKEN="${GHCR_TOKEN:-${GITHUB_TOKEN:-}}"
-  if [ -z "$GHCR_AUTH_TOKEN" ]; then
+  GHCR_AUTH_TOKENS=()
+  GHCR_AUTH_TOKEN_SOURCES=()
+
+  local seen_tokens="|"
+  local add_candidate_token
+  add_candidate_token() {
+    local token_value="$1"
+    local token_source="$2"
+    if [ -z "$token_value" ]; then
+      return
+    fi
+    if [[ "$seen_tokens" == *"|$token_value|"* ]]; then
+      return
+    fi
+    seen_tokens="${seen_tokens}${token_value}|"
+    GHCR_AUTH_TOKENS+=("$token_value")
+    GHCR_AUTH_TOKEN_SOURCES+=("$token_source")
+  }
+
+  if [ -n "${GHCR_TOKEN:-}" ]; then
+    add_candidate_token "${GHCR_TOKEN}" "GHCR_TOKEN"
+  fi
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    add_candidate_token "${GITHUB_TOKEN}" "GITHUB_TOKEN"
+  fi
+
+  if [ "${#GHCR_AUTH_TOKENS[@]}" -eq 0 ]; then
     ensure_gh_cli_auth_with_scopes
-    GHCR_AUTH_TOKEN="$(gh auth token 2>/dev/null || true)"
+  fi
+
+  if command -v gh >/dev/null 2>&1 && gh auth status -h github.com >/dev/null 2>&1; then
+    local gh_token
+    gh_token="$(gh auth token 2>/dev/null || true)"
+    add_candidate_token "$gh_token" "gh auth token"
   fi
 
   GHCR_AUTH_USER="${GITHUB_ACTOR:-}"
@@ -408,7 +438,7 @@ resolve_ghcr_auth() {
     GHCR_AUTH_USER="$default_user"
   fi
 
-  if [ -z "$GHCR_AUTH_TOKEN" ]; then
+  if [ "${#GHCR_AUTH_TOKENS[@]}" -eq 0 ]; then
     fail "Missing GHCR auth token for docker publish." \
       "Set GHCR_TOKEN (or GITHUB_TOKEN) with packages:write scope, or run gh auth login/refresh." \
       "Re-run ./publish.sh after token is configured."
@@ -516,9 +546,33 @@ publish_docker_image_to_ghcr() {
   resolve_ghcr_auth "$default_user"
 
   info "Logging in to GHCR as $GHCR_AUTH_USER..."
-  if ! printf '%s' "$GHCR_AUTH_TOKEN" | docker login ghcr.io -u "$GHCR_AUTH_USER" --password-stdin >/dev/null 2>&1; then
+  local login_ok=false
+  local login_errors=()
+  local idx
+  for idx in "${!GHCR_AUTH_TOKENS[@]}"; do
+    local token="${GHCR_AUTH_TOKENS[$idx]}"
+    local source="${GHCR_AUTH_TOKEN_SOURCES[$idx]}"
+    info "Trying GHCR auth via $source..."
+
+    local login_output
+    if login_output="$(printf '%s' "$token" | docker login ghcr.io -u "$GHCR_AUTH_USER" --password-stdin 2>&1)"; then
+      info "GHCR docker login succeeded via $source."
+      login_ok=true
+      break
+    fi
+
+    warn "GHCR login attempt via $source failed."
+    login_output="$(printf '%s' "$login_output" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')"
+    login_errors+=("$source: ${login_output:-"(no docker error text)"}")
+  done
+
+  if [ "$login_ok" = false ]; then
+    if [ "${#login_errors[@]}" -gt 0 ]; then
+      warn "GHCR login failure details: $(IFS=' | '; echo "${login_errors[*]}")"
+    fi
     fail "GHCR docker login failed." \
       "Verify GHCR token scope includes write:packages (and read:packages)." \
+      "If GHCR_TOKEN/GITHUB_TOKEN is stale, clear it and rely on gh auth token." \
       "Try: gh auth refresh -h github.com -s write:packages -s read:packages -s repo" \
       "Try: echo \$GHCR_TOKEN | docker login ghcr.io -u <username> --password-stdin"
   fi

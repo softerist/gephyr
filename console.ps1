@@ -235,6 +235,78 @@ function Write-ContainerNotFoundNextSteps {
     Write-Host "       docker build -t $Image -f docker/Dockerfile ." -ForegroundColor Yellow
 }
 
+function Get-FriendlyModelName {
+    param([string]$ModelId)
+
+    if (-not $ModelId) {
+        return "-"
+    }
+
+    $id = ($ModelId -replace '^models/', '').ToLowerInvariant()
+
+    # Known UI-style labels used by current providers.
+    $known = @{
+        "claude-sonnet-4-6"          = "Claude Sonnet 4.6 (Thinking)"
+        "claude-sonnet-4-6-thinking" = "Claude Sonnet 4.6 (Thinking)"
+        "claude-opus-4-6"            = "Claude Opus 4.6 (Thinking)"
+        "claude-opus-4-6-thinking"   = "Claude Opus 4.6 (Thinking)"
+        "claude-sonnet-4-5"          = "Claude Sonnet 4.5 (Thinking)"
+        "claude-sonnet-4-5-thinking" = "Claude Sonnet 4.5 (Thinking)"
+        "claude-opus-4-5"            = "Claude Opus 4.5 (Thinking)"
+        "claude-opus-4-5-thinking"   = "Claude Opus 4.5 (Thinking)"
+        "claude-haiku-4-5"           = "Claude Haiku 4.5"
+        "gemini-3.1-pro-high"        = "Gemini 3.1 Pro (High)"
+        "gemini-3.1-pro-low"         = "Gemini 3.1 Pro (Low)"
+        "gemini-3-pro-high"          = "Gemini 3 Pro (High)"
+        "gemini-3-pro-low"           = "Gemini 3 Pro (Low)"
+        "gemini-3-pro-image"         = "Gemini 3 Pro Image"
+        "gemini-3-flash"             = "Gemini 3 Flash"
+        "gemini-2.5-pro"             = "Gemini 2.5 Pro"
+        "gemini-2.5-flash"           = "Gemini 2.5 Flash"
+        "gemini-2.5-flash-thinking"  = "Gemini 2.5 Flash (Thinking)"
+        "gemini-2.5-flash-lite"      = "Gemini 2.5 Flash Lite"
+        "gpt-oss-120b-medium"        = "GPT-OSS 120B (Medium)"
+    }
+    if ($known.ContainsKey($id)) {
+        return $known[$id]
+    }
+
+    # Generic Claude fallback.
+    if ($id -match '^claude-(sonnet|opus|haiku)-(\d+)-(\d+)(-thinking)?$') {
+        $family = (Get-Culture).TextInfo.ToTitleCase($Matches[1])
+        $ver = "$($Matches[2]).$($Matches[3])"
+        if ($Matches[4]) {
+            return "Claude $family $ver (Thinking)"
+        }
+        return "Claude $family $ver"
+    }
+
+    # Generic Gemini fallback.
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-pro-high$') {
+        return "Gemini $($Matches[1]) Pro (High)"
+    }
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-pro-low$') {
+        return "Gemini $($Matches[1]) Pro (Low)"
+    }
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-pro-image$') {
+        return "Gemini $($Matches[1]) Pro Image"
+    }
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-pro$') {
+        return "Gemini $($Matches[1]) Pro"
+    }
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-flash-thinking$') {
+        return "Gemini $($Matches[1]) Flash (Thinking)"
+    }
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-flash-lite$') {
+        return "Gemini $($Matches[1]) Flash Lite"
+    }
+    if ($id -match '^gemini-(\d+(?:\.\d+)?)-flash$') {
+        return "Gemini $($Matches[1]) Flash"
+    }
+
+    return ($ModelId -replace '^models/', '')
+}
+
 function Start-Container {
     param([bool]$AdminApiEnabled)
     Ensure-ApiKey
@@ -479,7 +551,9 @@ function Show-Status {
                     if ($dn.Length -gt $maxName) { $maxName = $dn.Length }
                     if ($acc.quota -and $acc.quota.models) {
                         foreach ($m in @($acc.quota.models)) {
-                            $sn = ($m.name -replace '^models/', '').Length
+                            $rawModel = ($m.name -replace '^models/', '')
+                            $displayModel = Get-FriendlyModelName $rawModel
+                            $sn = $displayModel.Length
                             if ($sn -gt $maxModel) { $maxModel = $sn }
                         }
                     }
@@ -561,7 +635,21 @@ function Show-Status {
 
                             $models = @()
                             if ($q.models) { $models = @($q.models) }
-                            $modelOrder = @('claude-opus', 'claude-sonnet', 'gemini-3-pro-high', 'gemini-3-pro-low', 'gemini-3-flash')
+                            $modelOrder = @(
+                                'claude-opus-4-6-thinking', 'claude-opus-4-6',
+                                'claude-sonnet-4-6-thinking', 'claude-sonnet-4-6',
+                                'claude-opus-4-5-thinking', 'claude-opus-4-5',
+                                'claude-sonnet-4-5-thinking', 'claude-sonnet-4-5',
+                                'claude-haiku-4-5',
+                                'gemini-3.1-pro-high', 'gemini-3-pro-high',
+                                'gemini-3.1-pro-low', 'gemini-3-pro-low',
+                                'gemini-3-flash',
+                                'gemini-2.5-pro',
+                                'gemini-2.5-flash-thinking',
+                                'gemini-2.5-flash-lite',
+                                'gemini-2.5-flash',
+                                'gemini-3-pro-image'
+                            )
                             $models = $models | Sort-Object {
                                 $n = $_.name -replace '^models/', ''
                                 for ($i = 0; $i -lt $modelOrder.Count; $i++) {
@@ -575,8 +663,9 @@ function Show-Status {
                                 $filled = [Math]::Floor($pct / 100.0 * $barWidth)
                                 $empty = $barWidth - $filled
                                 $bar = ("█" * $filled) + ("░" * $empty)
-                                $shortName = $m.name -replace '^models/', ''
-                                $padded = $shortName.PadRight($modelPad)
+                                $rawModel = $m.name -replace '^models/', ''
+                                $displayModel = Get-FriendlyModelName $rawModel
+                                $padded = $displayModel.PadRight($modelPad)
                                 $barColor = if ($pct -ge 70) { "Green" } elseif ($pct -ge 30) { "Yellow" } else { "Red" }
                                 $pctStr = "$pct%".PadLeft(4)
 
@@ -587,6 +676,10 @@ function Show-Status {
                                 if ($null -ne $m.request_count -and $m.request_count -gt 0) {
                                     $reqStr = "($($m.request_count) reqs)"
                                     Write-Host "  $reqStr" -NoNewline -ForegroundColor DarkCyan
+                                }
+
+                                if ($displayModel.ToLowerInvariant() -ne $rawModel.ToLowerInvariant()) {
+                                    Write-Host "  [$rawModel]" -NoNewline -ForegroundColor DarkGray
                                 }
 
                                 if ($pct -le 50 -and $m.reset_time) {
