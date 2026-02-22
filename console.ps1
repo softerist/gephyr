@@ -49,6 +49,7 @@ Commands:
   oauth/auth   Alias for login
   accounts     Call /api/accounts
   api-test     Run one API test completion
+  api-test-all Run one quick API test per provider (OpenAI/Claude/Gemini)
   rotate-key   Generate new API key, save to .env.local, and optionally restart
   docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
   rebuild      Rebuild Docker image from source
@@ -70,7 +71,7 @@ Options:
   -Image <name>          Docker image (default gephyr:latest)
   -DataDir <path>        Host data dir (default %USERPROFILE%\.gephyr)
   -LogLines <int>        Number of log lines for logs command (default 120)
-  -Model <name>          Model for api-test (default gpt-5.3-codex)
+  -Model <name>          Model for api-test and OpenAI test in api-test-all (default gpt-5.3-codex)
   -Prompt <text>         Prompt for api-test
   -NoBrowser             Do not open browser for login command
   -NoRestartAfterRotate  Rotate key without container restart
@@ -83,6 +84,7 @@ Examples:
   .\console.ps1 start
   .\console.ps1 login
   .\console.ps1 logs -LogLines 200
+  .\console.ps1 api-test-all
   .\console.ps1 rotate-key
   .\console.ps1 rebuild
   .\console.ps1 rebuild -NoCache
@@ -1049,20 +1051,152 @@ function Accounts-DeleteAndStop {
     Stop-Container
 }
 
-function Run-ApiTest {
+function Get-HttpErrorBody {
+    param([Parameter(Mandatory = $true)]$ErrorRecord)
+
+    $body = $null
+    try {
+        if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+            $body = [string]$ErrorRecord.ErrorDetails.Message
+        }
+    } catch {}
+
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        try {
+            if ($ErrorRecord.Exception -and $ErrorRecord.Exception.Response -and $ErrorRecord.Exception.Response.Content) {
+                $body = $ErrorRecord.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            }
+        } catch {}
+    }
+
+    return $body
+}
+
+function Invoke-GephyrApiJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)]$Body,
+        [int]$TimeoutSec = 60
+    )
+
     $headers = Get-AuthHeaders
     $headers["Content-Type"] = "application/json"
+    $bodyJson = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json -Depth 20 -Compress }
+
+    try {
+        $response = Invoke-RestMethod -Uri $Uri -Method Post -Headers $headers -Body $bodyJson -TimeoutSec $TimeoutSec -ErrorAction Stop
+        return [PSCustomObject]@{
+            name = $Name
+            ok = $true
+            status_code = 200
+            response = $response
+            raw_error_body = $null
+            parsed_error = $null
+            error_message = $null
+        }
+    } catch {
+        $statusCode = 0
+        try {
+            if ($_.Exception.Response) {
+                if ($_.Exception.Response.StatusCode -is [int]) {
+                    $statusCode = [int]$_.Exception.Response.StatusCode
+                } elseif ($_.Exception.Response.StatusCode.value__) {
+                    $statusCode = [int]$_.Exception.Response.StatusCode.value__
+                } elseif ($_.Exception.Response.StatusCode) {
+                    $statusCode = [int][string]$_.Exception.Response.StatusCode
+                }
+            }
+        } catch {}
+
+        if ($statusCode -eq 0) {
+            $msg = [string]$_.Exception.Message
+            if ($msg -match '\b([1-5][0-9]{2})\b') {
+                $statusCode = [int]$Matches[1]
+            }
+        }
+
+        $rawErrorBody = Get-HttpErrorBody -ErrorRecord $_
+        $parsedError = $null
+        if (-not [string]::IsNullOrWhiteSpace($rawErrorBody)) {
+            try {
+                $parsedError = $rawErrorBody | ConvertFrom-Json -ErrorAction Stop
+            } catch {}
+        }
+
+        return [PSCustomObject]@{
+            name = $Name
+            ok = $false
+            status_code = $statusCode
+            response = $null
+            raw_error_body = $rawErrorBody
+            parsed_error = $parsedError
+            error_message = [string]$_.Exception.Message
+        }
+    }
+}
+
+function Get-ClaudeQuotaResetHint {
+    param([Parameter(Mandatory = $true)]$CallResult)
+
+    if ($CallResult.ok) { return $null }
+
+    $parts = @()
+    if ($CallResult.error_message) { $parts += [string]$CallResult.error_message }
+    if ($CallResult.raw_error_body) { $parts += [string]$CallResult.raw_error_body }
+    if ($CallResult.parsed_error -and $CallResult.parsed_error.error -and $CallResult.parsed_error.error.message) {
+        $parts += [string]$CallResult.parsed_error.error.message
+    }
+    $combined = ($parts -join "`n")
+    if ([string]::IsNullOrWhiteSpace($combined)) { return $null }
+    if ($CallResult.status_code -ne 429 -and $combined -notmatch 'RESOURCE_EXHAUSTED|rateLimitExceeded|quota') {
+        return $null
+    }
+
+    if ($combined -match '"quotaResetTimeStamp"\s*:\s*"([^"]+)"') {
+        return "Claude quota exhausted. Reset time: $($Matches[1])."
+    }
+    if ($combined -match 'quota will reset after ([^"\.\n]+)') {
+        return "Claude quota exhausted. Reset after: $($Matches[1])."
+    }
+    if ($combined -match '"retryDelay"\s*:\s*"([^"]+)"') {
+        return "Claude quota exhausted. Retry delay: $($Matches[1])."
+    }
+
+    return "Claude quota exhausted (HTTP 429)."
+}
+
+function Write-ClaudeQuotaWarning {
+    param([Parameter(Mandatory = $true)]$CallResult)
+
+    $hint = Get-ClaudeQuotaResetHint -CallResult $CallResult
+    if ($hint) {
+        Write-Warning "[W-CLAUDE-QUOTA] $hint"
+    }
+}
+
+function Run-ApiTest {
     $body = @{
         model = $Model
+        max_tokens = 96
         messages = @(
             @{
                 role = "user"
                 content = $Prompt
             }
         )
-    } | ConvertTo-Json -Depth 10
+    }
 
-    $res = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/v1/chat/completions" -Method Post -Headers $headers -Body $body -TimeoutSec 60
+    $result = Invoke-GephyrApiJson -Name "openai" -Uri "http://127.0.0.1:$Port/v1/chat/completions" -Body $body -TimeoutSec 60
+    if (-not $result.ok) {
+        if ($Model -match '(?i)^claude') {
+            Write-ClaudeQuotaWarning -CallResult $result
+        }
+        $detail = if ($result.raw_error_body) { $result.raw_error_body } else { $result.error_message }
+        throw "API test failed (HTTP $($result.status_code)): $detail"
+    }
+
+    $res = $result.response
     $choice = $res.choices[0]
     $answer = ""
 
@@ -1093,6 +1227,146 @@ function Run-ApiTest {
         total_tokens = $res.usage.total_tokens
         answer = $answer
     } | Format-List
+}
+
+function Run-ApiTestAll {
+    $tests = @(
+        @{
+            Name = "OpenAI"
+            Uri = "http://127.0.0.1:$Port/v1/chat/completions"
+            Body = @{
+                model = $Model
+                max_tokens = 64
+                messages = @(
+                    @{
+                        role = "user"
+                        content = "Reply with exactly OK."
+                    }
+                )
+            }
+            Validate = {
+                param($response)
+                if ($response.choices -and $response.choices.Count -gt 0) { return $null }
+                return "missing choices in response"
+            }
+            WarnClaude = $false
+        },
+        @{
+            Name = "Claude"
+            Uri = "http://127.0.0.1:$Port/v1/messages"
+            Body = @{
+                model = "claude-sonnet-4-5"
+                max_tokens = 64
+                messages = @(
+                    @{
+                        role = "user"
+                        content = "Reply with exactly OK."
+                    }
+                )
+            }
+            Validate = {
+                param($response)
+                if ($response.content -or $response.id -or $response.type) { return $null }
+                return "missing content/id in response"
+            }
+            WarnClaude = $true
+        },
+        @{
+            Name = "Gemini"
+            Uri = "http://127.0.0.1:$Port/v1beta/models/gemini-2.5-flash:generateContent"
+            Body = @{
+                generationConfig = @{
+                    maxOutputTokens = 64
+                }
+                contents = @(
+                    @{
+                        role = "user"
+                        parts = @(
+                            @{
+                                text = "Reply with exactly OK."
+                            }
+                        )
+                    }
+                )
+            }
+            Validate = {
+                param($response)
+                if ($response.candidates -and $response.candidates.Count -gt 0) { return $null }
+                return "missing candidates in response"
+            }
+            WarnClaude = $false
+        }
+    )
+
+    $results = @()
+    foreach ($test in $tests) {
+        $call = Invoke-GephyrApiJson -Name $test.Name -Uri $test.Uri -Body $test.Body -TimeoutSec 60
+        if ($test.WarnClaude) {
+            Write-ClaudeQuotaWarning -CallResult $call
+        }
+
+        if ($call.ok) {
+            $validationError = & $test.Validate $call.response
+            if ([string]::IsNullOrWhiteSpace([string]$validationError)) {
+                $results += [PSCustomObject]@{
+                    provider = $test.Name
+                    pass = $true
+                    status_code = 200
+                    reason = ""
+                }
+            } else {
+                $results += [PSCustomObject]@{
+                    provider = $test.Name
+                    pass = $false
+                    status_code = 200
+                    reason = [string]$validationError
+                }
+            }
+        } else {
+            $reason = if ($call.raw_error_body) { [string]$call.raw_error_body } else { [string]$call.error_message }
+            $reason = ($reason -replace '\s+', ' ').Trim()
+            if ($reason.Length -gt 220) {
+                $reason = $reason.Substring(0, 220) + "..."
+            }
+            $results += [PSCustomObject]@{
+                provider = $test.Name
+                pass = $false
+                status_code = $call.status_code
+                reason = $reason
+            }
+        }
+    }
+
+    if ($Json) {
+        [PSCustomObject]@{
+            passed = (@($results | Where-Object { $_.pass }).Count)
+            failed = (@($results | Where-Object { -not $_.pass }).Count)
+            results = $results
+        } | ConvertTo-Json -Depth 8
+        return
+    }
+
+    Write-Host ""
+    Write-Host "API test-all results:" -ForegroundColor Cyan
+    foreach ($r in $results) {
+        if ($r.pass) {
+            Write-Host ("  [PASS] {0}" -f $r.provider) -ForegroundColor Green
+        } else {
+            Write-Host ("  [FAIL] {0} (HTTP {1})" -f $r.provider, $r.status_code) -ForegroundColor Red
+            if ($r.reason) {
+                Write-Host ("         {0}" -f $r.reason) -ForegroundColor DarkYellow
+            }
+        }
+    }
+
+    $passCount = @($results | Where-Object { $_.pass }).Count
+    $failCount = @($results | Where-Object { -not $_.pass }).Count
+    Write-Host ""
+    if ($failCount -eq 0) {
+        Write-Host "Summary: $passCount passed, $failCount failed." -ForegroundColor Green
+    } else {
+        Write-Host "Summary: $passCount passed, $failCount failed." -ForegroundColor Yellow
+    }
 }
 
 function Start-OAuthFlow {
@@ -1343,7 +1617,7 @@ function Assert-DockerRunning {
 # Commands that require Docker
 $dockerCommands = @(
     "start", "stop", "restart", "status", "logs", "health", "check", "canary",
-    "login", "oauth", "auth", "accounts", "api-test", "rotate-key", "docker-repair", "update",
+    "login", "oauth", "auth", "accounts", "api-test", "api-test-all", "rotate-key", "docker-repair", "update",
     "accounts-signout", "accounts-signout-and-delete",
     "accounts-signout-all", "accounts-signout-all-and-stop",
     "accounts-delete", "accounts-delete-and-stop",
@@ -1385,6 +1659,7 @@ switch ($Command) {
     "auth" { Start-OAuthFlow }
     "accounts" { Show-Accounts -AsJson:$Json.IsPresent }
     "api-test" { Run-ApiTest }
+    "api-test-all" { Run-ApiTestAll }
     "rotate-key" { Rotate-ApiKey }
     "docker-repair" { Repair-DockerBuilder -AggressiveMode:$Aggressive.IsPresent }
     "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }

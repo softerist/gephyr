@@ -54,6 +54,9 @@ docker build -t gephyr:latest -f docker/Dockerfile .
 
 # Link at least one Google account (opens browser)
 .\console.ps1 login
+
+# Quick provider smoke test (OpenAI + Claude + Gemini)
+.\console.ps1 api-test-all
 ```
 
 Quick health check:
@@ -77,7 +80,7 @@ OpenAI-compatible:
 curl.exe -sS "$BASE/v1/chat/completions" `
   -H "Authorization: Bearer $API_KEY" `
   -H "Content-Type: application/json" `
-  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"Hello from OpenAI-style request."}]}'
+  -d '{"model":"gpt-5.3-codex","max_tokens":96,"messages":[{"role":"user","content":"Hello from OpenAI-style request."}]}'
 ```
 
 Claude-compatible:
@@ -86,7 +89,7 @@ Claude-compatible:
 curl.exe -sS "$BASE/v1/messages" `
   -H "Authorization: Bearer $API_KEY" `
   -H "Content-Type: application/json" `
-  -d '{"model":"claude-sonnet-4-5","max_tokens":128,"messages":[{"role":"user","content":"Hello from Claude-style request."}]}'
+  -d '{"model":"claude-sonnet-4-5","max_tokens":96,"messages":[{"role":"user","content":"Hello from Claude-style request."}]}'
 ```
 
 Gemini-compatible:
@@ -95,7 +98,7 @@ Gemini-compatible:
 curl.exe -sS "$BASE/v1beta/models/gemini-2.5-flash:generateContent" `
   -H "Authorization: Bearer $API_KEY" `
   -H "Content-Type: application/json" `
-  -d '{"contents":[{"role":"user","parts":[{"text":"Hello from Gemini-style request."}]}]}'
+  -d '{"generationConfig":{"maxOutputTokens":96},"contents":[{"role":"user","parts":[{"text":"Hello from Gemini-style request."}]}]}'
 ```
 
 ## Advanced Guides
