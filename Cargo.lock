@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "gephyr"
-version = "1.16.10"
+version = "1.16.11"
 dependencies = [
  "aes-gcm",
  "async-stream",
