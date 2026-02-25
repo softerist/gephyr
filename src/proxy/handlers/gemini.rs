@@ -18,6 +18,14 @@ use crate::proxy::state::{ModelCatalogState, OpenAIHandlerState};
 use axum::http::HeaderMap;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
+
+fn is_validation_required_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    lower.contains("validation_required")
+        || lower.contains("verify your account")
+        || lower.contains("validation_url")
+}
+
 pub async fn handle_generate(
     State(state): State<OpenAIHandlerState>,
     Path(model_action): Path<String>,
@@ -466,6 +474,30 @@ pub async fn handle_generate(
             )
             .await;
         }
+
+        if status_code == 403 {
+            if is_validation_required_error(&error_text) {
+                tracing::warn!(
+                    "[Gemini] VALIDATION_REQUIRED detected on account {}, temporarily blocking",
+                    email
+                );
+                let block_minutes = 10i64;
+                let block_until = chrono::Utc::now().timestamp() + (block_minutes * 60);
+
+                if let Err(e) = token_manager
+                    .set_validation_block_public(&account_id, block_until, &error_text)
+                    .await
+                {
+                    tracing::error!("Failed to set validation block: {}", e);
+                }
+            }
+            if let Err(e) = token_manager.set_forbidden(&account_id, &error_text).await {
+                tracing::error!("Failed to set forbidden status for {}: {}", email, e);
+            } else {
+                tracing::warn!("[Gemini] Account {} marked as forbidden due to 403", email);
+            }
+        }
+
         let strategy = determine_retry_strategy(status_code, &error_text, false);
         let trace_id = format!("gemini_{}", session_id);
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
