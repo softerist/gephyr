@@ -5,6 +5,7 @@ mod config_pool;
 mod logs;
 mod maintenance;
 mod operator_status;
+mod parity;
 mod service_control;
 mod user_tokens;
 
@@ -18,14 +19,17 @@ pub(crate) use logs::{
     admin_clear_proxy_logs, admin_get_proxy_log_detail, admin_get_proxy_logs_count_filtered,
     admin_get_proxy_logs_filtered, admin_get_proxy_stats,
 };
-pub(crate) use maintenance::{
-    admin_clear_log_cache, admin_get_data_dir_path,
-};
+pub(crate) use maintenance::{admin_clear_log_cache, admin_get_data_dir_path};
 pub(crate) use operator_status::admin_get_operator_status;
+pub(crate) use parity::{
+    admin_parity_capture_export, admin_parity_capture_start, admin_parity_capture_status,
+    admin_parity_capture_stop, admin_parity_diff_latest, admin_parity_diff_run,
+    admin_parity_mimic_trigger,
+};
 pub(crate) use service_control::{
     admin_clear_all_rate_limits, admin_clear_proxy_session_bindings, admin_clear_rate_limit,
-    admin_fetch_zai_models, admin_generate_api_key, admin_get_preferred_account,
-    admin_get_google_outbound_policy, admin_get_proxy_compliance_debug, admin_get_proxy_metrics,
+    admin_fetch_zai_models, admin_generate_api_key, admin_get_google_outbound_policy,
+    admin_get_preferred_account, admin_get_proxy_compliance_debug, admin_get_proxy_metrics,
     admin_get_proxy_request_timeout, admin_get_proxy_session_bindings, admin_get_proxy_status,
     admin_get_proxy_sticky_config, admin_get_tls_canary_status, admin_get_version_routes,
     admin_run_tls_canary_probe, admin_set_preferred_account, admin_set_proxy_monitor_enabled,

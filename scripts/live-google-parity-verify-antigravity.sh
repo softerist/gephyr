@@ -12,6 +12,8 @@ STARTUP_TIMEOUT_SECONDS=60
 REQUIRE_OAUTH_RELINK=false
 ALLOWLIST_PATH="scripts/allowlists/antigravity_google_endpoints_default_chat.txt"
 SKIP_ALLOWLIST_VALIDATION=false
+ALLOW_MISSING_ALLOWLIST_ENDPOINTS=false
+REFRESH_INCLUSIVE=false
 
 show_usage() {
   cat <<'EOF'
@@ -25,6 +27,9 @@ Options:
   --startup-timeout-seconds <n>    Default: 60
   --require-oauth-relink           Force OAuth relink
   --allowlist-path <path>          Default: scripts/allowlists/antigravity_google_endpoints_default_chat.txt
+  --allow-missing-allowlist-endpoints
+                                    Do not fail when allowlisted endpoints are missing in trace
+  --refresh-inclusive               Allow refresh-only extras (e.g. oauth2/token) in allowlist validation
   --skip-allowlist-validation      Skip endpoint allowlist validation
   -h, --help                       Show help
 EOF
@@ -38,6 +43,8 @@ while [[ $# -gt 0 ]]; do
     --startup-timeout-seconds) STARTUP_TIMEOUT_SECONDS="$2"; shift 2 ;;
     --require-oauth-relink) REQUIRE_OAUTH_RELINK=true; shift ;;
     --allowlist-path) ALLOWLIST_PATH="$2"; shift 2 ;;
+    --allow-missing-allowlist-endpoints) ALLOW_MISSING_ALLOWLIST_ENDPOINTS=true; shift ;;
+    --refresh-inclusive) REFRESH_INCLUSIVE=true; shift ;;
     --skip-allowlist-validation) SKIP_ALLOWLIST_VALIDATION=true; shift ;;
     -h|--help) show_usage; exit 0 ;;
     *) echo "ERROR: unknown argument: $1" >&2; show_usage; exit 2 ;;
@@ -59,5 +66,7 @@ if [[ "$SKIP_ALLOWLIST_VALIDATION" != "true" ]]; then
   echo "Running Antigravity Google endpoint allowlist validation ..."
   bash "$SCRIPT_DIR/validate-antigravity-allowed-google-endpoints.sh" \
     --trace "$OUT_GEPHYR_PATH" \
-    --allowlist "$ALLOWLIST_PATH"
+    --allowlist "$ALLOWLIST_PATH" \
+    $([[ "$REFRESH_INCLUSIVE" == "true" ]] && printf -- "--allow-extra https://oauth2.googleapis.com/token") \
+    $([[ "$ALLOW_MISSING_ALLOWLIST_ENDPOINTS" == "true" ]] || printf -- "--require-all-allowed-observed")
 fi

@@ -19,6 +19,13 @@ const ADMIN_PATH_PROXY_COMPLIANCE: &str = "/proxy/compliance";
 const ADMIN_PATH_PROXY_GOOGLE_OUTBOUND_POLICY: &str = "/proxy/google/outbound-policy";
 const ADMIN_PATH_PROXY_TLS_CANARY: &str = "/proxy/tls-canary";
 const ADMIN_PATH_PROXY_TLS_CANARY_RUN: &str = "/proxy/tls-canary/run";
+const ADMIN_PATH_PROXY_PARITY_CAPTURE_START: &str = "/proxy/parity/capture/start";
+const ADMIN_PATH_PROXY_PARITY_CAPTURE_STOP: &str = "/proxy/parity/capture/stop";
+const ADMIN_PATH_PROXY_PARITY_CAPTURE_STATUS: &str = "/proxy/parity/capture/status";
+const ADMIN_PATH_PROXY_PARITY_CAPTURE_EXPORT: &str = "/proxy/parity/capture/export";
+const ADMIN_PATH_PROXY_PARITY_MIMIC_TRIGGER: &str = "/proxy/parity/mimic/trigger";
+const ADMIN_PATH_PROXY_PARITY_DIFF_RUN: &str = "/proxy/parity/diff/run";
+const ADMIN_PATH_PROXY_PARITY_DIFF_LATEST: &str = "/proxy/parity/diff/latest";
 const ADMIN_PATH_PROXY_OPERATOR_STATUS: &str = "/proxy/operator-status";
 const ADMIN_PATH_PROXY_METRICS: &str = "/proxy/metrics";
 
@@ -42,6 +49,13 @@ const VERSION_ROUTE_CAPABILITIES: &[(&str, &str)] = &[
     ("GET", ADMIN_PATH_PROXY_GOOGLE_OUTBOUND_POLICY),
     ("GET", ADMIN_PATH_PROXY_TLS_CANARY),
     ("POST", ADMIN_PATH_PROXY_TLS_CANARY_RUN),
+    ("POST", ADMIN_PATH_PROXY_PARITY_CAPTURE_START),
+    ("POST", ADMIN_PATH_PROXY_PARITY_CAPTURE_STOP),
+    ("GET", ADMIN_PATH_PROXY_PARITY_CAPTURE_STATUS),
+    ("POST", ADMIN_PATH_PROXY_PARITY_CAPTURE_EXPORT),
+    ("POST", ADMIN_PATH_PROXY_PARITY_MIMIC_TRIGGER),
+    ("POST", ADMIN_PATH_PROXY_PARITY_DIFF_RUN),
+    ("GET", ADMIN_PATH_PROXY_PARITY_DIFF_LATEST),
     ("GET", ADMIN_PATH_PROXY_OPERATOR_STATUS),
     ("GET", ADMIN_PATH_PROXY_METRICS),
     ("GET", ADMIN_PATH_PROXY_STATUS),

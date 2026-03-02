@@ -5,6 +5,7 @@ param(
     [int]$PollIntervalMs = 500,
     [int]$PktSize = 0,
     [int]$MaxFileSizeMb = 512,
+    [int]$DurationSeconds = 0,
     [switch]$NoPktmon,
     [switch]$NoConnectionPoll
 )
@@ -44,7 +45,7 @@ function Convert-EtlToPcapng {
         [string]$EtlPath,
         [string]$PcapngPath
     )
-    & pktmon etl2pcap $EtlPath -o $PcapngPath | Out-Null
+    & pktmon etl2pcap $EtlPath -o $PcapngPath
 }
 
 function Start-ConnectionPollerJob {
@@ -75,8 +76,11 @@ function Start-ConnectionPollerJob {
 
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-if (-not (Test-IsAdmin)) {
+if (-not $NoPktmon -and -not (Test-IsAdmin)) {
     throw "This script must be run from an elevated PowerShell (Run as Administrator). pktmon requires admin."
+}
+if ($NoPktmon -and -not (Test-IsAdmin)) {
+    Write-Warning "Running without elevation and with -NoPktmon. Connection visibility may be limited for other processes."
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -110,7 +114,11 @@ Write-Host ""
 Write-Host "Steps:"
 Write-Host "1) Script will start pktmon capture (TCP/443)."
 Write-Host "2) Trigger Antigravity Agent chat activity (send a message, wait for response)."
-Write-Host "3) Press Enter here to stop capture and write outputs."
+if ($DurationSeconds -gt 0) {
+    Write-Host "3) Capture auto-stops after $DurationSeconds second(s)."
+} else {
+    Write-Host "3) Press Enter here to stop capture and write outputs."
+}
 Write-Host ""
 
 $pollJob = $null
@@ -145,7 +153,12 @@ try {
         Write-Warning "Skipping connection poll (-NoConnectionPoll)."
     }
 
-    [void](Read-Host "Press Enter when done")
+    if ($DurationSeconds -gt 0) {
+        Write-Host "Capturing for $DurationSeconds second(s)..."
+        Start-Sleep -Seconds $DurationSeconds
+    } else {
+        [void](Read-Host "Press Enter when done")
+    }
 }
 finally {
     if ($pollJob) {
@@ -160,6 +173,13 @@ finally {
         try {
             Convert-EtlToPcapng -EtlPath $etl -PcapngPath $pcapng
             Write-Host "Converted to pcapng: $pcapng"
+            try {
+                $pcapInfo = Get-Item -LiteralPath $pcapng -ErrorAction Stop
+                if ($pcapInfo.Length -le 1024) {
+                    Write-Warning "PCAPNG appears empty or tiny ($($pcapInfo.Length) bytes)."
+                    Write-Warning "If connection CSV shows activity but PCAP is tiny, re-run from an elevated shell and keep capture running during live traffic."
+                }
+            } catch {}
         } catch {
             Write-Warning "Failed to convert ETL to PCAPNG: $($_.Exception.Message)"
         }

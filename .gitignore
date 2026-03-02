@@ -29,6 +29,12 @@ dist-ssr
 target/
 src/gen/
 src/.env
+output/
+parity/
+output/parity/
+parity/raw/
+parity/baselines/raw/
+*.raw.jsonl
 
 # Environment
 .env

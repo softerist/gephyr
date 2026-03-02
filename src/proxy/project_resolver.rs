@@ -1,8 +1,9 @@
-use serde_json::Value;
+use crate::proxy::parity;
 use crate::proxy::upstream::header_policy::{
     build_google_headers, build_load_code_assist_metadata, host_from_url,
     load_policy_from_runtime_config, GoogleHeaderPolicyContext, GoogleHeaderScope,
 };
+use serde_json::Value;
 
 fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models::DeviceProfile> {
     let id = account_id?;
@@ -61,13 +62,26 @@ async fn fetch_project_id_at(
     );
 
     let client = crate::utils::http::get_client();
+    let started_at = std::time::Instant::now();
     let response = client
         .post(url)
-        .headers(headers)
+        .headers(headers.clone())
         .json(&request_body)
         .send()
         .await
-        .map_err(|e| format!("loadCodeAssist request failed: {}", e))?;
+        .map_err(|e| format!("loadCodeAssist request failed: {}", e));
+
+    parity::capture::record_reqwest_outbound(
+        "POST",
+        url,
+        &headers,
+        Some(&request_body),
+        started_at,
+        response.as_ref().ok().map(|r| r.status().as_u16()),
+        parity::types::RequestSource::Gephyr,
+    );
+
+    let response = response?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -156,8 +170,11 @@ mod tests {
         }))
     }
 
-    async fn start_mock_load_code_assist_server(
-    ) -> (String, LoadCodeAssistCaptureState, tokio::task::JoinHandle<()>) {
+    async fn start_mock_load_code_assist_server() -> (
+        String,
+        LoadCodeAssistCaptureState,
+        tokio::task::JoinHandle<()>,
+    ) {
         let state = LoadCodeAssistCaptureState::default();
         let app = Router::new()
             .route("/v1internal:loadCodeAssist", post(load_code_assist_handler))
@@ -194,14 +211,17 @@ mod tests {
                 .await
                 .expect("serve mock empty project");
         });
-        (
-            format!("http://{}/v1internal:loadCodeAssist", addr),
-            server,
-        )
+        (format!("http://{}/v1internal:loadCodeAssist", addr), server)
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn fetch_project_id_sets_gzip_and_standard_metadata() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        crate::proxy::parity::capture::clear_capture();
+        let _ = crate::proxy::parity::capture::start_capture(
+            crate::proxy::parity::capture::CaptureStartConfig::default(),
+        );
+
         let (url, state, server) = start_mock_load_code_assist_server().await;
         let project_id = fetch_project_id_at("access-token", None, &url)
             .await
@@ -215,6 +235,7 @@ mod tests {
             .await
             .clone()
             .expect("captured loadCodeAssist request body");
+        let parity_snapshot = crate::proxy::parity::capture::captured_snapshot();
         server.abort();
 
         let find = |name: &str| -> Option<String> {
@@ -228,10 +249,22 @@ mod tests {
             find("accept-encoding"),
             Some("gzip, deflate, br".to_string())
         );
-        assert_eq!(find("authorization"), Some("Bearer access-token".to_string()));
+        assert_eq!(
+            find("authorization"),
+            Some("Bearer access-token".to_string())
+        );
         assert!(body.pointer("/metadata/ideType").is_some());
         assert!(body.pointer("/metadata/platform").is_some());
         assert!(body.pointer("/metadata/pluginType").is_some());
+        assert!(
+            parity_snapshot
+                .iter()
+                .any(|fp| fp.normalized_endpoint.contains("v1internal:loadCodeAssist")),
+            "expected loadCodeAssist request in parity capture"
+        );
+
+        let _ = crate::proxy::parity::capture::stop_capture();
+        crate::proxy::parity::capture::clear_capture();
     }
 
     #[tokio::test(flavor = "current_thread")]

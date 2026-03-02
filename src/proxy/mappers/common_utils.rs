@@ -21,8 +21,8 @@ pub fn resolve_request_config(
 ) -> RequestConfig {
     if is_image_generation_model(mapped_model) {
         if let Some(body_val) = body {
-                if let Some(gen_config) = body_val.get("generationConfig") {
-                    if let Some(image_config) = gen_config.get("imageConfig") {
+            if let Some(gen_config) = body_val.get("generationConfig") {
+                if let Some(image_config) = gen_config.get("imageConfig") {
                     crate::modules::system::logger::log_info(&format!(
                         "[Common-Utils] Parsed imageConfig from Gemini request body: {:?}",
                         image_config

@@ -1,0 +1,89 @@
+name: parity-gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  parity-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Validate parity baseline manifests
+        run: bash scripts/validate-parity-baseline-manifests.sh
+
+      - name: Ensure raw parity artifacts are not tracked
+        run: bash scripts/check-no-raw-parity-artifacts.sh
+
+      - name: Run parity unit and admin parity route tests
+        run: |
+          cargo test -q proxy::parity -- --nocapture
+          cargo test -q admin_parity -- --nocapture
+          cargo test -q call_v1_internal_applies_google_header_policy -- --nocapture
+          cargo test -q fetch_project_id_sets_gzip_and_standard_metadata -- --nocapture
+          cargo test -q quota_flow_sends_gzip_and_standardized_metadata -- --nocapture
+          cargo test -q refresh_access_token_sends_user_agent_header -- --nocapture
+          cargo test -q strict_mimic_flow_happy_path_orders_steps_and_payloads -- --nocapture
+          cargo test -q --bin gephyr-parity -- --nocapture
+
+      - name: Gate passes on matching redacted baselines
+        run: |
+          cargo run --quiet --bin gephyr-parity -- gate \
+            --gephyr parity/baselines/redacted/windows/default/gephyr.reference.jsonl \
+            --known-good parity/baselines/redacted/windows/default/known_good.default.jsonl \
+            --out output/parity/ci/pass-report.json
+
+      - name: Gate passes on source-specific baselines when present
+        run: |
+          shopt -s nullglob
+          for file in parity/baselines/redacted/windows/default/known_good.*.jsonl; do
+            base="$(basename "$file")"
+            if [[ "$base" == "known_good.default.jsonl" ]]; then
+              continue
+            fi
+            source="${base#known_good.}"
+            source="${source%.jsonl}"
+            cargo run --quiet --bin gephyr-parity -- gate \
+              --gephyr parity/baselines/redacted/windows/default/gephyr.reference.jsonl \
+              --known-good "$file" \
+              --known-source "$source" \
+              --out "output/parity/ci/pass-report.${source}.json"
+          done
+
+      - name: Gate fails on intentional mismatch
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          src = pathlib.Path('parity/baselines/redacted/windows/default/known_good.default.jsonl')
+          dst = pathlib.Path('output/parity/ci/known_good.mismatch.jsonl')
+          dst.parent.mkdir(parents=True, exist_ok=True)
+
+          lines = [line for line in src.read_text(encoding='utf-8').splitlines() if line.strip()]
+          records = [json.loads(line) for line in lines]
+          records[0]['headers'] = [[k, ('mismatch-agent/0.0' if k == 'user-agent' else v)] for k, v in records[0]['headers']]
+
+          with dst.open('w', encoding='utf-8') as fh:
+              for rec in records:
+                  fh.write(json.dumps(rec, separators=(',', ':')) + '\n')
+          PY
+
+          if cargo run --quiet --bin gephyr-parity -- gate \
+            --gephyr parity/baselines/redacted/windows/default/gephyr.reference.jsonl \
+            --known-good output/parity/ci/known_good.mismatch.jsonl \
+            --out output/parity/ci/fail-report.json; then
+            echo "Expected gate to fail on intentional mismatch, but it passed."
+            exit 1
+          fi

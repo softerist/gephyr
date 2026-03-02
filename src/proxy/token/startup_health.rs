@@ -40,7 +40,7 @@ fn startup_health_delay_bounds_seconds() -> (u64, u64) {
 pub struct AccountHealthResult {
     pub account_id: String,
     pub email: String,
-    pub status: String, 
+    pub status: String,
     pub detail: Option<String>,
 }
 

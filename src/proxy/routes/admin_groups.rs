@@ -201,6 +201,31 @@ pub(super) fn add_proxy_routes(router: Router<AppState>) -> Router<AppState> {
             post(admin::admin_run_tls_canary_probe),
         )
         .route(
+            "/proxy/parity/capture/start",
+            post(admin::admin_parity_capture_start),
+        )
+        .route(
+            "/proxy/parity/capture/stop",
+            post(admin::admin_parity_capture_stop),
+        )
+        .route(
+            "/proxy/parity/capture/status",
+            get(admin::admin_parity_capture_status),
+        )
+        .route(
+            "/proxy/parity/capture/export",
+            post(admin::admin_parity_capture_export),
+        )
+        .route(
+            "/proxy/parity/mimic/trigger",
+            post(admin::admin_parity_mimic_trigger),
+        )
+        .route("/proxy/parity/diff/run", post(admin::admin_parity_diff_run))
+        .route(
+            "/proxy/parity/diff/latest",
+            get(admin::admin_parity_diff_latest),
+        )
+        .route(
             "/proxy/operator-status",
             get(admin::admin_get_operator_status),
         )

@@ -337,7 +337,10 @@ fn validate_compliance_config(config: &ComplianceConfig, errors: &mut Vec<Config
     }
 }
 
-fn validate_google_config(config: &crate::proxy::config::GoogleConfig, errors: &mut Vec<ConfigError>) {
+fn validate_google_config(
+    config: &crate::proxy::config::GoogleConfig,
+    errors: &mut Vec<ConfigError>,
+) {
     if config.identity_metadata.ide_type.trim().is_empty() {
         errors.push(ConfigError::new(
             "proxy.google.identity_metadata.ide_type",

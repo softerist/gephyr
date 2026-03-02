@@ -10,6 +10,8 @@ ALLOWLIST_PATH="scripts/allowlists/antigravity_google_endpoints_default_chat.txt
 OUT_JSON="output/antigravity_allowed_endpoint_validation.json"
 OUT_TEXT="output/antigravity_allowed_endpoint_validation.txt"
 NO_THROW=false
+REQUIRE_ALL_ALLOWED_OBSERVED=false
+ALLOWED_EXTRA_ENDPOINTS=()
 
 show_usage() {
   cat <<'EOF'
@@ -22,6 +24,10 @@ Options:
   --out-json <path>      Default: output/antigravity_allowed_endpoint_validation.json
   --out-text <path>      Default: output/antigravity_allowed_endpoint_validation.txt
   --no-throw             Do not exit with error on validation failure
+  --allow-extra <endpoint>
+                         Tolerate this extra Google endpoint (repeatable)
+  --require-all-allowed-observed
+                         Fail when allowlisted endpoints are missing from the trace
   -h, --help             Show help
 EOF
 }
@@ -33,6 +39,8 @@ while [[ $# -gt 0 ]]; do
     --out-json) OUT_JSON="$2"; shift 2 ;;
     --out-text) OUT_TEXT="$2"; shift 2 ;;
     --no-throw) NO_THROW=true; shift ;;
+    --allow-extra) ALLOWED_EXTRA_ENDPOINTS+=("$2"); shift 2 ;;
+    --require-all-allowed-observed) REQUIRE_ALL_ALLOWED_OBSERVED=true; shift ;;
     -h|--help) show_usage; exit 0 ;;
     *) echo "ERROR: unknown argument: $1" >&2; show_usage; exit 2 ;;
   esac
@@ -47,7 +55,7 @@ command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required for thi
 
 mkdir -p "$(dirname "$OUT_JSON")" "$(dirname "$OUT_TEXT")"
 
-python3 - <<'PY' "$TRACE_PATH" "$ALLOWLIST_PATH" "$OUT_JSON" "$OUT_TEXT" "$NO_THROW"
+python3 - <<'PY' "$TRACE_PATH" "$ALLOWLIST_PATH" "$OUT_JSON" "$OUT_TEXT" "$NO_THROW" "$REQUIRE_ALL_ALLOWED_OBSERVED" "${ALLOWED_EXTRA_ENDPOINTS[@]}"
 import json, sys, re
 from datetime import datetime
 from urllib.parse import urlparse
@@ -57,6 +65,8 @@ allowlist_path = sys.argv[2]
 out_json = sys.argv[3]
 out_text = sys.argv[4]
 no_throw = sys.argv[5] == "true"
+require_all_allowed_observed = sys.argv[6] == "true"
+allowed_extras_raw = sys.argv[7:]
 
 def is_google_endpoint(ep):
     if not ep:
@@ -87,6 +97,11 @@ with open(allowlist_path) as f:
         if line and not line.startswith("#"):
             allowed.add(normalize_endpoint(line))
 
+allowed_extras = set()
+for e in allowed_extras_raw:
+    if e:
+        allowed_extras.add(normalize_endpoint(e))
+
 # Parse trace
 observed_google = set()
 with open(trace_path) as f:
@@ -109,18 +124,21 @@ with open(trace_path) as f:
 noise = normalize_endpoint("https://oauth2.googleapis.com/tokeninfo?access_token=%3Credacted%3E")
 observed_google.discard(noise)
 
-unknown = sorted(e for e in observed_google if e not in allowed)
+unknown_all = sorted(e for e in observed_google if e not in allowed)
+unknown = sorted(e for e in unknown_all if e not in allowed_extras)
 missing = sorted(e for e in allowed if e not in observed_google)
 observed_allowed = sorted(e for e in observed_google if e in allowed)
-pass_result = len(unknown) == 0
+pass_result = len(unknown) == 0 and (not require_all_allowed_observed or len(missing) == 0)
 
 result = {
     "generated_at": datetime.now().isoformat(),
     "trace_path": trace_path,
     "allowlist_path": allowlist_path,
+    "require_all_allowed_observed": require_all_allowed_observed,
     "allowed_count": len(allowed),
     "observed_google_count": len(observed_google),
     "observed_allowed_count": len(observed_allowed),
+    "allowed_extra_google_endpoints": sorted(allowed_extras),
     "unknown_google_endpoints": unknown,
     "missing_allowed_endpoints": missing,
     "observed_allowed_endpoints": observed_allowed,
@@ -135,9 +153,11 @@ lines.append("Antigravity Allowed Google Endpoint Validation")
 lines.append(f"Generated: {result['generated_at']}")
 lines.append(f"Trace: {trace_path}")
 lines.append(f"Allowlist: {allowlist_path}")
+lines.append(f"Require all allowed observed: {require_all_allowed_observed}")
 lines.append(f"Allowed endpoints: {len(allowed)}")
 lines.append(f"Observed Google endpoints: {len(observed_google)}")
 lines.append(f"Observed allowed endpoints: {len(observed_allowed)}")
+lines.append(f"Allowed extra Google endpoints: {', '.join(sorted(allowed_extras))}")
 lines.append(f"Pass: {pass_result}")
 lines.append("")
 lines.append("Unknown Google endpoints:")
@@ -163,6 +183,13 @@ print(f"  {out_json}")
 print(f"Pass: {pass_result}")
 
 if not no_throw and not pass_result:
-    print(f"ERROR: Unexpected Google endpoints detected. See: {out_text}", file=sys.stderr)
+    if unknown and missing and require_all_allowed_observed:
+        print(f"ERROR: Unexpected Google endpoints detected and allowlisted endpoints missing from trace. See: {out_text}", file=sys.stderr)
+    elif unknown:
+        print(f"ERROR: Unexpected Google endpoints detected. See: {out_text}", file=sys.stderr)
+    elif require_all_allowed_observed and missing:
+        print(f"ERROR: Some allowlisted endpoints were not observed in trace. See: {out_text}", file=sys.stderr)
+    else:
+        print(f"ERROR: Allowlist validation failed. See: {out_text}", file=sys.stderr)
     sys.exit(1)
 PY

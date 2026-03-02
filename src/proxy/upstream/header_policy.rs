@@ -44,8 +44,10 @@ impl GoogleOutboundHeaderPolicy {
     }
 
     pub fn should_send_host_header(&self) -> bool {
-        matches!(self.mode, crate::proxy::config::GoogleMode::CodeassistCompat)
-            && self.send_host_header
+        matches!(
+            self.mode,
+            crate::proxy::config::GoogleMode::CodeassistCompat
+        ) && self.send_host_header
     }
 
     pub fn send_x_goog_api_client_effective(&self) -> bool {
@@ -73,8 +75,10 @@ impl GoogleOutboundHeaderPolicy {
         match scope {
             GoogleHeaderScope::OAuth => true,
             GoogleHeaderScope::Cloudcode => {
-                matches!(self.mode, crate::proxy::config::GoogleMode::CodeassistCompat)
-                    && self.send_x_goog_api_client_on_cloudcode
+                matches!(
+                    self.mode,
+                    crate::proxy::config::GoogleMode::CodeassistCompat
+                ) && self.send_x_goog_api_client_on_cloudcode
             }
         }
     }
@@ -208,7 +212,10 @@ pub fn host_from_url(url: &str) -> Option<String> {
     Some(host)
 }
 
-pub fn apply_device_profile_headers(headers: &mut HeaderMap, profile: &crate::models::DeviceProfile) {
+pub fn apply_device_profile_headers(
+    headers: &mut HeaderMap,
+    profile: &crate::models::DeviceProfile,
+) {
     if let Some(v) = profile.machine_id.as_deref() {
         insert_custom_header(headers, "x-machine-id", v);
     }
@@ -276,7 +283,10 @@ fn log_google_outbound_headers(
     for (name, value) in headers {
         let key = name.as_str().to_string();
         let raw = value.to_str().unwrap_or("<non-utf8>");
-        redacted.insert(key.clone(), serde_json::Value::String(redact_header_value(&key, raw)));
+        redacted.insert(
+            key.clone(),
+            serde_json::Value::String(redact_header_value(&key, raw)),
+        );
     }
 
     let mode = match policy.mode {
@@ -312,7 +322,10 @@ fn is_antigravity_style_user_agent(user_agent: &str) -> bool {
 fn normalize_google_user_agent(scope: GoogleHeaderScope, user_agent: &str) -> String {
     let trimmed = user_agent.trim();
     if trimmed.is_empty() {
-        return "antigravity google-api-nodejs-client/10.3.0".to_string();
+        return format!(
+            "{} google-api-nodejs-client/10.3.0",
+            crate::constants::USER_AGENT.as_str()
+        );
     }
 
     let lower = trimmed.to_ascii_lowercase();
@@ -365,7 +378,9 @@ mod tests {
 
         assert!(headers.contains_key(header::AUTHORIZATION));
         assert_eq!(
-            headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()),
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|v| v.to_str().ok()),
             Some("antigravity/test google-api-nodejs-client/10.3.0")
         );
         assert_eq!(
@@ -474,7 +489,10 @@ mod tests {
         extra.insert("origin".to_string(), "https://example.com".to_string());
         extra.insert("referer".to_string(), "https://example.com/a".to_string());
         extra.insert("x-forwarded-for".to_string(), "1.2.3.4".to_string());
-        extra.insert("anthropic-beta".to_string(), "context-1m-2025-08-07".to_string());
+        extra.insert(
+            "anthropic-beta".to_string(),
+            "context-1m-2025-08-07".to_string(),
+        );
 
         let headers = build_google_headers(
             GoogleHeaderPolicyContext {
@@ -495,9 +513,7 @@ mod tests {
         assert!(headers.get("referer").is_none());
         assert!(headers.get("x-forwarded-for").is_none());
         assert_eq!(
-            headers
-                .get("anthropic-beta")
-                .and_then(|v| v.to_str().ok()),
+            headers.get("anthropic-beta").and_then(|v| v.to_str().ok()),
             Some("context-1m-2025-08-07")
         );
     }
@@ -632,9 +648,7 @@ mod tests {
             &policy,
         );
         assert_eq!(
-            closed
-                .get(header::CONNECTION)
-                .and_then(|v| v.to_str().ok()),
+            closed.get(header::CONNECTION).and_then(|v| v.to_str().ok()),
             Some("close")
         );
 
@@ -685,15 +699,11 @@ mod tests {
         let policy = GoogleOutboundHeaderPolicy::default();
         let value = build_load_code_assist_metadata(&policy);
         assert_eq!(
-            value
-                .pointer("/metadata/ideType")
-                .and_then(|v| v.as_str()),
+            value.pointer("/metadata/ideType").and_then(|v| v.as_str()),
             Some("ANTIGRAVITY")
         );
         assert_eq!(
-            value
-                .pointer("/metadata/platform")
-                .and_then(|v| v.as_str()),
+            value.pointer("/metadata/platform").and_then(|v| v.as_str()),
             Some("PLATFORM_UNSPECIFIED")
         );
         assert_eq!(
@@ -710,9 +720,10 @@ mod tests {
             redact_header_value("authorization", "Bearer abc"),
             "<redacted>"
         );
-        assert_eq!(redact_header_value("x-goog-api-key", "secret"), "<redacted>");
+        assert_eq!(
+            redact_header_value("x-goog-api-key", "secret"),
+            "<redacted>"
+        );
         assert_eq!(redact_header_value("user-agent", "ua"), "ua");
     }
 }
-
-

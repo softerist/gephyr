@@ -409,9 +409,8 @@ pub(crate) async fn admin_get_google_outbound_policy(
         crate::proxy::config::GoogleUserinfoEndpoint::OpenidconnectV1 => "openidconnect_v1",
         crate::proxy::config::GoogleUserinfoEndpoint::DualFallback => "dual_fallback",
     };
-    let cloudcode_host_strategy = crate::proxy::google::endpoints::cloudcode_host_strategy(
-        google_cfg.mimic.profile.clone(),
-    );
+    let cloudcode_host_strategy =
+        crate::proxy::google::endpoints::cloudcode_host_strategy(google_cfg.mimic.profile.clone());
 
     Ok(Json(serde_json::json!({
         "mode": mode,

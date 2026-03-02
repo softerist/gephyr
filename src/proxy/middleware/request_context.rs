@@ -54,10 +54,11 @@ pub async fn request_context_middleware(mut request: Request, next: Next) -> Res
         request_id: Some(request_id.clone()),
     };
 
-    let mut response = crate::modules::system::request_context::with_request_context(ctx, async move {
-        next.run(request).await
-    })
-    .await;
+    let mut response =
+        crate::modules::system::request_context::with_request_context(ctx, async move {
+            next.run(request).await
+        })
+        .await;
 
     if let Ok(value) = axum::http::HeaderValue::from_str(&request_id) {
         response.headers_mut().insert("x-request-id", value);

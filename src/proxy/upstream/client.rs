@@ -1,13 +1,14 @@
+use crate::proxy::parity;
+use crate::proxy::upstream::header_policy::{
+    build_google_headers, host_from_url, GoogleHeaderPolicyContext, GoogleHeaderScope,
+    GoogleOutboundHeaderPolicy,
+};
 use dashmap::DashMap;
 use reqwest::{Client, Response, StatusCode};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::Duration;
-use crate::proxy::upstream::header_policy::{
-    build_google_headers, host_from_url, GoogleHeaderPolicyContext, GoogleHeaderScope,
-    GoogleOutboundHeaderPolicy,
-};
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 1] = [V1_INTERNAL_BASE_URL_PROD];
@@ -91,8 +92,9 @@ impl UpstreamClient {
     }
 
     fn build_v1_internal_base_urls(google: &crate::proxy::config::GoogleConfig) -> Vec<String> {
-        let hosts =
-            crate::proxy::google::endpoints::cloudcode_hosts_for_profile(google.mimic.profile.clone());
+        let hosts = crate::proxy::google::endpoints::cloudcode_hosts_for_profile(
+            google.mimic.profile.clone(),
+        );
         let mut urls: Vec<String> = hosts
             .into_iter()
             .map(|host| format!("https://{}/v1internal", host))
@@ -105,12 +107,7 @@ impl UpstreamClient {
 
     #[cfg(test)]
     fn new_for_test(base_url: &str, google_policy: GoogleOutboundHeaderPolicy) -> Self {
-        Self::new_with_policy_and_base_urls(
-            None,
-            None,
-            google_policy,
-            vec![base_url.to_string()],
-        )
+        Self::new_with_policy_and_base_urls(None, None, google_policy, vec![base_url.to_string()])
     }
     fn build_client_internal(
         proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
@@ -282,8 +279,19 @@ impl UpstreamClient {
                 .post(&url)
                 .headers(headers.clone())
                 .json(&body)
-                .send()
-                .await;
+                .send();
+            let started_at = std::time::Instant::now();
+            let response = response.await;
+
+            parity::capture::record_reqwest_outbound(
+                "POST",
+                &url,
+                &headers,
+                Some(&body),
+                started_at,
+                response.as_ref().ok().map(|r| r.status().as_u16()),
+                parity::types::RequestSource::Gephyr,
+            );
 
             match response {
                 Ok(resp) => {
@@ -387,7 +395,8 @@ mod tests {
         }))
     }
 
-    async fn start_mock_upstream_server() -> (String, UpstreamCaptureState, tokio::task::JoinHandle<()>) {
+    async fn start_mock_upstream_server(
+    ) -> (String, UpstreamCaptureState, tokio::task::JoinHandle<()>) {
         let state = UpstreamCaptureState::default();
         let app = Router::new()
             .route("/v1internal:generateContent", post(capture_handler))
@@ -398,18 +407,29 @@ mod tests {
             .expect("bind mock upstream");
         let addr = listener.local_addr().expect("local addr");
         let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("serve mock upstream");
+            axum::serve(listener, app)
+                .await
+                .expect("serve mock upstream");
         });
         (format!("http://{}/v1internal", addr), state, server)
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn call_v1_internal_applies_google_header_policy() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        crate::proxy::parity::capture::clear_capture();
+        let _ = crate::proxy::parity::capture::start_capture(
+            crate::proxy::parity::capture::CaptureStartConfig::default(),
+        );
+
         let (base_url, state, server) = start_mock_upstream_server().await;
         let client = UpstreamClient::new_for_test(&base_url, GoogleOutboundHeaderPolicy::default());
         let mut extra_headers = std::collections::HashMap::new();
         extra_headers.insert("x-forwarded-for".to_string(), "1.2.3.4".to_string());
-        extra_headers.insert("anthropic-beta".to_string(), "context-1m-2025-08-07".to_string());
+        extra_headers.insert(
+            "anthropic-beta".to_string(),
+            "context-1m-2025-08-07".to_string(),
+        );
 
         let response = client
             .call_v1_internal_with_headers(
@@ -425,6 +445,7 @@ mod tests {
 
         assert!(response.status().is_success());
         let captured = state.headers.lock().await.clone();
+        let parity_snapshot = crate::proxy::parity::capture::captured_snapshot();
         server.abort();
 
         let find = |name: &str| -> Option<String> {
@@ -434,7 +455,10 @@ mod tests {
                 .map(|(_, v)| v.clone())
         };
 
-        assert_eq!(find("authorization"), Some("Bearer test-access-token".to_string()));
+        assert_eq!(
+            find("authorization"),
+            Some("Bearer test-access-token".to_string())
+        );
         assert_eq!(find("content-type"), Some("application/json".to_string()));
         assert_eq!(
             find("accept-encoding"),
@@ -452,6 +476,15 @@ mod tests {
             Some("context-1m-2025-08-07".to_string())
         );
         assert!(find("x-forwarded-for").is_none());
+        assert!(
+            parity_snapshot.iter().any(|fp| fp
+                .normalized_endpoint
+                .contains("v1internal:generateContent")),
+            "expected parity capture to include generateContent outbound call"
+        );
+
+        let _ = crate::proxy::parity::capture::stop_capture();
+        crate::proxy::parity::capture::clear_capture();
     }
 
     #[tokio::test(flavor = "current_thread")]

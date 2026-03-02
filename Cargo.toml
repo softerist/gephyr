@@ -17,6 +17,10 @@ path = "src/lib.rs"
 name = "gephyr"
 path = "src/main.rs"
 
+[[bin]]
+name = "gephyr-parity"
+path = "src/bin/gephyr-parity.rs"
+
 [features]
 default = ["tls-native"]
 tls-native = ["reqwest/default-tls"]
@@ -65,3 +69,4 @@ parking_lot = "0.12.5"
 tokio-util = "0.7.18"
 aes-gcm = "0.10.3"
 machine-uid = "0.5.4"
+zip = "2.2"

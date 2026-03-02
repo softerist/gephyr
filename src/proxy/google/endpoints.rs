@@ -1,5 +1,6 @@
 pub const CLOUDCODE_HOST_DAILY: &str = "daily-cloudcode-pa.googleapis.com";
 pub const CLOUDCODE_HOST_PUBLIC: &str = "cloudcode-pa.googleapis.com";
+pub const PLAY_LOG_HOST: &str = "play.googleapis.com";
 
 pub const USERINFO_OAUTH2_V2: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 pub const USERINFO_OPENIDCONNECT_V1: &str = "https://openidconnect.googleapis.com/v1/userinfo";
@@ -50,12 +51,12 @@ pub fn endpoint_fetch_available_models(host: &str) -> String {
     build_cloudcode_colon_method_endpoint(host, "fetchAvailableModels", None)
 }
 
-pub fn endpoint_onboard_user(host: &str) -> String {
-    build_cloudcode_colon_method_endpoint(host, "onboardUser", None)
-}
-
 pub fn endpoint_cascade_nuxes(host: &str) -> String {
     format!("https://{}/v1internal/cascadeNuxes", host)
+}
+
+pub fn endpoint_play_log() -> String {
+    format!("https://{}/log", PLAY_LOG_HOST)
 }
 
 fn build_cloudcode_colon_method_endpoint(host: &str, method: &str, query: Option<&str>) -> String {
@@ -92,5 +93,10 @@ mod tests {
             endpoints,
             vec![USERINFO_OAUTH2_V2, USERINFO_OPENIDCONNECT_V1]
         );
+    }
+
+    #[test]
+    fn play_log_endpoint_is_stable() {
+        assert_eq!(endpoint_play_log(), "https://play.googleapis.com/log");
     }
 }

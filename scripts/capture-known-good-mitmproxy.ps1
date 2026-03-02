@@ -28,10 +28,18 @@ param(
     [switch]$KeepAntigravityIdeProxy
     ,
     [string[]]$UserAgentContains = @(),
-    [string[]]$UserAgentExcludeContains = @()
+    [string[]]$UserAgentExcludeContains = @(),
+    [switch]$TraceLsConnections,
+    [string]$TraceLsProcessName = "language_server_windows_x64",
+    [string]$TraceLsCsvPath = "",
+    [int]$TraceLsPollIntervalMs = 500,
+    [int]$AutoCaptureTimeoutSeconds = 0,
+    [switch]$AutoStopOnRequirement
 )
 
 $ErrorActionPreference = "Stop"
+$autoCaptureEnabled = ($AutoCaptureTimeoutSeconds -gt 0)
+$captureRestoreHint = if ($autoCaptureEnabled) { "after capture completes." } else { "after you press Enter." }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
@@ -72,6 +80,49 @@ function Resolve-PortOwners {
         }
     }
     return $owners
+}
+
+function Resolve-ProcessIdByName {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProcessName,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -le $deadline) {
+        $proc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($proc) {
+            return $proc.Id
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
+}
+
+function Start-ConnectionPollerJob {
+    param(
+        [int]$ProcId,
+        [string]$OutCsv,
+        [int]$PollIntervalMs
+    )
+
+    $script = {
+        param($ProcId, $OutCsv, $PollIntervalMs)
+        $ErrorActionPreference = "SilentlyContinue"
+
+        "timestamp_utc,owning_process,local_address,local_port,remote_address,remote_port,state,applied_setting" | Out-File -FilePath $OutCsv -Encoding ascii
+        while ($true) {
+            $ts = (Get-Date).ToUniversalTime().ToString("o")
+            Get-NetTCPConnection -OwningProcess $ProcId -State Established |
+                Select-Object OwningProcess, LocalAddress, LocalPort, RemoteAddress, RemotePort, State, AppliedSetting |
+                ForEach-Object {
+                    "$ts,$($_.OwningProcess),$($_.LocalAddress),$($_.LocalPort),$($_.RemoteAddress),$($_.RemotePort),$($_.State),$($_.AppliedSetting)"
+                } | Out-File -FilePath $OutCsv -Append -Encoding ascii
+            Start-Sleep -Milliseconds $PollIntervalMs
+        }
+    }
+
+    return Start-Job -ScriptBlock $script -ArgumentList @($ProcId, $OutCsv, $PollIntervalMs)
 }
 
 function Resolve-Mitmdump {
@@ -145,10 +196,9 @@ $mitmdumpArgs = @(
     "-s", $addonPath
 )
 
-$mitmdumpStderrLog = Join-Path $projectRoot "output/mitmdump_stderr.log"
-$mitmdumpStdoutLog = Join-Path $projectRoot "output/mitmdump_stdout.log"
-if (Test-Path $mitmdumpStderrLog) { Remove-Item $mitmdumpStderrLog -Force }
-if (Test-Path $mitmdumpStdoutLog) { Remove-Item $mitmdumpStdoutLog -Force }
+$logStamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+$mitmdumpStderrLog = Join-Path $projectRoot ("output/mitmdump_stderr.{0}.log" -f $logStamp)
+$mitmdumpStdoutLog = Join-Path $projectRoot ("output/mitmdump_stdout.{0}.log" -f $logStamp)
 
 $ownersBefore = Resolve-PortOwners -Port $Port
 if ($ownersBefore.Count -gt 0) {
@@ -252,6 +302,10 @@ $systemProxyKey = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet
 
 $winHttpProxyWasSet = $false
 $winHttpProxyOriginal = $null
+
+$lsTraceJob = $null
+$lsTracePid = $null
+$lsTraceCsvAbs = $null
 
 function Get-SystemProxySnapshot {
     param([string]$KeyPath)
@@ -366,6 +420,219 @@ function Restore-SystemProxy {
     }
 }
 
+function Get-LiveCaptureStatus {
+    param([string]$CapturePath)
+
+    $result = [ordered]@{
+        total_records        = 0
+        google_records       = 0
+        generation_records   = 0
+        stream_records       = 0
+        cloudcode_records    = 0
+        oauth2_records       = 0
+        chatgpt_records      = 0
+        chat_openai_records  = 0
+        ab_chatgpt_records   = 0
+        generation_endpoints = @()
+    }
+
+    if (-not (Test-Path $CapturePath)) {
+        return [pscustomobject]$result
+    }
+
+    $generationEndpointMap = @{}
+    $generationPattern = "streamGenerateContent|streamGenerateChat|:generateContent(\?|$)|:generateChat(\?|$)|:generateCode(\?|$)|:completeCode(\?|$)|:internalAtomicAgenticChat(\?|$)|:tabChat(\?|$)"
+    $googlePattern = "(?i)^https?://[^/]*(googleapis\.com|google\.com)(?::\d+)?/"
+
+    foreach ($line in (Get-Content -Path $CapturePath -ErrorAction SilentlyContinue)) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        $obj = $null
+        try {
+            $obj = $trim | ConvertFrom-Json
+        } catch {
+            continue
+        }
+
+        $endpoint = [string]$obj.endpoint
+        if (-not $endpoint) {
+            $endpoint = [string]$obj.url
+        }
+        if (-not $endpoint) { continue }
+
+        $result.total_records++
+        if ($endpoint -match $googlePattern) {
+            $result.google_records++
+        }
+        $endpointHost = ""
+        try {
+            $endpointHost = ([System.Uri]$endpoint).Host.ToLowerInvariant()
+        } catch {
+            $endpointHost = ""
+        }
+        switch -Regex ($endpointHost) {
+            "^(daily-)?cloudcode-pa\.googleapis\.com$" {
+                $result.cloudcode_records++
+                break
+            }
+            "^oauth2\.googleapis\.com$" {
+                $result.oauth2_records++
+                break
+            }
+            "^chatgpt\.com$" {
+                $result.chatgpt_records++
+                break
+            }
+            "^chat\.openai\.com$" {
+                $result.chat_openai_records++
+                break
+            }
+            "^ab\.chatgpt\.com$" {
+                $result.ab_chatgpt_records++
+                break
+            }
+        }
+        if ($endpoint -match $generationPattern) {
+            $result.generation_records++
+            $generationEndpointMap[$endpoint] = $true
+            if ($endpoint -match "streamGenerate(Content|Chat)") {
+                $result.stream_records++
+            }
+        }
+    }
+
+    $result.generation_endpoints = @($generationEndpointMap.Keys | Sort-Object)
+    return [pscustomobject]$result
+}
+
+function Wait-ForCaptureCompletion {
+    param(
+        [string]$CapturePath,
+        [switch]$RequireStream,
+        [switch]$RequireStrictStream,
+        [int]$PollSeconds = 3,
+        [int]$AutoCaptureTimeoutSeconds = 0,
+        [switch]$AutoStopOnRequirement
+    )
+
+    $autoMode = ($AutoCaptureTimeoutSeconds -gt 0)
+    $deadline = $null
+    if ($autoMode) {
+        $deadline = (Get-Date).AddSeconds($AutoCaptureTimeoutSeconds)
+    }
+
+    $supportsLiveMonitor = $false
+    try {
+        $supportsLiveMonitor = ($Host.Name -eq "ConsoleHost" -and -not [Console]::IsInputRedirected)
+    } catch {
+        $supportsLiveMonitor = $false
+    }
+
+    if (-not $supportsLiveMonitor -and -not $autoMode) {
+        Read-Host "Press Enter when capture is complete"
+        return
+    }
+
+    if ($autoMode) {
+        Write-Host ("Auto capture mode enabled: timeout={0}s" -f $AutoCaptureTimeoutSeconds)
+        if ($AutoStopOnRequirement) {
+            Write-Host "  [live] Auto-stop when requirement is satisfied."
+        } else {
+            Write-Host "  [live] Auto-stop on timeout."
+        }
+    } else {
+        Write-Host "Press Enter when capture is complete."
+    }
+    if ($RequireStrictStream) {
+        Write-Host "  [live] Waiting for streaming generation endpoint..." -ForegroundColor DarkYellow
+    } elseif ($RequireStream) {
+        Write-Host "  [live] Waiting for generation endpoint (content/chat/code)..." -ForegroundColor DarkYellow
+    } else {
+        Write-Host "  [live] Monitoring capture progress (records/google/generation/stream)." -ForegroundColor DarkGray
+    }
+
+    $lastSummary = ""
+    $lastRouteSummary = ""
+    $satisfiedAnnounced = $false
+    $routeHintAnnounced = $false
+
+    while ($true) {
+        if (-not $autoMode -and $supportsLiveMonitor) {
+            try {
+                while ([Console]::KeyAvailable) {
+                    $key = [Console]::ReadKey($true)
+                    if ($key.Key -eq [System.ConsoleKey]::Enter) {
+                        Write-Host ""
+                        return
+                    }
+                }
+            } catch {
+                Read-Host "Press Enter when capture is complete"
+                return
+            }
+        }
+
+        $status = Get-LiveCaptureStatus -CapturePath $CapturePath
+        $summary = "records={0} google={1} generation={2} stream={3}" -f `
+            $status.total_records, $status.google_records, $status.generation_records, $status.stream_records
+        if ($summary -ne $lastSummary) {
+            Write-Host "  [live] $summary"
+            $lastSummary = $summary
+        }
+        $routeSummary = "cloudcode={0} oauth2={1} chatgpt={2} chat.openai={3} ab.chatgpt={4}" -f `
+            $status.cloudcode_records, $status.oauth2_records, $status.chatgpt_records, $status.chat_openai_records, $status.ab_chatgpt_records
+        if ($routeSummary -ne $lastRouteSummary) {
+            Write-Host "  [live] routes: $routeSummary"
+            $lastRouteSummary = $routeSummary
+        }
+
+        $isSatisfied = $false
+        if ($RequireStrictStream) {
+            $isSatisfied = $status.stream_records -gt 0
+        } elseif ($RequireStream) {
+            $isSatisfied = $status.generation_records -gt 0
+        } else {
+            # In non-stream mode, any captured target traffic is enough to satisfy capture.
+            $isSatisfied = $status.google_records -gt 0
+        }
+
+        if ($isSatisfied -and -not $satisfiedAnnounced) {
+            if ($RequireStrictStream -or $RequireStream) {
+                $epText = if ($status.generation_endpoints.Count -gt 0) {
+                    $status.generation_endpoints -join ", "
+                } else {
+                    "<unknown>"
+                }
+                Write-Host "  [live] Generation endpoint detected: $epText"
+            } else {
+                Write-Host "  [live] Target traffic detected."
+            }
+            Write-Host "  [live] Capture requirement satisfied; you can press Enter to stop." -ForegroundColor Green
+            $satisfiedAnnounced = $true
+        }
+        if ($autoMode -and $AutoStopOnRequirement -and $isSatisfied) {
+            Write-Host "  [live] Auto-stop: requirement satisfied." -ForegroundColor Green
+            return
+        }
+        if (
+            -not $routeHintAnnounced -and
+            $status.generation_records -eq 0 -and
+            ($status.chatgpt_records + $status.chat_openai_records + $status.ab_chatgpt_records) -gt $status.cloudcode_records
+        ) {
+            Write-Host "  [live] Hint: non-Google chat traffic currently dominates over cloudcode traffic." -ForegroundColor DarkYellow
+            Write-Host "  [live] Hint: verify you are in the Google-backed chat surface before stopping." -ForegroundColor DarkYellow
+            $routeHintAnnounced = $true
+        }
+
+        if ($autoMode -and $deadline -and (Get-Date) -ge $deadline) {
+            Write-Host ("  [live] Auto-stop: timeout reached ({0}s)." -f $AutoCaptureTimeoutSeconds) -ForegroundColor DarkYellow
+            return
+        }
+
+        Start-Sleep -Seconds $PollSeconds
+    }
+}
+
 try {
     Start-Sleep -Milliseconds 700
     if ($proc.HasExited) {
@@ -459,7 +726,7 @@ try {
 	                $ideProxyWasSet = $true
 	                Write-Host "Antigravity IDE proxy configured for this capture: $proxyUrl"
 	                if (-not $KeepAntigravityIdeProxy) {
-	                    Write-Host "It will be restored automatically after you press Enter."
+	                    Write-Host ("It will be restored automatically {0}" -f $captureRestoreHint)
 	                }
 	            }
 	        } catch {
@@ -480,7 +747,7 @@ try {
             Write-Host "  ProxyServer=$proxyUrl"
             Write-Host "  ProxyOverride=$override"
             if (-not $KeepSystemProxy) {
-                Write-Host "It will be restored automatically after you press Enter."
+                Write-Host ("It will be restored automatically {0}" -f $captureRestoreHint)
             }
         } catch {
             Write-Warning "Failed to set Windows system proxy automatically: $($_.Exception.Message)"
@@ -499,7 +766,7 @@ try {
             Write-Host "  ProxyServer=$proxyHostPort"
             Write-Host "  BypassList=$bypass"
             if (-not $KeepWinHttpProxy) {
-                Write-Host "It will be restored automatically after you press Enter."
+                Write-Host ("It will be restored automatically {0}" -f $captureRestoreHint)
             }
         } catch {
             Write-Warning "Failed to set WinHTTP proxy automatically: $($_.Exception.Message)"
@@ -555,7 +822,47 @@ try {
         Write-Host ""
     }
 
-    Read-Host "Press Enter when capture is complete"
+    if ($TraceLsConnections) {
+        try {
+            if ($TraceLsPollIntervalMs -lt 100) {
+                throw "TraceLsPollIntervalMs must be >= 100."
+            }
+
+            if ($TraceLsCsvPath) {
+                $lsTraceCsvAbs = Resolve-ProjectPath -Path $TraceLsCsvPath
+            } else {
+                $lsTraceCsvAbs = Join-Path $projectRoot ("output/ls_during_capture.{0}.connections.csv" -f $TraceLsProcessName)
+            }
+            $lsTraceDir = Split-Path -Parent $lsTraceCsvAbs
+            if ($lsTraceDir -and -not (Test-Path $lsTraceDir)) {
+                New-Item -ItemType Directory -Path $lsTraceDir -Force | Out-Null
+            }
+
+            if (Test-Path $lsTraceCsvAbs) {
+                Remove-Item $lsTraceCsvAbs -Force -ErrorAction SilentlyContinue
+            }
+
+            $lsTracePid = Resolve-ProcessIdByName -ProcessName $TraceLsProcessName -TimeoutSeconds 30
+            if ($null -eq $lsTracePid) {
+                throw "Could not find process '$TraceLsProcessName' to trace."
+            }
+
+            $lsTraceJob = Start-ConnectionPollerJob -ProcId $lsTracePid -OutCsv $lsTraceCsvAbs -PollIntervalMs $TraceLsPollIntervalMs
+            Write-Host "LS connection tracing enabled for this capture:"
+            Write-Host "  Process=$TraceLsProcessName PID=$lsTracePid"
+            Write-Host "  CSV=$lsTraceCsvAbs"
+        } catch {
+            Write-Warning "Failed to start LS connection tracing: $($_.Exception.Message)"
+        }
+        Write-Host ""
+    }
+
+    Wait-ForCaptureCompletion `
+        -CapturePath $captureTempAbs `
+        -RequireStream:$RequireStream `
+        -RequireStrictStream:$RequireStrictStream `
+        -AutoCaptureTimeoutSeconds $AutoCaptureTimeoutSeconds `
+        -AutoStopOnRequirement:$AutoStopOnRequirement
 }
 finally {
     $env:GEPHYR_MITM_OUT = $null
@@ -566,6 +873,28 @@ finally {
     $env:GEPHYR_MITM_TARGET_SUFFIXES = $null
     $env:GEPHYR_MITM_UA_CONTAINS = $null
     $env:GEPHYR_MITM_UA_EXCLUDE_CONTAINS = $null
+    if ($lsTraceJob) {
+        try {
+            Stop-Job $lsTraceJob -Force | Out-Null
+        } catch {}
+        try {
+            Remove-Job $lsTraceJob -Force | Out-Null
+        } catch {}
+        Write-Host "Stopped LS connection tracer."
+    }
+
+    if ($TraceLsConnections -and $lsTraceCsvAbs -and (Test-Path $lsTraceCsvAbs)) {
+        try {
+            $traceRows = Import-Csv -Path $lsTraceCsvAbs
+            $proxyRows = @($traceRows | Where-Object { $_.remote_address -eq "127.0.0.1" -and [int]$_.remote_port -eq $Port }).Count
+            $public443Rows = @($traceRows | Where-Object { $_.remote_address -ne "127.0.0.1" -and [int]$_.remote_port -eq 443 }).Count
+            Write-Host "LS trace saved: $lsTraceCsvAbs"
+            Write-Host "LS trace summary: rows=$($traceRows.Count), proxy_127.0.0.1:$Port=$proxyRows, public_443=$public443Rows"
+        } catch {
+            Write-Warning "Failed to summarize LS trace CSV: $($_.Exception.Message)"
+        }
+    }
+
     if ($proc -and -not $proc.HasExited) {
         Write-Host "Stopping mitmdump ..."
         Stop-Process -Id $proc.Id
@@ -746,10 +1075,10 @@ if ($RequireStream -or $RequireStrictStream) {
     )
     $generationEndpoints = @(
         $capturedEndpoints | Where-Object {
-            $_ -match "streamGenerateContent|:generateContent(\?|$)|:completeCode(\?|$)"
+            $_ -match "streamGenerateContent|streamGenerateChat|:generateContent(\?|$)|:generateChat(\?|$)|:generateCode(\?|$)|:completeCode(\?|$)|:internalAtomicAgenticChat(\?|$)|:tabChat(\?|$)"
         } | Sort-Object -Unique
     )
-    $streamEndpoints = @($generationEndpoints | Where-Object { $_ -match "streamGenerateContent" })
+    $streamEndpoints = @($generationEndpoints | Where-Object { $_ -match "streamGenerate(Content|Chat)" })
     $hasRequiredGeneration = if ($RequireStrictStream) {
         $streamEndpoints.Count -gt 0
     } else {
@@ -816,8 +1145,13 @@ $(
   What's missing:
     We need at least one of these endpoints:
       - streamGenerateContent
+      - streamGenerateChat
       - generateContent
+      - generateChat
+      - generateCode
       - completeCode
+      - internalAtomicAgenticChat
+      - tabChat
 "@
     }
 )

@@ -247,7 +247,10 @@ mod tests {
         assert_eq!(body["routes"]["POST /api/proxy/sticky"], true);
         assert_eq!(body["routes"]["GET /api/proxy/compliance"], true);
         assert_eq!(body["routes"]["POST /api/proxy/compliance"], true);
-        assert_eq!(body["routes"]["GET /api/proxy/google/outbound-policy"], true);
+        assert_eq!(
+            body["routes"]["GET /api/proxy/google/outbound-policy"],
+            true
+        );
         assert_eq!(body["routes"]["GET /api/proxy/tls-canary"], true);
         assert_eq!(body["routes"]["POST /api/proxy/tls-canary/run"], true);
         assert_eq!(body["routes"]["GET /api/proxy/operator-status"], true);
@@ -1327,5 +1330,176 @@ mod tests {
             strategy_body["strategy"],
             Value::from("weighted_round_robin")
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_version_routes_advertise_parity_endpoints() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let request = Request::builder()
+            .uri("/version/routes")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+
+        let (status, body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["routes"]["POST /api/proxy/parity/capture/start"], true);
+        assert_eq!(body["routes"]["POST /api/proxy/parity/capture/stop"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/parity/capture/status"], true);
+        assert_eq!(
+            body["routes"]["POST /api/proxy/parity/capture/export"],
+            true
+        );
+        assert_eq!(body["routes"]["POST /api/proxy/parity/diff/run"], true);
+        assert_eq!(body["routes"]["GET /api/proxy/parity/diff/latest"], true);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_parity_capture_routes_enforce_auth() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let router = build_test_router("admin-test-key");
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/proxy/parity/capture/start")
+            .header("Content-Type", "application/json")
+            .body(Body::from("{}"))
+            .expect("request");
+
+        let (status, _) = send(&router, request).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_parity_capture_start_status_stop_shape() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let start_request = Request::builder()
+            .method("POST")
+            .uri("/proxy/parity/capture/start")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "ring_limit": 512
+                })
+                .to_string(),
+            ))
+            .expect("request");
+        let (start_status, start_body) = send(&router, start_request).await;
+        assert_eq!(start_status, StatusCode::OK);
+        assert_eq!(start_body["ok"], true);
+        assert_eq!(start_body["status"]["enabled"], true);
+        assert_eq!(start_body["status"]["ring_limit"], Value::from(512));
+        assert!(start_body["status"]["session_id"].is_string());
+
+        let status_request = Request::builder()
+            .uri("/proxy/parity/capture/status")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (status_status, status_body) = send(&router, status_request).await;
+        assert_eq!(status_status, StatusCode::OK);
+        assert_eq!(status_body["enabled"], true);
+        assert!(status_body["captured_count"].is_number());
+
+        let stop_request = Request::builder()
+            .method("POST")
+            .uri("/proxy/parity/capture/stop")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (stop_status, stop_body) = send(&router, stop_request).await;
+        assert_eq!(stop_status, StatusCode::OK);
+        assert_eq!(stop_body["status"]["enabled"], false);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_parity_diff_latest_not_found_before_run() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        crate::proxy::parity::capture::clear_latest_diff();
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let request = Request::builder()
+            .uri("/proxy/parity/diff/latest")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (status, _) = send(&router, request).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn admin_parity_diff_run_with_fixture_traces() {
+        let _guard = ADMIN_ENDPOINT_TEST_LOCK
+            .lock()
+            .expect("admin endpoint test lock");
+        crate::proxy::parity::capture::clear_latest_diff();
+        let api_key = "admin-test-key";
+        let router = build_test_router(api_key);
+
+        let dir =
+            std::env::temp_dir().join(format!("gephyr-admin-parity-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let gephyr_path = dir.join("gephyr.jsonl");
+        let known_path = dir.join("known.jsonl");
+
+        std::fs::write(
+            &gephyr_path,
+            r#"{"endpoint":"https://cloudcode-pa.googleapis.com/v1internal:test","method":"POST","mode":"gephyr","headers":{"content-type":"application/json"}}"#,
+        )
+        .expect("write gephyr fixture");
+        std::fs::write(
+            &known_path,
+            r#"{"endpoint":"https://cloudcode-pa.googleapis.com/v1internal:test","method":"POST","mode":"known_good","headers":{"content-type":"application/json"}}"#,
+        )
+        .expect("write known fixture");
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/proxy/parity/diff/run")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                json!({
+                    "gephyr_path": gephyr_path.to_string_lossy().to_string(),
+                    "known_good_path": known_path.to_string_lossy().to_string()
+                })
+                .to_string(),
+            ))
+            .expect("request");
+
+        let (status, body) = send(&router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["report"]["gate_pass"], true);
+        assert_eq!(body["report"]["overall_verdict"], "pass");
+
+        let latest_request = Request::builder()
+            .uri("/proxy/parity/diff/latest")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(Body::empty())
+            .expect("request");
+        let (latest_status, latest_body) = send(&router, latest_request).await;
+        assert_eq!(latest_status, StatusCode::OK);
+        assert_eq!(latest_body["gate_pass"], true);
+
+        let _ = std::fs::remove_file(gephyr_path);
+        let _ = std::fs::remove_file(known_path);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

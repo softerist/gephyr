@@ -589,24 +589,29 @@ fn ensure_device_profile_on_switch(account: &mut Account) -> Result<(), String> 
         return Ok(());
     }
 
-    let storage_path = match crate::modules::system::device::get_storage_path() {
-        Ok(path) => path,
+    let profile = match crate::modules::system::device::get_storage_path() {
+        Ok(path) => match crate::modules::system::device::read_profile(&path) {
+            Ok(p) => {
+                crate::modules::system::logger::log_info(&format!(
+                    "[DeviceProfile] Captured device profile from storage.json for {}.",
+                    account.email
+                ));
+                p
+            }
+            Err(e) => {
+                crate::modules::system::logger::log_warn(&format!(
+                    "[DeviceProfile] Failed to read storage.json for {} ({}). Generating baseline device profile.",
+                    account.email, e
+                ));
+                crate::modules::system::device::generate_profile()
+            }
+        },
         Err(e) => {
             crate::modules::system::logger::log_warn(&format!(
-                "[DeviceProfile] No bound profile for {}, and storage.json not available ({}). Proceeding without device profile.",
+                "[DeviceProfile] No bound profile for {}, and storage.json not available ({}). Generating baseline device profile.",
                 account.email, e
             ));
-            return Ok(());
-        }
-    };
-    let profile = match crate::modules::system::device::read_profile(&storage_path) {
-        Ok(p) => p,
-        Err(e) => {
-            crate::modules::system::logger::log_warn(&format!(
-                "[DeviceProfile] Failed to read storage.json for {} ({}). Proceeding without device profile.",
-                account.email, e
-            ));
-            return Ok(());
+            crate::modules::system::device::generate_profile()
         }
     };
 
@@ -614,11 +619,11 @@ fn ensure_device_profile_on_switch(account: &mut Account) -> Result<(), String> 
     apply_profile_to_account(
         account,
         profile.clone(),
-        Some("capture_on_switch".to_string()),
+        Some("auto_baseline".to_string()),
         true,
     )?;
     crate::modules::system::logger::log_info(&format!(
-        "[DeviceProfile] Captured device profile on switch for {}.",
+        "[DeviceProfile] Bound device profile on switch for {}.",
         account.email
     ));
     Ok(())
@@ -1502,23 +1507,44 @@ mod tests {
     }
 
     #[test]
-    fn ensure_device_profile_on_switch_does_not_generate_when_storage_override_missing() {
+    fn ensure_device_profile_on_switch_generates_baseline_when_storage_override_missing() {
         let _env_guard = lock_env();
+
+        let data_dir = make_temp_data_dir();
+        let _data_dir_env = ScopedEnvVar::set("DATA_DIR", data_dir.to_string_lossy().as_ref());
 
         let _storage_override = ScopedEnvVar::set(
             "ANTIGRAVITY_STORAGE_JSON_PATH",
             "Z:\\this-path-does-not-exist\\storage.json",
         );
 
-        let mut account = crate::models::account::Account::new(
-            "acct-1".to_string(),
-            "no-device@example.com".to_string(),
-            make_token("no-device@example.com", "t1"),
+        write_account_fixture(
+            &data_dir,
+            "acct-gen",
+            "gendev@example.com",
+            "plain-access-token",
+            "plain-refresh-token",
         );
+        let mut account = load_account("acct-gen").expect("load account");
         account.device_profile = None;
+        super::save_account(&account).expect("save without device profile");
 
         ensure_device_profile_on_switch(&mut account).expect("should not error");
-        assert!(account.device_profile.is_none());
+        let profile = account
+            .device_profile
+            .expect("should have auto-generated device profile");
+        assert!(
+            profile.machine_id.is_some(),
+            "generated profile should have a machine_id"
+        );
+        assert!(
+            crate::modules::system::device::is_valid_machine_id(
+                profile.machine_id.as_ref().unwrap()
+            ),
+            "generated machine_id should be a valid 64-char hex string"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 
     #[test]

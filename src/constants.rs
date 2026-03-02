@@ -2,6 +2,16 @@ use std::sync::LazyLock;
 
 const FALLBACK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn user_agent_platform() -> String {
+    let os = std::env::consts::OS;
+    let arch = match (os, std::env::consts::ARCH) {
+        ("windows", "x86_64") => "amd64",
+        ("windows", "aarch64") => "arm64",
+        _ => std::env::consts::ARCH,
+    };
+    format!("{}/{}", os, arch)
+}
+
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     tracing::info!(
         version = %FALLBACK_VERSION,
@@ -9,12 +19,7 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "User-Agent initialized"
     );
 
-    format!(
-        "antigravity/{} {}/{}",
-        FALLBACK_VERSION,
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
+    format!("antigravity/{} {}", FALLBACK_VERSION, user_agent_platform())
 });
 
 #[cfg(test)]
@@ -29,7 +34,7 @@ mod tests {
 
     #[test]
     fn user_agent_contains_platform_suffix() {
-        let platform = format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH);
+        let platform = user_agent_platform();
         assert!(USER_AGENT.ends_with(&platform));
     }
 }

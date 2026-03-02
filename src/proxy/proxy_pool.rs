@@ -126,10 +126,7 @@ impl ProxyPoolManager {
 
         if !config.enabled || config.proxies.is_empty() {
             if config.require_proxy_for_account_requests {
-                self.note_strict_rejection(
-                    account_id,
-                    "pool disabled or no proxies configured",
-                );
+                self.note_strict_rejection(account_id, "pool disabled or no proxies configured");
                 return Err(
                     "Proxy routing rejected: proxy pool is disabled or has no proxies configured"
                         .to_string(),

@@ -220,12 +220,14 @@ impl AxumServer {
         ));
         let request_timeout_secs = request_timeout.max(5);
         let upstream = {
-            let u = Arc::new(crate::proxy::upstream::client::UpstreamClient::new_with_google_config(
-                Some(upstream_proxy.clone()),
-                Some(proxy_pool_manager.clone()),
-                google_config.clone(),
-                debug_logging.clone(),
-            ));
+            let u = Arc::new(
+                crate::proxy::upstream::client::UpstreamClient::new_with_google_config(
+                    Some(upstream_proxy.clone()),
+                    Some(proxy_pool_manager.clone()),
+                    google_config.clone(),
+                    debug_logging.clone(),
+                ),
+            );
             if user_agent_override.is_some() {
                 u.set_user_agent_override(user_agent_override).await;
             }

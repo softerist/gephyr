@@ -7,6 +7,7 @@ These files split the code-derived capability report into focused sections.
 - API surface: `docs/agents/API_SURFACE.md`
 - Runtime and routing: `docs/agents/RUNTIME_ROUTING.md`
 - Security and auth: `docs/agents/SECURITY_AUTH.md`
+- Parity harness runbook: `docs/agents/PARITY_HARNESS.md`
 - Google trace validation runbook: `docs/agents/GOOGLE_TRACE_VALIDATION.md`
 - Google strict mimic validation: `docs/agents/GOOGLE_STRICT_MIMIC_VALIDATION.md`
 - Google generation mapping guardrail (static): `scripts/validate-google-generation-mapping.ps1`

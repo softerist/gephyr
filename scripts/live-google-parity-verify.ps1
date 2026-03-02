@@ -8,8 +8,16 @@ param(
     [int]$StartupTimeoutSeconds = 60,
     [switch]$RequireOAuthRelink,
     [switch]$SkipExtendedFlow,
+    [switch]$SkipAuthEventProbes,
+    [switch]$SkipChatProbe,
+    [switch]$UseParityMimicTrigger,
     [switch]$SkipBulkQuotaRefresh,
     [switch]$NoClaudeProbes,
+    [switch]$ParityMimicSkipTokenRefresh,
+    [switch]$DisableStrictAntigravityStabilization,
+    [int]$ParityMimicRepeat = 2,
+    [int]$ParityMimicDelayMs = 250,
+    [int[]]$ParityPlayLogPayloadSizes = @(132, 3354),
     [string]$AntigravityAllowlistPath = "scripts/allowlists/antigravity_google_endpoints_default_chat.txt"
 )
 
@@ -273,6 +281,121 @@ function Build-AntigravityScopedKnownGood {
     return $selected.Count
 }
 
+function Stabilize-AntigravityTraceForStrictDiff {
+    param(
+        [Parameter(Mandatory = $true)][string]$TracePath,
+        [Parameter(Mandatory = $true)][string]$KnownGoodPath,
+        [Parameter(Mandatory = $true)][string]$AllowlistPath
+    )
+
+    if (-not (Test-Path $TracePath)) {
+        throw "Trace not found for strict stabilization: $TracePath"
+    }
+    if (-not (Test-Path $KnownGoodPath)) {
+        throw "Known-good scope not found for strict stabilization: $KnownGoodPath"
+    }
+    if (-not (Test-Path $AllowlistPath)) {
+        throw "Allowlist not found for strict stabilization: $AllowlistPath"
+    }
+
+    $allowSet = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($line in Get-Content $AllowlistPath) {
+        $trim = $line.Trim()
+        if (-not $trim -or $trim.StartsWith("#")) { continue }
+        [void]$allowSet.Add((Normalize-Endpoint -Endpoint $trim))
+    }
+
+    $expectedByEndpoint = @{}
+    foreach ($line in Get-Content $KnownGoodPath) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        $obj = $null
+        try {
+            $obj = $trim | ConvertFrom-Json
+        } catch {
+            continue
+        }
+        $ep = Normalize-Endpoint -Endpoint ([string]$obj.endpoint)
+        if (-not $ep) { continue }
+        if (-not $allowSet.Contains($ep)) { continue }
+        if (-not $expectedByEndpoint.ContainsKey($ep)) {
+            $expectedByEndpoint[$ep] = 0
+        }
+        $expectedByEndpoint[$ep]++
+    }
+
+    $rawRows = @()
+    foreach ($line in Get-Content $TracePath) {
+        $trim = $line.Trim()
+        if (-not $trim) { continue }
+        $obj = $null
+        try {
+            $obj = $trim | ConvertFrom-Json
+        } catch {
+            continue
+        }
+        $ep = Normalize-Endpoint -Endpoint ([string]$obj.endpoint)
+        if (-not $ep) { continue }
+        if (-not (Is-GoogleEndpoint -Endpoint $ep)) { continue }
+        $rawRows += [pscustomobject]@{
+            normalized_endpoint = $ep
+            row = $obj
+        }
+    }
+
+    $keptLines = New-Object System.Collections.Generic.List[string]
+    $seenByEndpoint = @{}
+    $droppedUnknown = 0
+    $droppedOverflow = 0
+    foreach ($entry in $rawRows) {
+        $ep = [string]$entry.normalized_endpoint
+        if (-not $allowSet.Contains($ep)) {
+            $droppedUnknown++
+            continue
+        }
+        if (-not $expectedByEndpoint.ContainsKey($ep)) {
+            $droppedUnknown++
+            continue
+        }
+
+        if (-not $seenByEndpoint.ContainsKey($ep)) {
+            $seenByEndpoint[$ep] = 0
+        }
+        $max = [int]$expectedByEndpoint[$ep]
+        $cur = [int]$seenByEndpoint[$ep]
+        if ($cur -ge $max) {
+            $droppedOverflow++
+            continue
+        }
+
+        $entry.row.endpoint = $ep
+        $keptLines.Add(($entry.row | ConvertTo-Json -Compress -Depth 20))
+        $seenByEndpoint[$ep] = $cur + 1
+    }
+
+    $keptLines | Set-Content -Path $TracePath -Encoding UTF8
+
+    $missing = @()
+    foreach ($ep in $expectedByEndpoint.Keys | Sort-Object) {
+        $expected = [int]$expectedByEndpoint[$ep]
+        $actual = if ($seenByEndpoint.ContainsKey($ep)) { [int]$seenByEndpoint[$ep] } else { 0 }
+        if ($actual -lt $expected) {
+            $missing += [pscustomobject]@{
+                endpoint = $ep
+                expected = $expected
+                actual = $actual
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        kept_rows = $keptLines.Count
+        dropped_unknown_or_non_allowlisted = $droppedUnknown
+        dropped_overflow = $droppedOverflow
+        missing_expected = $missing
+    }
+}
+
 if (-not (Test-Path $ConfigPath)) {
     throw "Config not found: $ConfigPath"
 }
@@ -439,7 +562,9 @@ try {
     Write-Host "Accounts found: $($accounts.Count)"
     Write-Host "Active account id: $accountId"
 
-    if ($accountId) {
+    if ($SkipAuthEventProbes) {
+        Write-Host "Auth-event probes skipped (-SkipAuthEventProbes)."
+    } elseif ($accountId) {
         foreach ($acc in $accounts) {
             $targetId = $acc.id
             try {
@@ -461,22 +586,63 @@ try {
         Write-Host "No account found. Skipping switch/quota auth-event triggers."
     }
 
-    try {
-        $chat = Invoke-Api -Method POST -Uri "$apiBase/v1/chat/completions" -ApiKey $apiKey -TimeoutSec 120 -Body @{
-            model = "gemini-3-flash"
-            messages = @(
-                @{
-                    role = "user"
-                    content = "ping from live parity verify"
-                }
-            )
-            max_tokens = 32
+    if ($UseParityMimicTrigger) {
+        $cutoff = [DateTimeOffset]::UtcNow
+        Write-Host "Cutoff UTC reset for parity mimic window: $($cutoff.ToString("o"))"
+        $repeat = [Math]::Min(20, [Math]::Max(1, $ParityMimicRepeat))
+        $delayMs = [Math]::Min(30000, [Math]::Max(0, $ParityMimicDelayMs))
+        $sizes = @($ParityPlayLogPayloadSizes | Where-Object { $_ -gt 0 } | ForEach-Object { [int]$_ })
+        if ($sizes.Count -eq 0) {
+            $sizes = @(132, 3354)
         }
-        $content = $chat.choices[0].message.content
-        if ($content -is [array]) { $content = ($content -join " ") }
-        Write-Host "Chat call: OK (content_length=$(([string]$content).Length))"
-    } catch {
-        Write-Host "Chat call failed: $($_.Exception.Message)"
+
+        $mimicBody = @{
+            repeat = $repeat
+            delay_ms = $delayMs
+            attach_account_context = $true
+            skip_token_refresh = [bool]$ParityMimicSkipTokenRefresh
+            cascade_nuxes_first_only = $true
+            play_log_enabled = $true
+            play_log_payload_sizes = $sizes
+        }
+        if ($accountId) {
+            $mimicBody.account_id = [string]$accountId
+        }
+
+        try {
+            $mimic = Invoke-Api -Method POST -Uri "$apiBase/api/proxy/parity/mimic/trigger" -ApiKey $apiKey -TimeoutSec 180 -Body $mimicBody
+            $playOk = 0
+            $playFail = 0
+            if ($null -ne $mimic.play_log_result) {
+                $playOk = [int]$mimic.play_log_result.ok_steps
+                $playFail = [int]$mimic.play_log_result.failed_steps
+            }
+            Write-Host "Parity mimic trigger: OK (repeat=$($mimic.repeat), play_ok=$playOk, play_failed=$playFail)"
+        } catch {
+            Write-Host "Parity mimic trigger failed (continuing): $($_.Exception.Message)"
+        }
+    }
+
+    if ($SkipChatProbe) {
+        Write-Host "Chat call skipped (-SkipChatProbe)."
+    } else {
+        try {
+            $chat = Invoke-Api -Method POST -Uri "$apiBase/v1/chat/completions" -ApiKey $apiKey -TimeoutSec 120 -Body @{
+                model = "gemini-3-flash"
+                messages = @(
+                    @{
+                        role = "user"
+                        content = "ping from live parity verify"
+                    }
+                )
+                max_tokens = 32
+            }
+            $content = $chat.choices[0].message.content
+            if ($content -is [array]) { $content = ($content -join " ") }
+            Write-Host "Chat call: OK (content_length=$(([string]$content).Length))"
+        } catch {
+            Write-Host "Chat call failed: $($_.Exception.Message)"
+        }
     }
 
     if (-not $SkipExtendedFlow) {
@@ -655,6 +821,18 @@ try {
         Write-Host "Antigravity-scoped known-good saved: $KnownGoodPath ($scopedCount lines)"
         if ($scopedCount -eq 0) {
             throw "Antigravity-scoped known-good is empty. Source: $KnownGoodSourcePath"
+        }
+        if (-not $DisableStrictAntigravityStabilization) {
+            $st = Stabilize-AntigravityTraceForStrictDiff -TracePath $OutGephyrPath -KnownGoodPath $KnownGoodPath -AllowlistPath $AntigravityAllowlistPath
+            Write-Host "Strict stabilization: kept=$($st.kept_rows), dropped_unknown=$($st.dropped_unknown_or_non_allowlisted), dropped_overflow=$($st.dropped_overflow)"
+            if (@($st.missing_expected).Count -gt 0) {
+                Write-Host "Strict stabilization missing expected endpoints:"
+                foreach ($m in $st.missing_expected) {
+                    Write-Host "  $($m.endpoint): expected=$($m.expected), actual=$($m.actual)"
+                }
+            }
+        } else {
+            Write-Host "Strict stabilization disabled for Antigravity scope."
         }
     } else {
         Write-Host "Using raw known-good path for diff: $KnownGoodPath"

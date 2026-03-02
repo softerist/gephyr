@@ -287,7 +287,9 @@ pub fn decrypt_string(encrypted: &str) -> Result<String, String> {
     let cipher = Aes256Gcm::new(&key.into());
 
     let is_v2 = encrypted.starts_with(CIPHERTEXT_V2_PREFIX);
-    let encoded_payload = encrypted.strip_prefix(CIPHERTEXT_V2_PREFIX).unwrap_or(encrypted);
+    let encoded_payload = encrypted
+        .strip_prefix(CIPHERTEXT_V2_PREFIX)
+        .unwrap_or(encrypted);
 
     let decoded = general_purpose::STANDARD
         .decode(encoded_payload)
@@ -485,10 +487,9 @@ mod tests {
 
     #[test]
     fn weak_key_classifier_flags_known_weak_values() {
-        let reason = classify_env_encryption_key_weakness(
-            "your_encryption_key_here________________",
-        )
-        .expect("known weak value");
+        let reason =
+            classify_env_encryption_key_weakness("your_encryption_key_here________________")
+                .expect("known weak value");
         assert_eq!(reason, "known_weak_value");
     }
 
@@ -501,8 +502,7 @@ mod tests {
 
     #[test]
     fn weak_key_classifier_accepts_high_entropy_like_values() {
-        let reason =
-            classify_env_encryption_key_weakness("vM9$K2q!tL7#xP4@cN8%rD3^hS6&zQ1*");
+        let reason = classify_env_encryption_key_weakness("vM9$K2q!tL7#xP4@cN8%rD3^hS6&zQ1*");
         assert!(reason.is_none());
     }
 }

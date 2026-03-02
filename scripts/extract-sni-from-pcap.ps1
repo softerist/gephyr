@@ -11,13 +11,12 @@ function Resolve-TsharkPath {
     if ($cmd) { return $cmd.Source }
 
     $candidates = @(
-        (Join-Path $env:ProgramFiles "Wireshark\\tshark.exe"),
-        (Join-Path ${env:ProgramFiles(x86)} "Wireshark\\tshark.exe")
+        (Join-Path $env:ProgramFiles "Wireshark\tshark.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Wireshark\tshark.exe")
     )
     foreach ($c in $candidates) {
         if ($c -and (Test-Path $c)) {
-            # Normalize accidental double-backslashes in the constructed path.
-            return ($c -replace "\\\\+", "\\")
+            return (Resolve-Path $c).Path
         }
     }
     return $null
@@ -117,4 +116,3 @@ if (-not $hits.Count) {
 Write-Host "Top host-like strings:"
 $hits | Group-Object | Sort-Object Count -Descending | Select-Object -First $Top |
     ForEach-Object { "{0,6}  {1}" -f $_.Count, $_.Name }
-

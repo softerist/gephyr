@@ -14,6 +14,7 @@ PROCESS_NAME="language_server_linux_x64"
 POLL_INTERVAL_MS=500
 PKT_SIZE=0
 MAX_FILE_SIZE_MB=512
+DURATION_SECONDS=0
 NO_TCPDUMP=false
 NO_CONNECTION_POLL=false
 
@@ -29,6 +30,7 @@ Options:
   --poll-interval-ms <ms>   Connection poll interval. Default: 500
   --pkt-size <n>            Snap length (0=full). Default: 0
   --max-file-size-mb <n>    Max pcap file size. Default: 512
+  --duration-seconds <n>    Auto-stop after N seconds (0=manual). Default: 0
   --no-tcpdump              Skip tcpdump capture
   --no-connection-poll      Skip connection polling
   -h, --help                Show help
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --poll-interval-ms) POLL_INTERVAL_MS="$2"; shift 2 ;;
     --pkt-size) PKT_SIZE="$2"; shift 2 ;;
     --max-file-size-mb) MAX_FILE_SIZE_MB="$2"; shift 2 ;;
+    --duration-seconds) DURATION_SECONDS="$2"; shift 2 ;;
     --no-tcpdump) NO_TCPDUMP=true; shift ;;
     --no-connection-poll) NO_CONNECTION_POLL=true; shift ;;
     -h|--help) show_usage; exit 0 ;;
@@ -89,7 +92,11 @@ echo ""
 echo "Steps:"
 echo "1) Script will start tcpdump capture (port 443, TCP+UDP)."
 echo "2) Trigger Antigravity Agent chat activity (send a message, wait for response)."
-echo "3) Press Enter here to stop capture and write outputs."
+if [[ "$DURATION_SECONDS" -gt 0 ]]; then
+  echo "3) Capture auto-stops after $DURATION_SECONDS second(s)."
+else
+  echo "3) Press Enter here to stop capture and write outputs."
+fi
 echo ""
 
 tcpdump_pid=""
@@ -163,7 +170,12 @@ else
   echo "WARNING: Skipping connection poll (--no-connection-poll)." >&2
 fi
 
-read -r -p "Press Enter when done "
+if [[ "$DURATION_SECONDS" -gt 0 ]]; then
+  echo "Capturing for $DURATION_SECONDS second(s)..."
+  sleep "$DURATION_SECONDS"
+else
+  read -r -p "Press Enter when done "
+fi
 
 # Cleanup handled by trap
 echo ""

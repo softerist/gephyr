@@ -5,6 +5,13 @@ param(
     [int]$StartupTimeoutSeconds = 60,
     [switch]$RequireOAuthRelink,
     [string]$AllowlistPath = "scripts/allowlists/antigravity_google_endpoints_default_chat.txt",
+    [switch]$SkipParityMimicTrigger,
+    [switch]$AllowMimicTokenRefresh,
+    [switch]$RefreshInclusive,
+    [switch]$IncludeChatProbe,
+    [switch]$IncludeAuthEventProbes,
+    [switch]$IncludeExtendedFlow,
+    [switch]$AllowMissingAllowlistEndpoints,
     [switch]$SkipAllowlistValidation
 )
 
@@ -30,6 +37,26 @@ $args = @(
 if ($RequireOAuthRelink) {
     $args += "-RequireOAuthRelink"
 }
+$effectiveAllowMimicTokenRefresh = [bool]$AllowMimicTokenRefresh
+if ($RefreshInclusive) {
+    $effectiveAllowMimicTokenRefresh = $true
+    $args += "-DisableStrictAntigravityStabilization"
+}
+if (-not $SkipParityMimicTrigger) {
+    $args += "-UseParityMimicTrigger"
+    if (-not $effectiveAllowMimicTokenRefresh) {
+        $args += "-ParityMimicSkipTokenRefresh"
+    }
+}
+if (-not $IncludeChatProbe) {
+    $args += "-SkipChatProbe"
+}
+if (-not $IncludeAuthEventProbes) {
+    $args += "-SkipAuthEventProbes"
+}
+if (-not $IncludeExtendedFlow) {
+    $args += "-SkipExtendedFlow"
+}
 
 & powershell @args
 if ($LASTEXITCODE -ne 0) {
@@ -41,7 +68,19 @@ if (-not $SkipAllowlistValidation) {
         throw "Expected Gephyr outbound trace not found for allowlist validation: $OutGephyrPath"
     }
     Write-Host "Running Antigravity Google endpoint allowlist validation ..."
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "validate-antigravity-allowed-google-endpoints.ps1") `
-        -TracePath $OutGephyrPath `
-        -AllowlistPath $AllowlistPath
+    $validateArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $PSScriptRoot "validate-antigravity-allowed-google-endpoints.ps1"),
+        "-TracePath", $OutGephyrPath,
+        "-AllowlistPath", $AllowlistPath
+    )
+    if ($RefreshInclusive) {
+        $validateArgs += "-AllowedExtraGoogleEndpoints"
+        $validateArgs += "https://oauth2.googleapis.com/token"
+    }
+    if (-not $AllowMissingAllowlistEndpoints) {
+        $validateArgs += "-RequireAllAllowedObserved"
+    }
+    & powershell @validateArgs
 }

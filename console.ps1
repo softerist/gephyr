@@ -39,55 +39,62 @@ Usage:
   .\console.ps1 -Command <command> [options]
 
 Commands:
-  help         Show this help
-  start        Start container (default)
-  stop         Stop and remove container
-  restart      Restart container
-  status       Show container status
-  logs         Show container logs
-  health       Call /health with API key
-  check        Run account token health check (refresh expiring tokens)
-  canary       Show/Run TLS stealth canary probe (use --run to trigger)
-  login        Start container with admin API, fetch /api/auth/url, open browser
-  oauth/auth   Alias for login
-  accounts     Call /api/accounts
-  api-test     Run one API test completion
-  api-test-all Run one quick API test per provider (OpenAI/Claude/Gemini)
-  rotate-key   Generate new API key, save to .env.local, and optionally restart
-  docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
-  rebuild      Rebuild Docker image from source
-  update       Pull latest code, rebuild image, and restart container
-  version      Show version from Cargo.toml
-  accounts-signout <accountId|email>  Sign out one account (revoke + local token clear/disable)
-  accounts-signout-and-delete <accountId|email>  Sign out one account and delete local record
-  accounts-signout-all  Sign out all linked accounts (revoke + local token clear/disable)
-  accounts-signout-all-and-stop  Sign out all linked accounts, then stop container
-  accounts-delete <accountId|email>  Delete one local account record (does not revoke)
-  accounts-delete-and-stop <accountId|email>  Delete one local account record, then stop container
-  accounts-delete-all   Delete local account records (does not revoke)
-  accounts-delete-all-and-stop  Delete local accounts, then stop container
+  help                                              Show this help
+  start                                             Start container (default)
+  stop                                              Stop and remove container
+  restart                                           Restart container
+  status                                            Show container status
+  logs                                              Show container logs
+  health                                            Call /health with API key
+  check                                             Run account token health check (refresh expiring tokens)
+  canary                                            Show/Run TLS stealth canary probe (use --run to trigger)
+  login                                             Start container with admin API, fetch /api/auth/url, open browser
+  oauth/auth                                        Alias for login
+  accounts                                          Call /api/accounts
+  api-test                                          Run one API test completion
+  api-test-all                                      Run one quick API test per provider (OpenAI/Claude/Gemini)
+  parity-master                                     Run end-to-end 1:1 parity validation (live + gates)
+  rotate-key                                        Generate new API key, save to .env.local, and optionally restart
+  docker-repair                                     Repair Docker builder cache issues (e.g., missing snapshot errors)
+  rebuild                                           Rebuild Docker image from source
+  update                                            Pull latest code, rebuild image, and restart container
+  version                                           Show version from Cargo.toml
+  accounts-signout <accountId|email>                Sign out one account (revoke + local token clear/disable)
+  accounts-signout-and-delete <accountId|email>     Sign out one account and delete local record
+  accounts-signout-all                              Sign out all linked accounts (revoke + local token clear/disable)
+  accounts-signout-all-and-stop                     Sign out all linked accounts, then stop container
+  accounts-delete <accountId|email>                 Delete one local account record (does not revoke)
+  accounts-delete-and-stop <accountId|email>        Delete one local account record, then stop container
+  accounts-delete-all                               Delete local account records (does not revoke)
+  accounts-delete-all-and-stop                      Delete local accounts, then stop container
 
 Options:
-  -EnableAdminApi        Enable admin API on start/restart (default false)
-  -Port <int>            Host port (default 8045)
-  -ContainerName <name>  Container name (default gephyr)
-  -Image <name>          Docker image (default gephyr:latest)
-  -DataDir <path>        Host data dir (default %USERPROFILE%\.gephyr)
-  -LogLines <int>        Number of log lines for logs command (default 120)
-  -Model <name>          Model for api-test and OpenAI test in api-test-all (default gpt-5.3-codex)
-  -ClaudeModel <name>    Model for Claude test in api-test-all (default claude-haiku-4-5)
-  -Prompt <text>         Prompt for api-test
-  -NoBrowser             Do not open browser for login command
-  -NoRestartAfterRotate  Rotate key without container restart
-  -Aggressive            For docker-repair: remove all builder cache (slower next build)
-  -Json                  Output machine-readable JSON (for status, health, accounts)
-  -Quiet                 Suppress non-essential output (for CI/automation)
-  -NoCache               For rebuild: build without Docker cache
-  -SingleAttempt         For api-test-all: temporarily force single-attempt retry policy
-                         (proxy.compliance.enabled=true + max_retry_attempts=1)
-  -TestPipe              For api-test-all pipeline safety: applies -SingleAttempt and
-                         temporarily sets auto_refresh=false
-                         Aliases via ExtraArgs: --no-retry, --single-attempt, --test-pipe
+  -EnableAdminApi                                   Enable admin API on start/restart (default false)
+  -Port <int>                                       Host port (default 8045)
+  -ContainerName <name>                             Container name (default gephyr)
+  -Image <name>                                     Docker image (default gephyr:latest)
+  -DataDir <path>                                   Host data dir (default %USERPROFILE%\.gephyr)
+  -LogLines <int>                                   Number of log lines for logs command (default 120)
+  -Model <name>                                     Model for api-test and OpenAI test in api-test-all (default gpt-5.3-codex)
+  -ClaudeModel <name>                               Model for Claude test in api-test-all (default claude-haiku-4-5)
+  -Prompt <text>                                    Prompt for api-test
+  -NoBrowser                                        Do not open browser for login command
+  -NoRestartAfterRotate                             Rotate key without container restart
+  -Aggressive                                       For docker-repair: remove all builder cache (slower next build)
+  -Json                                             Output machine-readable JSON (for status, health, accounts)
+  -Quiet                                            Suppress non-essential output (for CI/automation)
+  -NoCache                                          For rebuild: build without Docker cache
+  -SingleAttempt                                    For api-test-all: temporarily force single-attempt retry policy
+                                                    (proxy.compliance.enabled=true + max_retry_attempts=1)
+  -TestPipe                                         For api-test-all pipeline safety: applies -SingleAttempt and
+                                                    temporarily sets auto_refresh=false
+                                                    Aliases via ExtraArgs: --no-retry, --single-attempt, --test-pipe
+  Parity master passthrough options:
+    --no-auto-capture-known-good                    Disable auto official capture bootstrap when known-good is missing
+    --known-good-capture-port <int>                 Capture port for auto official bootstrap (default 8891)
+    --known-good-antigravity-exe <path>             Explicit Antigravity.exe path for auto official bootstrap
+    --known-good-capture-require-stream             Require generation/stream endpoint during auto official bootstrap
+    --skip-ls-sni-preflight                         Skip Wireshark/tshark LS SNI preflight before official auto-capture
 
 Examples:
   .\console.ps1 start
@@ -96,6 +103,12 @@ Examples:
   .\console.ps1 api-test-all
   .\console.ps1 api-test-all -SingleAttempt
   .\console.ps1 api-test-all -TestPipe
+  .\console.ps1 parity-master
+    default behavior: auto-capture known-good if missing, auto-detect Antigravity path, and attach to running IDE when possible
+  .\console.ps1 parity-master --known-good-path output/known_good.discovery.jsonl
+  .\console.ps1 parity-master --prune-output
+  .\console.ps1 parity-master --refresh-inclusive
+  .\console.ps1 parity-master --known-good-antigravity-exe "C:\Users\you\AppData\Local\Programs\Antigravity\Antigravity.exe"
   .\console.ps1 rotate-key
   .\console.ps1 rebuild
   .\console.ps1 rebuild -NoCache
@@ -1815,6 +1828,81 @@ function Show-Version {
     }
 }
 
+function Run-ParityMasterValidation {
+    $scriptPath = Join-Path $PSScriptRoot "scripts/parity-master-validate.ps1"
+    if (-not (Test-Path $scriptPath)) {
+        throw "Parity master validator not found: $scriptPath"
+    }
+
+    $args = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", $scriptPath
+    )
+    if ($Json) {
+        $args += "-Json"
+    }
+    if ($ExtraArgs) {
+        $mapSwitch = @{
+            "--require-oauth-relink" = "-RequireOAuthRelink"
+            "--allow-mimic-token-refresh" = "-AllowMimicTokenRefresh"
+            "--include-chat-probe" = "-IncludeChatProbe"
+            "--include-auth-event-probes" = "-IncludeAuthEventProbes"
+            "--include-extended-flow" = "-IncludeExtendedFlow"
+            "--allow-missing-allowlist-endpoints" = "-AllowMissingAllowlistEndpoints"
+            "--skip-allowlist-validation" = "-SkipAllowlistValidation"
+            "--skip-repo-gate" = "-SkipRepoGate"
+            "--skip-baseline-gate" = "-SkipBaselineGate"
+            "--skip-mismatch-contract" = "-SkipMismatchContract"
+            "--prune-output" = "-PruneOutput"
+            "--refresh-inclusive" = "-RefreshInclusive"
+            "--no-auto-capture-known-good" = "-NoAutoCaptureKnownGood"
+            "--known-good-capture-require-stream" = "-KnownGoodCaptureRequireStream"
+            "--skip-ls-sni-preflight" = "-SkipLsSniPreflight"
+        }
+        $mapValue = @{
+            "--known-good-path" = "-KnownGoodPath"
+            "--out-gephyr-path" = "-OutGephyrPath"
+            "--startup-timeout-seconds" = "-StartupTimeoutSeconds"
+            "--allowlist-path" = "-AllowlistPath"
+            "--baseline-gephyr-path" = "-BaselineGephyrPath"
+            "--baseline-known-good-path" = "-BaselineKnownGoodPath"
+            "--status-json" = "-OutStatusJson"
+            "--known-good-capture-port" = "-KnownGoodCapturePort"
+            "--known-good-antigravity-exe" = "-KnownGoodAntigravityExe"
+        }
+
+        $normalized = @()
+        $i = 0
+        while ($i -lt $ExtraArgs.Count) {
+            $current = $ExtraArgs[$i]
+            if ($mapSwitch.ContainsKey($current)) {
+                $normalized += $mapSwitch[$current]
+                $i++
+                continue
+            }
+            if ($mapValue.ContainsKey($current)) {
+                if (($i + 1) -ge $ExtraArgs.Count) {
+                    throw "Missing value for $current"
+                }
+                $normalized += $mapValue[$current]
+                $normalized += $ExtraArgs[$i + 1]
+                $i += 2
+                continue
+            }
+            $normalized += $current
+            $i++
+        }
+        $args += $normalized
+    }
+
+    & powershell @args
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "parity-master failed (exit code=$LASTEXITCODE)." -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+}
+
 Load-EnvLocal
 
 function Test-DockerAvailable {
@@ -1835,15 +1923,15 @@ function Assert-DockerRunning {
         Write-Host "╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Red
         Write-Host "║                     DOCKER IS NOT RUNNING                        ║" -ForegroundColor Red
         Write-Host "╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Red
-        Write-Host "║  The Docker daemon is not accessible.                            ║" -ForegroundColor Yellow
-        Write-Host "║                                                                  ║" -ForegroundColor Yellow
-        Write-Host "║  Please ensure:                                                  ║" -ForegroundColor Yellow
-        Write-Host "║    1. Docker Desktop is installed                                ║" -ForegroundColor Yellow
-        Write-Host "║    2. Docker Desktop is running (check system tray)              ║" -ForegroundColor Yellow
-        Write-Host "║    3. Docker engine has finished starting up                     ║" -ForegroundColor Yellow
-        Write-Host "║                                                                  ║" -ForegroundColor Yellow
-        Write-Host "║  On Windows, look for the Docker whale icon in your system tray. ║" -ForegroundColor Yellow
-        Write-Host "║  If it's animating, Docker is still starting up.                 ║" -ForegroundColor Yellow
+        Write-Host "║  The Docker daemon is not accessible.                            ║" -ForegroundColor Red
+        Write-Host "║                                                                  ║" -ForegroundColor Red
+        Write-Host "║  Please ensure:                                                  ║" -ForegroundColor Red
+        Write-Host "║    1. Docker Desktop is installed                                ║" -ForegroundColor Red
+        Write-Host "║    2. Docker Desktop is running (check system tray)              ║" -ForegroundColor Red
+        Write-Host "║    3. Docker engine has finished starting up                     ║" -ForegroundColor Red
+        Write-Host "║                                                                  ║" -ForegroundColor Red
+        Write-Host "║  On Windows, look for the Docker whale icon in your system tray. ║" -ForegroundColor Red
+        Write-Host "║  If it's animating, Docker is still starting up.                 ║" -ForegroundColor Red
         Write-Host "╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Red
         Write-Host ""
         exit 1
@@ -1896,6 +1984,9 @@ switch ($Command) {
     "accounts" { Show-Accounts -AsJson:$Json.IsPresent }
     "api-test" { Run-ApiTest }
     "api-test-all" { Run-ApiTestAll }
+    "parity-master" { Run-ParityMasterValidation }
+    "parity-validate" { Run-ParityMasterValidation }
+    "parity-1to1" { Run-ParityMasterValidation }
     "rotate-key" { Rotate-ApiKey }
     "docker-repair" { Repair-DockerBuilder -AggressiveMode:$Aggressive.IsPresent }
     "rebuild" { Invoke-Rebuild -UseNoCache:$NoCache.IsPresent }

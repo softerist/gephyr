@@ -1,3 +1,4 @@
+use crate::proxy::parity;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -144,17 +145,16 @@ fn load_account_device_profile(account_id: Option<&str>) -> Option<crate::models
         .and_then(|account| account.device_profile)
 }
 
-fn apply_google_identity_headers(
-    request: reqwest::RequestBuilder,
+fn build_google_identity_headers(
     account_id: Option<&str>,
     endpoint: &str,
-) -> reqwest::RequestBuilder {
+) -> reqwest::header::HeaderMap {
     let policy = crate::proxy::upstream::header_policy::load_policy_from_runtime_config();
     let endpoint_host = crate::proxy::upstream::header_policy::host_from_url(endpoint);
     let user_agent = oauth_user_agent();
     let device_profile = load_account_device_profile(account_id);
 
-    let headers = crate::proxy::upstream::header_policy::build_google_headers(
+    crate::proxy::upstream::header_policy::build_google_headers(
         crate::proxy::upstream::header_policy::GoogleHeaderPolicyContext {
             endpoint,
             endpoint_host: endpoint_host.as_deref(),
@@ -167,9 +167,7 @@ fn apply_google_identity_headers(
             force_connection_close: true,
         },
         &policy,
-    );
-
-    request.headers(headers)
+    )
 }
 
 fn configured_userinfo_endpoints() -> Vec<&'static str> {
@@ -323,11 +321,24 @@ async fn exchange_code_at(
         params.push(("client_secret", s));
     }
 
-    let response = apply_google_identity_headers(client.post(token_url), None, token_url)
+    let headers = build_google_identity_headers(None, token_url);
+    let started_at = std::time::Instant::now();
+    let response = client
+        .post(token_url)
+        .headers(headers.clone())
         .form(&params)
         .send()
-        .await
-        .map_err(|e| {
+        .await;
+    parity::capture::record_reqwest_outbound(
+        "POST",
+        token_url,
+        &headers,
+        None,
+        started_at,
+        response.as_ref().ok().map(|r| r.status().as_u16()),
+        parity::types::RequestSource::Gephyr,
+    );
+    let response = response.map_err(|e| {
             if e.is_connect() || e.is_timeout() {
                 format!("Token exchange request failed: {}. Please check your network proxy settings to ensure a stable connection to Google services.", e)
             } else {
@@ -417,11 +428,24 @@ async fn refresh_access_token_at(
         );
     }
 
-    let response = apply_google_identity_headers(client.post(token_url), account_id, token_url)
+    let headers = build_google_identity_headers(account_id, token_url);
+    let started_at = std::time::Instant::now();
+    let response = client
+        .post(token_url)
+        .headers(headers.clone())
         .form(&params)
         .send()
-        .await
-        .map_err(|e| {
+        .await;
+    parity::capture::record_reqwest_outbound(
+        "POST",
+        token_url,
+        &headers,
+        None,
+        started_at,
+        response.as_ref().ok().map(|r| r.status().as_u16()),
+        parity::types::RequestSource::Gephyr,
+    );
+    let response = response.map_err(|e| {
             if e.is_connect() || e.is_timeout() {
                 format!("Refresh request failed: {}. Unable to connect to the Google authorization server. Please check your proxy settings.", e)
             } else {
@@ -467,11 +491,24 @@ async fn revoke_refresh_token_at(
         ("token_type_hint", "refresh_token".to_string()),
     ];
 
-    let response = apply_google_identity_headers(client.post(revoke_url), account_id, revoke_url)
+    let headers = build_google_identity_headers(account_id, revoke_url);
+    let started_at = std::time::Instant::now();
+    let response = client
+        .post(revoke_url)
+        .headers(headers.clone())
         .form(&params)
         .send()
-        .await
-        .map_err(|e| format!("Revoke request failed: {}", e))?;
+        .await;
+    parity::capture::record_reqwest_outbound(
+        "POST",
+        revoke_url,
+        &headers,
+        None,
+        started_at,
+        response.as_ref().ok().map(|r| r.status().as_u16()),
+        parity::types::RequestSource::Gephyr,
+    );
+    let response = response.map_err(|e| format!("Revoke request failed: {}", e))?;
 
     if response.status().is_success() || response.status() == reqwest::StatusCode::BAD_REQUEST {
         return Ok(());
@@ -513,11 +550,28 @@ async fn get_user_info_at(
         crate::utils::http::get_client()
     };
 
-    let response = apply_google_identity_headers(client.get(userinfo_url), account_id, userinfo_url)
-        .bearer_auth(access_token)
+    let mut headers = build_google_identity_headers(account_id, userinfo_url);
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        reqwest::header::HeaderValue::from_str(&format!("Bearer {}", access_token))
+            .unwrap_or(reqwest::header::HeaderValue::from_static("<invalid-token>")),
+    );
+    let started_at = std::time::Instant::now();
+    let response = client
+        .get(userinfo_url)
+        .headers(headers.clone())
         .send()
-        .await
-        .map_err(|e| format!("User info request failed: {}", e))?;
+        .await;
+    parity::capture::record_reqwest_outbound(
+        "GET",
+        userinfo_url,
+        &headers,
+        None,
+        started_at,
+        response.as_ref().ok().map(|r| r.status().as_u16()),
+        parity::types::RequestSource::Gephyr,
+    );
+    let response = response.map_err(|e| format!("User info request failed: {}", e))?;
 
     if response.status().is_success() {
         response
@@ -573,8 +627,13 @@ pub async fn verify_identity(
     account_id: Option<&str>,
 ) -> Result<VerifiedIdentity, String> {
     if raw_id_token.is_some() {
-        return verify_identity_at(access_token, raw_id_token, account_id, USERINFO_URL_OAUTH2_V2)
-            .await;
+        return verify_identity_at(
+            access_token,
+            raw_id_token,
+            account_id,
+            USERINFO_URL_OAUTH2_V2,
+        )
+        .await;
     }
 
     let mut last_err = "No configured userinfo endpoints".to_string();
@@ -745,10 +804,9 @@ mod tests {
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),
         );
-        response.headers_mut().insert(
-            header::CONTENT_ENCODING,
-            HeaderValue::from_static("gzip"),
-        );
+        response
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         response
     }
 
@@ -899,11 +957,16 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn refresh_access_token_sends_user_agent_header() {
-        let _guard = oauth_ua_test_guard();
+        let _parity_guard = crate::proxy::tests::acquire_security_test_lock();
+        let _oauth_guard = oauth_ua_test_guard();
         let _ua = ScopedEnvVar::set("OAUTH_USER_AGENT", "ua-integration-test");
         let _cid = ScopedEnvVar::set(
             "GOOGLE_OAUTH_CLIENT_ID",
             "test-client.apps.googleusercontent.com",
+        );
+        crate::proxy::parity::capture::clear_capture();
+        let _ = crate::proxy::parity::capture::start_capture(
+            crate::proxy::parity::capture::CaptureStartConfig::default(),
         );
 
         let (base_url, state, server) = start_mock_oauth_server().await;
@@ -912,6 +975,7 @@ mod tests {
         let _ = refresh_access_token_at("refresh-token", None, &token_url)
             .await
             .expect("refresh should succeed against mock server");
+        let parity_snapshot = crate::proxy::parity::capture::captured_snapshot();
         let captured = state.user_agents.lock().await.clone();
         let captured_accept_encoding = state.accept_encodings.lock().await.clone();
 
@@ -929,6 +993,15 @@ mod tests {
                 .any(|value| value == "gzip, deflate, br"),
             "expected OAuth refresh call to carry Accept-Encoding: gzip, deflate, br"
         );
+        assert!(
+            parity_snapshot
+                .iter()
+                .any(|fp| fp.normalized_endpoint.contains("/token")),
+            "expected token refresh call to be captured by parity"
+        );
+
+        let _ = crate::proxy::parity::capture::stop_capture();
+        crate::proxy::parity::capture::clear_capture();
     }
 
     #[tokio::test(flavor = "current_thread")]

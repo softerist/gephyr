@@ -1117,6 +1117,3 @@ async fn test_compliance_risk_signal_503_does_not_trigger_cooldown() {
         .expect("503 should not trigger compliance cooldown");
     assert!(allowed.is_some());
 }
-
-
-

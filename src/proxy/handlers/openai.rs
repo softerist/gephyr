@@ -1045,7 +1045,7 @@ pub async fn handle_completions(
                     [("X-Mapped-Model", mapped_model)],
                     format!("Token error: {}", token_error),
                 )
-                    .into_response()
+                    .into_response();
             }
         };
         let compliance_guard = match token_manager

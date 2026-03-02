@@ -4,6 +4,8 @@ param(
     [string]$AllowlistPath = "scripts/allowlists/antigravity_google_endpoints_default_chat.txt",
     [string]$OutJson = "output/antigravity_allowed_endpoint_validation.json",
     [string]$OutText = "output/antigravity_allowed_endpoint_validation.txt",
+    [string[]]$AllowedExtraGoogleEndpoints = @(),
+    [switch]$RequireAllAllowedObserved,
     [switch]$NoThrow
 )
 
@@ -52,6 +54,12 @@ foreach ($e in $allowedRaw) {
     [void]$allowed.Add((Normalize-Endpoint -Endpoint $e))
 }
 
+$allowedExtras = New-Object System.Collections.Generic.HashSet[string]
+foreach ($e in $AllowedExtraGoogleEndpoints) {
+    if (-not $e) { continue }
+    [void]$allowedExtras.Add((Normalize-Endpoint -Endpoint $e))
+}
+
 $observedAll = New-Object System.Collections.Generic.HashSet[string]
 $observedGoogle = New-Object System.Collections.Generic.HashSet[string]
 
@@ -76,7 +84,8 @@ foreach ($line in Get-Content $TracePath) {
 # Ignore capture self-test noise if present.
 [void]$observedGoogle.Remove((Normalize-Endpoint -Endpoint "https://oauth2.googleapis.com/tokeninfo?access_token=%3Credacted%3E"))
 
-$unknown = @($observedGoogle | Where-Object { -not $allowed.Contains($_) } | Sort-Object)
+$unknownRaw = @($observedGoogle | Where-Object { -not $allowed.Contains($_) } | Sort-Object)
+$unknown = @($unknownRaw | Where-Object { -not $allowedExtras.Contains($_) } | Sort-Object)
 $missing = @($allowed | Where-Object { $_ -notin $observedGoogle } | Sort-Object)
 $observedAllowed = @($observedGoogle | Where-Object { $allowed.Contains($_) } | Sort-Object)
 
@@ -84,13 +93,15 @@ $result = [pscustomobject]@{
     generated_at = (Get-Date).ToString("o")
     trace_path = $TracePath
     allowlist_path = $AllowlistPath
+    require_all_allowed_observed = [bool]$RequireAllAllowedObserved
     allowed_count = $allowed.Count
     observed_google_count = $observedGoogle.Count
     observed_allowed_count = $observedAllowed.Count
+    allowed_extra_google_endpoints = @($allowedExtras | Sort-Object)
     unknown_google_endpoints = $unknown
     missing_allowed_endpoints = $missing
     observed_allowed_endpoints = $observedAllowed
-    pass = ($unknown.Count -eq 0)
+    pass = ($unknown.Count -eq 0 -and ((-not $RequireAllAllowedObserved) -or $missing.Count -eq 0))
 }
 
 $result | ConvertTo-Json -Depth 8 | Set-Content -Path $OutJson
@@ -100,9 +111,11 @@ $lines += "Antigravity Allowed Google Endpoint Validation"
 $lines += "Generated: $($result.generated_at)"
 $lines += "Trace: $TracePath"
 $lines += "Allowlist: $AllowlistPath"
+$lines += "Require all allowed observed: $([bool]$RequireAllAllowedObserved)"
 $lines += "Allowed endpoints: $($result.allowed_count)"
 $lines += "Observed Google endpoints: $($result.observed_google_count)"
 $lines += "Observed allowed endpoints: $($result.observed_allowed_count)"
+$lines += "Allowed extra Google endpoints: $((@($result.allowed_extra_google_endpoints) -join ', '))"
 $lines += "Pass: $($result.pass)"
 $lines += ""
 $lines += "Unknown Google endpoints:"
@@ -127,5 +140,14 @@ Write-Host "  $OutJson"
 Write-Host "Pass: $($result.pass)"
 
 if (-not $NoThrow -and -not $result.pass) {
-    throw "Unexpected Google endpoints detected. See: $OutText"
+    if ($unknown.Count -gt 0 -and $missing.Count -gt 0 -and $RequireAllAllowedObserved) {
+        throw "Unexpected Google endpoints detected and allowed endpoints missing from trace. See: $OutText"
+    }
+    if ($unknown.Count -gt 0) {
+        throw "Unexpected Google endpoints detected. See: $OutText"
+    }
+    if ($RequireAllAllowedObserved -and $missing.Count -gt 0) {
+        throw "Some allowlisted endpoints were not observed in trace. See: $OutText"
+    }
+    throw "Allowlist validation failed. See: $OutText"
 }

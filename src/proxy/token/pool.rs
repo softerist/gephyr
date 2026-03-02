@@ -35,9 +35,7 @@ pub(crate) fn select_with_p2c<'a>(
         .iter()
         .filter(|t| !attempted.contains(&t.account_id))
         .filter(|t| !quota_protection_enabled || !t.protected_models.contains(normalized_target))
-        .filter(|t| {
-            supports_target_model(t, normalized_target, require_explicit_model_support)
-        })
+        .filter(|t| supports_target_model(t, normalized_target, require_explicit_model_support))
         .collect();
 
     if available.is_empty() {

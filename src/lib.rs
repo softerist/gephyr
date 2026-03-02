@@ -8,6 +8,8 @@ mod proxy;
 mod test_utils;
 mod utils;
 
+pub use crate::proxy::parity;
+
 use modules::system::logger;
 use tracing::{error, info, warn};
 #[cfg(target_os = "macos")]

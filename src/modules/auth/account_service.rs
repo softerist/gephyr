@@ -170,7 +170,11 @@ impl AccountService {
         Ok((identity.email, identity.name, identity.google_sub))
     }
 
-    fn spawn_google_mimic_flow(access_token: String, account_id: String, project_id: Option<String>) {
+    fn spawn_google_mimic_flow(
+        access_token: String,
+        account_id: String,
+        project_id: Option<String>,
+    ) {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let _ = crate::proxy::google::mimic_flow::run_auth_event_mimic_flow(

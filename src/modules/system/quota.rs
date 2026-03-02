@@ -1,4 +1,5 @@
 use crate::models::QuotaData;
+use crate::proxy::parity;
 use crate::proxy::upstream::header_policy::{
     build_google_headers, build_load_code_assist_metadata, host_from_url,
     load_policy_from_runtime_config, GoogleHeaderPolicyContext, GoogleHeaderScope,
@@ -117,7 +118,22 @@ async fn fetch_project_id_at(
         &policy,
     );
 
-    let res = client.post(&endpoint).headers(headers).json(&meta).send().await;
+    let started_at = std::time::Instant::now();
+    let res = client
+        .post(&endpoint)
+        .headers(headers.clone())
+        .json(&meta)
+        .send()
+        .await;
+    parity::capture::record_reqwest_outbound(
+        "POST",
+        &endpoint,
+        &headers,
+        Some(&meta),
+        started_at,
+        res.as_ref().ok().map(|r| r.status().as_u16()),
+        parity::types::RequestSource::Gephyr,
+    );
 
     match res {
         Ok(res) => {
@@ -262,13 +278,23 @@ async fn fetch_quota_with_cache_at(
     let mut last_error: Option<AppError> = None;
 
     for attempt in 1..=MAX_RETRIES {
-        match client
+        let started_at = std::time::Instant::now();
+        let response = client
             .post(url)
             .headers(headers.clone())
             .json(&payload)
             .send()
-            .await
-        {
+            .await;
+        parity::capture::record_reqwest_outbound(
+            "POST",
+            url,
+            &headers,
+            Some(&payload),
+            started_at,
+            response.as_ref().ok().map(|r| r.status().as_u16()),
+            parity::types::RequestSource::Gephyr,
+        );
+        match response {
             Ok(response) => {
                 if response.error_for_status_ref().is_err() {
                     let status = response.status();
@@ -412,6 +438,12 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn quota_flow_sends_gzip_and_standardized_metadata() {
+        let _guard = crate::proxy::tests::acquire_security_test_lock();
+        crate::proxy::parity::capture::clear_capture();
+        let _ = crate::proxy::parity::capture::start_capture(
+            crate::proxy::parity::capture::CaptureStartConfig::default(),
+        );
+
         let (base_url, state, server) = start_mock_quota_server().await;
         let quota_url = format!("{}/v1internal:fetchAvailableModels", base_url);
 
@@ -427,10 +459,7 @@ mod tests {
         .expect("quota flow should succeed");
 
         assert_eq!(project_id.as_deref(), Some("quota-proj-1"));
-        assert!(quota
-            .models
-            .iter()
-            .any(|m| m.name == "gemini-2.5-pro"));
+        assert!(quota.models.iter().any(|m| m.name == "gemini-2.5-pro"));
 
         let load_headers = state.load_headers.lock().await.clone();
         let load_body = state
@@ -446,6 +475,7 @@ mod tests {
             .await
             .clone()
             .expect("captured fetchAvailableModels body");
+        let parity_snapshot = crate::proxy::parity::capture::captured_snapshot();
         server.abort();
 
         let find = |headers: &Vec<(String, String)>, name: &str| -> Option<String> {
@@ -466,6 +496,24 @@ mod tests {
         assert!(load_body.pointer("/metadata/ideType").is_some());
         assert!(load_body.pointer("/metadata/platform").is_some());
         assert!(load_body.pointer("/metadata/pluginType").is_some());
-        assert_eq!(quota_body.pointer("/project").and_then(|v| v.as_str()), Some("quota-proj-1"));
+        assert_eq!(
+            quota_body.pointer("/project").and_then(|v| v.as_str()),
+            Some("quota-proj-1")
+        );
+        assert!(
+            parity_snapshot
+                .iter()
+                .any(|fp| fp.normalized_endpoint.contains("v1internal:loadCodeAssist")),
+            "expected loadCodeAssist to be captured"
+        );
+        assert!(
+            parity_snapshot.iter().any(|fp| fp
+                .normalized_endpoint
+                .contains("v1internal:fetchAvailableModels")),
+            "expected fetchAvailableModels to be captured"
+        );
+
+        let _ = crate::proxy::parity::capture::stop_capture();
+        crate::proxy::parity::capture::clear_capture();
     }
 }

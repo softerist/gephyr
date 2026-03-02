@@ -40,6 +40,7 @@ Commands:
   oauth/auth   Alias for login
   accounts     Call /api/accounts
   api-test     Run one API test completion
+  parity-master  Run end-to-end 1:1 parity validation (live + gates)
   rotate-key   Generate new API key, save to .env.local, and optionally restart
   docker-repair  Repair Docker builder cache issues (e.g., missing snapshot errors)
   rebuild      Rebuild Docker image from source
@@ -69,12 +70,24 @@ Options:
   --json                 Output machine-readable JSON (for health, accounts)
   --quiet                Suppress non-essential output (for CI/automation)
   --no-cache             For rebuild: build without Docker cache
+  Parity master passthrough options:
+    --no-auto-capture-known-good        Disable auto official capture bootstrap when known-good is missing
+    --known-good-capture-port <n>       Capture port for auto official bootstrap (default 8891)
+    --known-good-antigravity-exe <path> Explicit Antigravity.exe path for auto official bootstrap
+    --known-good-capture-require-stream Require generation/stream endpoint during auto official bootstrap
+    --skip-ls-sni-preflight             Skip Wireshark/tshark LS SNI preflight before official auto-capture
   -h, --help             Show help
 
 Examples:
   ./console.sh start
   ./console.sh login
   ./console.sh logs --tail 200
+  ./console.sh parity-master
+    default behavior: auto-capture known-good if missing, auto-detect Antigravity path, and attach to running IDE when possible
+  ./console.sh parity-master --known-good-path output/known_good.discovery.jsonl
+  ./console.sh parity-master --prune-output
+  ./console.sh parity-master --refresh-inclusive
+  ./console.sh parity-master --known-good-antigravity-exe "C:\Users\you\AppData\Local\Programs\Antigravity\Antigravity.exe"
   ./console.sh rotate-key
   ./console.sh rebuild
   ./console.sh rebuild --no-cache
@@ -1469,6 +1482,27 @@ show_version() {
   fi
 }
 
+parity_master_validate() {
+  local script_path="$SCRIPT_DIR/scripts/parity-master-validate.sh"
+  if [[ ! -f "$script_path" ]]; then
+    echo "Parity master validator not found: $script_path" >&2
+    exit 1
+  fi
+
+  local args=()
+  if [[ "$JSON_OUTPUT" == "true" ]]; then
+    args+=(--json)
+  fi
+  if [[ "${#EXTRA_ARGS[@]}" -gt 0 ]]; then
+    args+=("${EXTRA_ARGS[@]}")
+  fi
+
+  (
+    cd "$SCRIPT_DIR"
+    bash "./scripts/parity-master-validate.sh" "${args[@]}"
+  )
+}
+
 if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
   COMMAND="$1"
   shift
@@ -1494,6 +1528,26 @@ while [[ $# -gt 0 ]]; do
     --json) JSON_OUTPUT="true"; shift ;;
     --quiet) QUIET="true"; shift ;;
     --no-cache) NO_CACHE="true"; shift ;;
+    --known-good-path|--out-gephyr-path|--startup-timeout-seconds|--allowlist-path|--baseline-gephyr-path|--baseline-known-good-path|--status-json|--known-good-capture-port|--known-good-antigravity-exe)
+      if [[ "$COMMAND" == "parity-master" || "$COMMAND" == "parity-validate" || "$COMMAND" == "parity-1to1" ]]; then
+        EXTRA_ARGS+=("$1" "$2")
+        shift 2
+      else
+        echo "Unknown argument: $1" >&2
+        print_help
+        exit 1
+      fi
+      ;;
+    --require-oauth-relink|--allow-mimic-token-refresh|--include-chat-probe|--include-auth-event-probes|--include-extended-flow|--refresh-inclusive|--allow-missing-allowlist-endpoints|--skip-allowlist-validation|--skip-repo-gate|--skip-baseline-gate|--skip-mismatch-contract|--prune-output|--no-auto-capture-known-good|--known-good-capture-require-stream|--skip-ls-sni-preflight)
+      if [[ "$COMMAND" == "parity-master" || "$COMMAND" == "parity-validate" || "$COMMAND" == "parity-1to1" ]]; then
+        EXTRA_ARGS+=("$1")
+        shift
+      else
+        echo "Unknown argument: $1" >&2
+        print_help
+        exit 1
+      fi
+      ;;
     -h|--help|-?|\?|/help) COMMAND="help"; shift ;;
     -*)
       echo "Unknown argument: $1" >&2
@@ -1568,6 +1622,7 @@ case "$COMMAND" in
   login|oauth|auth) oauth_flow ;;
   accounts) show_accounts ;;
   api-test) api_test ;;
+  parity-master|parity-validate|parity-1to1) parity_master_validate ;;
   rotate-key) rotate_key ;;
   docker-repair) docker_repair ;;
   rebuild) rebuild ;;
