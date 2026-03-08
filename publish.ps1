@@ -834,6 +834,27 @@ if ($Resume) {
     Warn 'Working tree is not clean. Resume mode continues because it does not create a new commit.'
   }
 
+  # Check if we need to publish to crates's io
+  Info "Checking if v$newVersion is already on crates.io..."
+  $crateInfo = cargo search gephyr --limit 100 2>$null
+  $alreadyPublished = $crateInfo -match "gephyr = `"$newVersion`""
+  if (-not $alreadyPublished) {
+    Info "v$newVersion not found on crates.io. Attempting to publish..."
+    Ensure-CargoRegistryToken
+    $publishOutput = & cargo publish --allow-dirty 2>&1
+    $publishExit = $LASTEXITCODE
+    $publishOutput | ForEach-Object { Write-Host $_ }
+    if ($publishExit -ne 0) {
+      Fail "cargo publish failed during resume. Fix the issues and try again." -Hints @(
+        'Ensure crates.io token is valid.',
+        'Check for transient network errors.'
+      )
+    }
+    Info "v$newVersion published to crates.io."
+  } else {
+    Info "v$newVersion is already published to crates.io."
+  }
+
   if (-not $NoPush) {
     Publish-DockerImageToGhcr -Version $newVersion
     Push-And-CreateGitHubRelease -Version $newVersion
@@ -930,6 +951,42 @@ if (-not $SkipTests) {
   }
 } else {
   Warn 'Skipping tests due to -SkipTests.'
+}
+
+# Preflight: publish dry-run
+Info 'Running preflight publish dry-run: cargo publish --dry-run'
+$dryRunOutput = & cargo publish --dry-run 2>&1
+$dryRunExit = $LASTEXITCODE
+if ($dryRunExit -ne 0) {
+  $dryRunOutput | ForEach-Object { Write-Host $_ }
+  Fail 'Preflight publish dry-run failed. This usually means some files are missing from the package (check .gitignore or Cargo.toml).' -Rollback -Hints @(
+    'Review the errors above.',
+    'Common cause: missing files in src/ that are gitignored.',
+    'Fix the issue and rerun ./publish.ps1.'
+  )
+}
+Info 'Preflight publish dry-run succeeded.'
+
+# Interactive confirmation
+Write-Host ""
+Write-Host "[release] PREFLIGHT CHECKS PASSED." -ForegroundColor Green
+Write-Host "[release] Target version: $newVersion"
+Write-Host "[release] The following actions will be performed:"
+Write-Host "  1. Git commit Cargo.toml/lock"
+Write-Host "  2. Git tag v$newVersion"
+Write-Host "  3. Publish to crates.io"
+if (-not $NoPush) {
+  Write-Host "  4. Publish Docker image to GHCR"
+  Write-Host "  5. Git push --follow-tags"
+  Write-Host "  6. Create GitHub Release"
+}
+Write-Host ""
+
+if ([Environment]::UserInteractive) {
+  $confirm = (Read-Host "[release] Proceed with release v$newVersion? (y/N)").Trim().ToLower()
+  if ($confirm -ne 'y') {
+    Fail 'Release canceled by user.' -Rollback
+  }
 }
 
 # Git commit
