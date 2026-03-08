@@ -954,8 +954,8 @@ if (-not $SkipTests) {
 }
 
 # Preflight: publish dry-run
-Info 'Running preflight publish dry-run: cargo publish --dry-run'
-$dryRunOutput = & cargo publish --dry-run 2>&1
+Info 'Running preflight publish dry-run: cargo publish --dry-run --allow-dirty'
+$dryRunOutput = & cargo publish --dry-run --allow-dirty 2>&1
 $dryRunExit = $LASTEXITCODE
 if ($dryRunExit -ne 0) {
   $dryRunOutput | ForEach-Object { Write-Host $_ }
