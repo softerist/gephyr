@@ -255,12 +255,49 @@ function Test-CargoRegistryTokenConfigured {
   return $false
 }
 
-function Ensure-CargoRegistryToken {
-  if (Test-CargoRegistryTokenConfigured) {
-    return
+function Test-CargoRegistryTokenIsValid {
+  # We test the token by asking cargo login to verify it (recent rustc supports this)
+  # or by trying to hit crates.io /me endpoint
+  if (-not [string]::IsNullOrWhiteSpace($env:CARGO_REGISTRY_TOKEN)) {
+    $token = $env:CARGO_REGISTRY_TOKEN
+  } else {
+    $cargoHome = Get-CargoHomePath
+    $token = $null
+    foreach ($fileName in @('credentials.toml', 'credentials')) {
+      $credentialsPath = Join-Path $cargoHome $fileName
+      if (Test-Path $credentialsPath) {
+        $raw = Get-Content -Path $credentialsPath -Raw -ErrorAction SilentlyContinue
+        if ($raw -match '(?m)^\s*token\s*=\s*"([^"]+)"') {
+          $token = $Matches[1]
+          break
+        }
+      }
+    }
   }
 
-  Warn 'No crates.io publish token found (cargo login credentials or CARGO_REGISTRY_TOKEN).'
+  if ([string]::IsNullOrWhiteSpace($token)) { return $false }
+
+  # Test via crates.io API
+  try {
+    $response = Invoke-RestMethod -Uri "https://crates.io/api/v1/me" -Headers @{ Authorization = $token; "User-Agent" = "gephyr-publish-script" } -ErrorAction Stop
+    return ($null -ne $response.user)
+  } catch {
+    return $false
+  }
+}
+
+function Ensure-CargoRegistryToken {
+  if (Test-CargoRegistryTokenConfigured) {
+    Info "Verifying crates.io token validity..."
+    if (Test-CargoRegistryTokenIsValid) {
+      Info "crates.io token is valid."
+      return
+    } else {
+      Warn "Stored crates.io token is invalid/expired. You must provide a new one."
+    }
+  } else {
+    Warn 'No crates.io publish token found (cargo login credentials or CARGO_REGISTRY_TOKEN).'
+  }
 
   if (-not [Environment]::UserInteractive) {
     Fail 'Missing crates.io token for cargo publish.' -Hints @(
