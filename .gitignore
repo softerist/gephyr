@@ -30,7 +30,6 @@ target/
 src/gen/
 src/.env
 output/
-parity/
 output/parity/
 parity/raw/
 parity/baselines/raw/
